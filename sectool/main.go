@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -26,13 +27,10 @@ func runServiceMode(args []string) int {
 		return 1
 	}
 
-	srv, err := service.NewServer(flags)
-	if err != nil {
+	if srv, err := service.NewServer(flags); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating service: %v\n", err)
 		return 1
-	}
-
-	if err := srv.Run(); err != nil {
+	} else if err := srv.Run(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "Service error: %v\n", err)
 		return 1
 	}

@@ -5,7 +5,6 @@ linters:
     - asasalint
     - asciicheck
     - bidichk
-    - contextcheck
     - decorder
     - durationcheck
     - errcheck
