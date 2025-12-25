@@ -25,6 +25,7 @@ func TestRequestStoreStoreAndGet(t *testing.T) {
 			},
 			assertFn: func(t *testing.T, entry *RequestEntry) {
 				t.Helper()
+				
 				assert.NotZero(t, entry.CreatedAt)
 				assert.InDelta(t, time.Now().Unix(), entry.CreatedAt.Unix(), 1)
 			},
@@ -39,6 +40,7 @@ func TestRequestStoreStoreAndGet(t *testing.T) {
 			},
 			assertFn: func(t *testing.T, entry *RequestEntry) {
 				t.Helper()
+				
 				assert.Equal(t, time.Unix(100, 0), entry.CreatedAt)
 			},
 		},
