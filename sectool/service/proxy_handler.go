@@ -257,7 +257,10 @@ func (s *Server) handleProxyList(w http.ResponseWriter, r *http.Request) {
 	if req.HasFilters() {
 		flows := make([]FlowSummary, 0, len(filtered))
 		for _, entry := range filtered {
-			hash := store.ComputeFlowHashSimple(entry.method, entry.host, entry.path, nil, nil)
+			// Compute hash including headers and body for stable flow identification
+			headerLines := extractHeaderLines(entry.request)
+			_, reqBody := splitHeadersBody([]byte(entry.request))
+			hash := store.ComputeFlowHashSimple(entry.method, entry.host, entry.path, headerLines, reqBody)
 			flowID := s.flowStore.Register(entry.offset, hash)
 
 			scheme, port, _ := inferSchemeAndPort(entry.host)
@@ -323,9 +326,12 @@ func applyClientFilters(entries []flowEntry, req *ProxyListRequest, store *store
 			return false // Exclude path
 		}
 		if req.Contains != "" {
-			combined := e.request + e.response
+			// Search URL and headers only (not body) - spec line 665
+			reqHeaders, _ := splitHeadersBody([]byte(e.request))
+			respHeaders, _ := splitHeadersBody([]byte(e.response))
+			combined := string(reqHeaders) + string(respHeaders)
 			if !strings.Contains(combined, req.Contains) {
-				return false // Contains filter (if using client-side filtering)
+				return false
 			}
 		}
 		if req.ContainsBody != "" {

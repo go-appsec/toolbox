@@ -62,8 +62,9 @@ func removeHeader(headers []byte, name string) []byte {
 	return re.ReplaceAll(headers, nil)
 }
 
-// applyModifications applies all requested modifications.
-func applyModifications(headers, body []byte, req *ReplaySendRequest) ([]byte, []byte) {
+// applyHeaderModifications applies header modifications (--header, --remove-header, --target).
+// Does NOT update Content-Length - that is handled separately based on body modification detection.
+func applyHeaderModifications(headers []byte, req *ReplaySendRequest) []byte {
 	for _, name := range req.RemoveHeaders {
 		headers = removeHeader(headers, name)
 	}
@@ -82,11 +83,7 @@ func applyModifications(headers, body []byte, req *ReplaySendRequest) ([]byte, [
 		}
 	}
 
-	// Always update Content-Length to match body
-	// TODO - what if chunked encoding?
-	headers = updateContentLength(headers, len(body))
-
-	return headers, body
+	return headers
 }
 
 // checkLineEndings detects line ending issues in HTTP headers.
@@ -234,9 +231,10 @@ func (s *Server) handleReplaySend(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Resolve input
+	// Resolve input, tracking original body size for bundles to detect modifications
 	var rawRequest []byte
 	var bundlePath string
+	originalBodySize := -1 // -1 means not from bundle (always update Content-Length)
 	switch {
 	case req.FlowID != "":
 		// Fetch from HttpBackend via flow_id
@@ -259,12 +257,15 @@ func (s *Server) handleReplaySend(w http.ResponseWriter, r *http.Request) {
 	case req.BundlePath != "":
 		// Read from bundle
 		bundlePath = req.BundlePath
-		headers, body, _, err := readBundle(req.BundlePath)
+		headers, body, meta, err := readBundle(req.BundlePath)
 		if err != nil {
 			s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "failed to read bundle", err.Error())
 			return
 		}
 		rawRequest = reconstructRequest(headers, body)
+		if meta != nil {
+			originalBodySize = meta.BodySize
+		}
 
 	case req.FilePath != "":
 		// Read raw file
@@ -303,15 +304,22 @@ func (s *Server) handleReplaySend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// When --force is set, send raw bytes without any modification or validation.
-	// This is useful for testing HTTP parser behavior with intentionally malformed requests.
-	if !req.Force {
-		// Apply modifications (--header, --remove-header, --target, Content-Length update)
-		headers, body := splitHeadersBody(rawRequest)
-		headers, body = applyModifications(headers, body, &req)
-		rawRequest = append(headers, body...)
+	// Apply header modifications (--header, --remove-header, --target) regardless of --force
+	headers, body := splitHeadersBody(rawRequest)
+	headers = applyHeaderModifications(headers, &req)
 
-		// Validate the modified request
+	// Update Content-Length if body was modified (or not from bundle)
+	// For bundles: only update if body size differs from original (body was edited)
+	// For non-bundles: always update to ensure correctness
+	bodyModified := originalBodySize < 0 || len(body) != originalBodySize
+	if bodyModified {
+		headers = updateContentLength(headers, len(body))
+	}
+
+	rawRequest = append(headers, body...)
+
+	// Validate unless --force is set (for testing malformed requests)
+	if !req.Force {
 		issues := validateRequest(rawRequest)
 		if slices.ContainsFunc(issues, func(i validationIssue) bool { return i.Severity == "error" }) {
 			s.writeError(w, http.StatusBadRequest, ErrCodeValidation, "validation failed", formatIssues(issues))

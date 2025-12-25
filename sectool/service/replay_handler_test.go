@@ -189,11 +189,10 @@ func TestRemoveHeader(t *testing.T) {
 	}
 }
 
-func TestApplyModifications(t *testing.T) {
+func TestApplyHeaderModifications(t *testing.T) {
 	t.Parallel()
 
 	headers := []byte("GET / HTTP/1.1\r\nHost: example.com\r\nCookie: session=abc\r\n\r\n")
-	body := []byte("test body")
 
 	req := &ReplaySendRequest{
 		RemoveHeaders: []string{"Cookie"},
@@ -201,7 +200,7 @@ func TestApplyModifications(t *testing.T) {
 		Target:        "https://new.example.com",
 	}
 
-	newHeaders, newBody := applyModifications(headers, body, req)
+	newHeaders := applyHeaderModifications(headers, req)
 
 	// Should have removed Cookie
 	assert.NotContains(t, string(newHeaders), "Cookie:")
@@ -212,9 +211,9 @@ func TestApplyModifications(t *testing.T) {
 	// Should have updated Host from target
 	assert.Contains(t, string(newHeaders), "Host: new.example.com")
 
+	// Content-Length is updated separately, verify it works
+	newHeaders = updateContentLength(newHeaders, 9)
 	assert.Contains(t, string(newHeaders), "Content-Length: 9")
-
-	assert.Equal(t, body, newBody)
 }
 
 func TestValidateRequest(t *testing.T) {

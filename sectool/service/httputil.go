@@ -117,3 +117,23 @@ func previewBody(body []byte, maxLen int) string {
 	}
 	return string(body[:maxLen]) + "..."
 }
+
+// extractHeaderLines extracts header lines from raw HTTP request.
+// Skips the request line and returns each header as "Name: Value".
+func extractHeaderLines(raw string) []string {
+	lines := strings.Split(raw, "\r\n")
+	if len(lines) <= 1 {
+		return nil
+	}
+
+	var result []string
+	for _, line := range lines[1:] { // skip request line
+		if line == "" {
+			break // end of headers
+		}
+		if strings.Contains(line, ":") {
+			result = append(result, line)
+		}
+	}
+	return result
+}
