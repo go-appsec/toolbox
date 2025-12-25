@@ -60,7 +60,7 @@ func TestRun(t *testing.T) {
 
 			err := run("value", false, tt.raw, tt.fn)
 			if tt.wantErr != nil {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.EqualError(t, err, tt.wantErr.Error())
 				return
 			}
@@ -116,7 +116,7 @@ func TestEncodeBase64(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := encodeBase64(tt.input, tt.decode)
 			if tt.wantErr != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.ErrorContains(t, err, tt.wantErr)
 				return
 			}
