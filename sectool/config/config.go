@@ -14,10 +14,11 @@ const (
 
 // Config holds the sectool configuration stored in .sectool/config.json
 type Config struct {
-	Version       string    `json:"version"`
-	InitializedAt time.Time `json:"initialized_at"`
-	LastInitMode  string    `json:"last_init_mode,omitempty"`
-	BurpMCPURL    string    `json:"burp_mcp_url"`
+	Version        string    `json:"version"`
+	InitializedAt  time.Time `json:"initialized_at"`
+	LastInitMode   string    `json:"last_init_mode,omitempty"`
+	BurpMCPURL     string    `json:"burp_mcp_url"`
+	PreserveGuides bool      `json:"preserve_guides,omitempty"`
 }
 
 // DefaultConfig returns a new Config with default values
@@ -42,7 +43,9 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
-	cfg.applyDefaults()
+	if cfg.BurpMCPURL == "" {
+		cfg.BurpMCPURL = DefaultBurpMCPURL
+	}
 
 	return &cfg, nil
 }
@@ -58,18 +61,5 @@ func (c *Config) Save(path string) error {
 		return err
 	}
 
-	// Write atomically by writing to temp file then renaming
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return err
-	}
-
-	return os.Rename(tmpPath, path)
-}
-
-// applyDefaults fills in zero values with defaults
-func (c *Config) applyDefaults() {
-	if c.BurpMCPURL == "" {
-		c.BurpMCPURL = DefaultBurpMCPURL
-	}
+	return os.WriteFile(path, data, 0644)
 }

@@ -92,6 +92,17 @@ func parseExport(args []string) error {
 
 Export a flow to disk for editing.
 
+Creates a request bundle in .sectool/requests/<bundle_id>/ containing:
+  request.http       HTTP headers (with body placeholder)
+  body.bin           Request body (edit directly for modifications)
+  request.meta.json  Metadata (method, URL, timestamps)
+
+After replay, response files are added:
+  response.http      Response headers
+  response.body.bin  Response body
+
+Edit body.bin for body modifications; Content-Length is auto-updated on replay.
+
 Options:
 `)
 		fs.PrintDefaults()

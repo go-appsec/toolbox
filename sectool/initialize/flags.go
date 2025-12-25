@@ -13,7 +13,7 @@ func Parse(args []string) error {
 	fs.BoolVar(&reset, "reset", false, "clear all state and reinitialize")
 
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: sectool init <mode> [options]
+		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool init <mode> [options]
 
 Initialize working directory for agent work.
 
@@ -26,21 +26,29 @@ Options:
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
-		return err
+	// Find mode first (first non-flag argument)
+	var mode string
+	var flagArgs []string
+	for _, arg := range args {
+		if arg == "test-report" || arg == "explore" {
+			mode = arg
+		} else {
+			flagArgs = append(flagArgs, arg)
+		}
 	}
 
-	remaining := fs.Args()
-	if len(remaining) < 1 {
+	if mode == "" {
 		fs.Usage()
 		return errors.New("mode required: test-report or explore")
 	}
 
-	mode := remaining[0]
-	switch mode {
-	case "test-report", "explore":
-		return run(mode, reset)
-	default:
-		return fmt.Errorf("unknown init mode: %s (expected test-report or explore)", mode)
+	if err := fs.Parse(flagArgs); err != nil {
+		return err
 	}
+
+	if len(fs.Args()) > 0 {
+		return fmt.Errorf("unknown init mode: %s (expected test-report or explore)", fs.Args()[0])
+	}
+
+	return run(mode, reset)
 }

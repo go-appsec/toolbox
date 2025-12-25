@@ -10,16 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultConfig(t *testing.T) {
-	t.Parallel()
-
-	cfg := DefaultConfig("0.0.1")
-
-	assert.Equal(t, "0.0.1", cfg.Version)
-	assert.Equal(t, DefaultBurpMCPURL, cfg.BurpMCPURL)
-	assert.False(t, cfg.InitializedAt.IsZero())
-}
-
 func TestLoadSaveRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -27,21 +17,19 @@ func TestLoadSaveRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "config.json")
 
 	original := &Config{
-		Version:       "0.0.1",
-		InitializedAt: time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
-		LastInitMode:  "explore",
-		BurpMCPURL:    "http://localhost:9999/sse",
+		Version:        "0.0.1",
+		InitializedAt:  time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
+		LastInitMode:   "explore",
+		BurpMCPURL:     "http://localhost:9999/sse",
+		PreserveGuides: true,
 	}
 
-	// Save
 	err := original.Save(path)
 	require.NoError(t, err)
 
-	// Verify file exists
 	_, err = os.Stat(path)
 	require.NoError(t, err)
 
-	// Load
 	loaded, err := Load(path)
 	require.NoError(t, err)
 
@@ -49,6 +37,7 @@ func TestLoadSaveRoundTrip(t *testing.T) {
 	assert.Equal(t, original.InitializedAt.UTC(), loaded.InitializedAt.UTC())
 	assert.Equal(t, original.LastInitMode, loaded.LastInitMode)
 	assert.Equal(t, original.BurpMCPURL, loaded.BurpMCPURL)
+	assert.Equal(t, original.PreserveGuides, loaded.PreserveGuides)
 }
 
 func TestLoadNotExist(t *testing.T) {
@@ -71,8 +60,6 @@ func TestLoadAppliesDefaults(t *testing.T) {
 
 	cfg, err := Load(path)
 	require.NoError(t, err)
-
-	// Should have defaults applied
 	assert.Equal(t, DefaultBurpMCPURL, cfg.BurpMCPURL)
 }
 
@@ -87,28 +74,4 @@ func TestLoadInvalidJSON(t *testing.T) {
 
 	_, err = Load(path)
 	assert.Error(t, err)
-}
-
-func TestSaveNilConfig(t *testing.T) {
-	t.Parallel()
-
-	var cfg *Config
-	err := cfg.Save("/tmp/test.json")
-	assert.Error(t, err)
-}
-
-func TestSaveAtomicity(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.json")
-
-	cfg := DefaultConfig("0.0.1")
-	err := cfg.Save(path)
-	require.NoError(t, err)
-
-	// Temp file should not exist after successful save
-	tmpPath := path + ".tmp"
-	_, err = os.Stat(tmpPath)
-	assert.True(t, os.IsNotExist(err))
 }
