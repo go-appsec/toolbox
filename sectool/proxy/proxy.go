@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -134,6 +133,8 @@ func export(timeout time.Duration, flowID, out string) error {
 	return nil
 }
 
+// TODO: planned intercept and rule features
+/*
 func intercept(timeout time.Duration, state string) error {
 	_, _ = timeout, state
 	return errors.New("not implemented: proxy intercept (planned for future release)")
@@ -153,3 +154,4 @@ func ruleRemove(timeout time.Duration, ruleID string) error {
 	_, _ = timeout, ruleID
 	return errors.New("not implemented: proxy rule remove (planned for future release)")
 }
+*/

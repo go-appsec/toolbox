@@ -135,6 +135,8 @@ Options:
 	return export(timeout, fs.Args()[0], out)
 }
 
+// TODO: planned intercept and rule features
+/*
 func parseIntercept(args []string) error {
 	fs := pflag.NewFlagSet("proxy intercept", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
@@ -283,3 +285,4 @@ Options:
 
 	return ruleRemove(timeout, fs.Args()[0])
 }
+*/
