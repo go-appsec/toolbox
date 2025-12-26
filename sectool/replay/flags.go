@@ -76,11 +76,13 @@ Input sources (exactly one required):
   --file <path>         Replay from raw HTTP file (- for stdin)
 
 File format (--file):
-  Standard HTTP/1.1 request format with CRLF line endings. First line is the
-  request line, followed by headers, blank line, then optional body:
-    GET /path HTTP/1.1\r\n
-    Host: example.com\r\n
-    \r\n
+  Standard HTTP/1.1 request format. First line is the request line, followed
+  by headers, a blank line, then optional body.
+
+  IMPORTANT: HTTP requires CRLF (\r\n) line endings, not Unix-style LF (\n).
+  Most text editors save with LF by default. To create a valid request file:
+    printf 'GET / HTTP/1.1\r\nHost: example.com\r\n\r\n' > request.http
+  Or use 'sectool proxy export' to create an editable bundle from captured traffic.
 
 Validation:
   Requests are validated before sending. If validation fails, the request

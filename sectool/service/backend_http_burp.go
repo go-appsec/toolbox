@@ -49,12 +49,28 @@ func (b *BurpBackend) OnConnectionLost(handler func(error)) {
 }
 
 // ensureConnected checks if the client is connected and attempts reconnection if not.
+// Uses a fresh context to avoid issues with already-cancelled parent context.
 func (b *BurpBackend) ensureConnected(ctx context.Context) error {
 	if b.client.IsConnected() {
 		return nil
 	}
+	return b.forceReconnect()
+}
+
+// forceReconnect closes any existing connection and establishes a new one.
+// Used when we know the connection is dead (e.g., after a connection error).
+func (b *BurpBackend) forceReconnect() error {
 	log.Printf("burp: connection lost, attempting reconnection...")
-	if err := b.client.Connect(ctx); err != nil {
+
+	// Close existing connection first to ensure clean state
+	_ = b.client.Close()
+
+	// Use a fresh context for reconnection - the original context may be cancelled
+	// which would cause reconnection to fail immediately.
+	reconnCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := b.client.Connect(reconnCtx); err != nil {
 		return fmt.Errorf("reconnection failed: %w", err)
 	}
 	log.Printf("burp: reconnected successfully")
@@ -74,7 +90,8 @@ func isConnectionError(err error) bool {
 	return strings.Contains(errStr, "connection") ||
 		strings.Contains(errStr, "transport") ||
 		strings.Contains(errStr, "EOF") ||
-		strings.Contains(errStr, "context canceled")
+		strings.Contains(errStr, "context canceled") ||
+		strings.Contains(errStr, "deadline exceeded")
 }
 
 func (b *BurpBackend) GetProxyHistory(ctx context.Context, count int, offset uint32) ([]ProxyEntry, error) {
@@ -85,9 +102,10 @@ func (b *BurpBackend) GetProxyHistory(ctx context.Context, count int, offset uin
 
 	entries, err := b.client.GetProxyHistory(ctx, count, int(offset))
 	if err != nil {
-		// On connection error, try reconnection and retry once
+		// On connection error, force reconnection and retry once
 		if isConnectionError(err) {
-			if reconnErr := b.ensureConnected(ctx); reconnErr != nil {
+			log.Printf("burp: GetProxyHistory failed with connection error, retrying: %v", err)
+			if reconnErr := b.forceReconnect(); reconnErr != nil {
 				return nil, err // return original error
 			}
 			entries, err = b.client.GetProxyHistory(ctx, count, int(offset))
@@ -136,8 +154,9 @@ func (b *BurpBackend) SendRequest(ctx context.Context, name string, req SendRequ
 
 	result, err := b.doSendRequest(ctx, name, req)
 	if err != nil && isConnectionError(err) {
-		// Try reconnection and retry once
-		if reconnErr := b.ensureConnected(ctx); reconnErr != nil {
+		// Force reconnection and retry once
+		log.Printf("burp: SendRequest failed with connection error, retrying: %v", err)
+		if reconnErr := b.forceReconnect(); reconnErr != nil {
 			return nil, err // return original error
 		}
 		return b.doSendRequest(ctx, name, req)

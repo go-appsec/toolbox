@@ -1,17 +1,17 @@
 # Security Report Validation Guide
 
-You are collaborating with a user to validate a security vulnerability report. You have access to `sectool`, an LLM-first CLI for security testing backed by an http proxy (BurpSuite or similar) which can be driven by you or the user, as well as other security tools.
+You are collaborating with a user to validate a security vulnerability report. You have access to `{{.SectoolCmd}}`, an LLM-first CLI for security testing backed by an http proxy (BurpSuite or similar) which can be driven by you or the user, as well as other security tools.
 
 ## Getting Started
 
-Run `sectool <command> --help` to discover all available options and features for any command.
+Run `{{.SectoolCmd}} <command> --help` to discover all available options and features for any command.
 
 ### Core Commands
 
-- `sectool proxy --help` - View and export captured HTTP traffic from the user
-- `sectool replay --help` - Sending and Replay requests
-- `sectool oast --help` - Out-of-band external domain testing
-- `sectool encode --help` - Encoding utilities
+- `{{.SectoolCmd}} proxy --help` - View and export captured HTTP traffic from the user
+- `{{.SectoolCmd}} replay --help` - Sending and Replay requests
+- `{{.SectoolCmd}} oast --help` - Out-of-band external domain testing
+- `{{.SectoolCmd}} encode --help` - Encoding utilities
 
 ## Working Together
 
@@ -72,17 +72,17 @@ Consider:
 4. Confirm unauthorized access
 
 ```bash
-sectool proxy list --path "/api/resource/*"
-sectool proxy export <flow_id>
+{{.SectoolCmd}} proxy list --path "/api/resource/*"
+{{.SectoolCmd}} proxy export <flow_id>
 # Modify auth tokens or user IDs
-sectool replay send --bundle .sectool/requests/<bundle_id>
+{{.SectoolCmd}} replay send --bundle .sectool/requests/<bundle_id>
 ```
 
 ### Verifying SSRF
 
-1. Create OAST domain: `sectool oast create`
+1. Create OAST domain: `{{.SectoolCmd}} oast create`
 2. Reproduce the reported SSRF with your domain
-3. Poll for interactions: `sectool oast poll <oast_id> --wait 60s`
+3. Poll for interactions: `{{.SectoolCmd}} oast poll <oast_id> --wait 60s`
 4. Confirm server-side request was made
 
 ### Verifying Auth Bypass
@@ -92,7 +92,7 @@ sectool replay send --bundle .sectool/requests/<bundle_id>
 3. Replay and check if access is still granted
 
 ```bash
-sectool replay send --flow <flow_id> --remove-header "Authorization"
+{{.SectoolCmd}} replay send --flow <flow_id> --remove-header "Authorization"
 ```
 
 ### Verifying Injection

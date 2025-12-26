@@ -42,6 +42,8 @@ func writeBundle(dir string, headers, body []byte, meta *bundleMeta) error {
 		headerPart = headerPart[:idx+4]
 	}
 
+	// Clone to break shared memory with body slice (both may reference same underlying array)
+	headerPart = bytes.Clone(headerPart)
 	requestContent := append(headerPart, []byte(bodyPlaceholder+"\n")...)
 	if err := os.WriteFile(filepath.Join(dir, "request.http"), requestContent, 0644); err != nil {
 		return fmt.Errorf("failed to write request.http: %w", err)

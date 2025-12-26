@@ -121,8 +121,25 @@ type validationIssue struct {
 func validateRequest(raw []byte) []validationIssue {
 	var issues []validationIssue
 
+	headers, body := splitHeadersBody(raw)
+
+	// Check line endings FIRST - this is the most common issue with hand-edited files
+	// HTTP requires CRLF (\r\n), not LF (\n)
+	if issue := checkLineEndings(headers); issue != "" {
+		issues = append(issues, validationIssue{
+			Check:    "crlf",
+			Severity: "error",
+			Detail:   issue + "; HTTP requires CRLF (\\r\\n) line endings, use --force to send anyway",
+		})
+		// Skip further validation since parse will fail due to line endings
+		return issues
+	}
+
+	// Transform for validation only (HTTP/2 -> HTTP/1.1 for Go's parser)
+	validationRaw := transformRequestForValidation(raw)
+
 	// Use Go's parser to check structure
-	_, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(raw)))
+	_, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(validationRaw)))
 	if err != nil {
 		issues = append(issues, validationIssue{
 			Check:    "parse",
@@ -132,7 +149,6 @@ func validateRequest(raw []byte) []validationIssue {
 	}
 
 	// Check Content-Length matches body
-	headers, body := splitHeadersBody(raw)
 	clMatch := regexp.MustCompile(`(?im)^Content-Length:\s*(\d+)`).FindSubmatch(headers)
 	if clMatch != nil {
 		cl, _ := strconv.Atoi(string(clMatch[1]))
@@ -151,16 +167,6 @@ func validateRequest(raw []byte) []validationIssue {
 			Check:    "host",
 			Severity: "warning",
 			Detail:   "missing Host header",
-		})
-	}
-
-	// Check line endings (warning only)
-	// Detect bare LF (not preceded by CR) which indicates improper line endings
-	if issue := checkLineEndings(headers); issue != "" {
-		issues = append(issues, validationIssue{
-			Check:    "crlf",
-			Severity: "warning",
-			Detail:   issue,
 		})
 	}
 

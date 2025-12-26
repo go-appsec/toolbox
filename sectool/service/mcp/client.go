@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -26,8 +27,8 @@ const (
 	// ProtocolVersion is the MCP protocol version we support.
 	ProtocolVersion = "2024-11-05"
 
-	// DefaultConnectTimeout is the timeout for initial connection.
-	DefaultConnectTimeout = 30 * time.Second
+	// DefaultDialTimeout is the timeout for establishing a connection.
+	DefaultDialTimeout = 30 * time.Second
 
 	// endOfItemsMarker is returned by Burp MCP when pagination reaches the end.
 	endOfItemsMarker = "Reached end of items"
@@ -75,14 +76,28 @@ func (c *BurpClient) Connect(ctx context.Context) error {
 		return nil
 	}
 
+	// Close any stale client before reconnecting
+	if c.mcpClient != nil {
+		log.Printf("mcp: closing stale connection before reconnect")
+		_ = c.mcpClient.Close()
+		c.mcpClient = nil
+	}
+
 	log.Printf("mcp: connecting to %s", c.url)
 
-	// Use provided HTTP client or create one with timeout
+	// Use provided HTTP client or create one suitable for SSE
 	httpClient := c.httpClient
 	if httpClient == nil {
 		httpClient = &http.Client{
-			Timeout:   DefaultConnectTimeout,
-			Transport: http.DefaultTransport,
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   DefaultDialTimeout,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: DefaultDialTimeout,
+				IdleConnTimeout:       90 * time.Second,
+			},
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return errors.New("redirect not allowed")
 			},
@@ -94,7 +109,9 @@ func (c *BurpClient) Connect(ctx context.Context) error {
 		return fmt.Errorf("failed to create MCP client: %w", err)
 	}
 
-	if err := mcpClient.Start(ctx); err != nil {
+	// Use context.Background() for SSE stream - it needs to be long-lived
+	// The passed ctx is only used for the initial connect timeout via httpClient
+	if err := mcpClient.Start(context.Background()); err != nil {
 		return fmt.Errorf("failed to connect to Burp MCP at %s: %w", c.url, err)
 	}
 

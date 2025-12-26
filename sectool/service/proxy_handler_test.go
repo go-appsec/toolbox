@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -460,6 +461,46 @@ func TestHandleProxyExport(t *testing.T) {
 		assert.FileExists(t, filepath.Join(exportResp.BundlePath, "request.http"))
 		assert.FileExists(t, filepath.Join(exportResp.BundlePath, "body.bin"))
 		assert.FileExists(t, filepath.Join(exportResp.BundlePath, "request.meta.json"))
+	})
+
+	t.Run("body_not_corrupted", func(t *testing.T) {
+		// Regression test: verify body.bin is not corrupted by header manipulation.
+		// Previously, splitHeadersBody returned slices sharing the same underlying array,
+		// and append() to headers could overwrite body data.
+		srv, mockMCP, cleanup := testServerWithMCP(t)
+		t.Cleanup(cleanup)
+
+		bodyContent := `{"user":"test","token":"abc123xyz"}`
+		mockMCP.AddProxyEntry(
+			"POST /api/login HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\n\r\n"+bodyContent,
+			"HTTP/1.1 200 OK\r\n\r\n",
+			"",
+		)
+
+		// List to get flow ID
+		w := doRequest(t, srv, "POST", "/proxy/list", ProxyListRequest{Method: "POST"})
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var listAPIResp APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listAPIResp))
+		var listResp ProxyListResponse
+		require.NoError(t, json.Unmarshal(listAPIResp.Data, &listResp))
+		require.Len(t, listResp.Flows, 1)
+
+		// Export the flow
+		w = doRequest(t, srv, "POST", "/proxy/export", ProxyExportRequest{FlowID: listResp.Flows[0].FlowID})
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var exportAPIResp APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &exportAPIResp))
+		var exportResp ProxyExportResponse
+		require.NoError(t, json.Unmarshal(exportAPIResp.Data, &exportResp))
+
+		// Read body.bin and verify it matches original body exactly
+		bodyPath := filepath.Join(exportResp.BundlePath, "body.bin")
+		actualBody, err := os.ReadFile(bodyPath)
+		require.NoError(t, err)
+		assert.Equal(t, bodyContent, string(actualBody), "body.bin should not be corrupted by header placeholder insertion")
 	})
 
 	t.Run("not_found", func(t *testing.T) {

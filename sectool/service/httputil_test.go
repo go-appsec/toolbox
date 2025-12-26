@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReadResponseStatusCode(t *testing.T) {
@@ -104,6 +105,54 @@ func TestReadResponseStatusCode(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.expected, readResponseStatusCode(tc.input))
+		})
+	}
+}
+
+func TestTransformRequestForValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    []byte
+		expected []byte
+	}{
+		{
+			name:     "http_2_to_http_1_1",
+			input:    []byte("POST /api/example HTTP/2\r\nHost: example.com\r\n\r\n"),
+			expected: []byte("POST /api/example HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+		},
+		{
+			name:     "get_http_2",
+			input:    []byte("GET /path HTTP/2\r\nHost: test.com\r\n\r\n"),
+			expected: []byte("GET /path HTTP/1.1\r\nHost: test.com\r\n\r\n"),
+		},
+		{
+			name:     "http_1_1_unchanged",
+			input:    []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			expected: []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+		},
+		{
+			name:     "http_1_0_unchanged",
+			input:    []byte("GET / HTTP/1.0\r\nHost: example.com\r\n\r\n"),
+			expected: []byte("GET / HTTP/1.0\r\nHost: example.com\r\n\r\n"),
+		},
+		{
+			name:     "http_2_with_body",
+			input:    []byte("POST /api HTTP/2\r\nHost: test.com\r\nContent-Length: 4\r\n\r\ntest"),
+			expected: []byte("POST /api HTTP/1.1\r\nHost: test.com\r\nContent-Length: 4\r\n\r\ntest"),
+		},
+		{
+			name:     "no_crlf",
+			input:    []byte("GET / HTTP/2"),
+			expected: []byte("GET / HTTP/2"),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := transformRequestForValidation(tc.input)
+			require.Equal(t, string(tc.expected), string(result))
 		})
 	}
 }

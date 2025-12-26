@@ -122,12 +122,58 @@ func TestEmbeddedTemplates(t *testing.T) {
 
 	t.Run("explore_guide_not_empty", func(t *testing.T) {
 		assert.NotEmpty(t, exploreGuide)
-		assert.Contains(t, exploreGuide, "sectool")
+		assert.Contains(t, exploreGuide, "{{.SectoolCmd}}")
 	})
 
 	t.Run("test_report_guide_not_empty", func(t *testing.T) {
 		assert.NotEmpty(t, testReportGuide)
-		assert.Contains(t, testReportGuide, "sectool")
+		assert.Contains(t, testReportGuide, "{{.SectoolCmd}}")
+	})
+}
+
+func TestRenderTemplate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("substitutes_sectool_cmd", func(t *testing.T) {
+		tmpl := "Run `{{.SectoolCmd}} --help` for help"
+		result, err := renderTemplate(tmpl, templateData{SectoolCmd: "./bin/sectool"})
+		require.NoError(t, err)
+		assert.Equal(t, "Run `./bin/sectool --help` for help", result)
+	})
+
+	t.Run("handles_multiple_occurrences", func(t *testing.T) {
+		tmpl := "{{.SectoolCmd}} foo\n{{.SectoolCmd}} bar"
+		result, err := renderTemplate(tmpl, templateData{SectoolCmd: "sectool"})
+		require.NoError(t, err)
+		assert.Equal(t, "sectool foo\nsectool bar", result)
+	})
+
+	t.Run("error_on_invalid_template", func(t *testing.T) {
+		_, err := renderTemplate("{{.Invalid", templateData{SectoolCmd: "sectool"})
+		assert.Error(t, err)
+	})
+}
+
+func TestRelativeOrAbsPath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns_relative_with_prefix", func(t *testing.T) {
+		wd, err := os.Getwd()
+		require.NoError(t, err)
+
+		exePath := filepath.Join(wd, "bin", "sectool")
+		result := relativeOrAbsPath(exePath)
+		assert.Equal(t, "./bin/sectool", result)
+	})
+
+	t.Run("returns_absolute_for_parent_dir", func(t *testing.T) {
+		wd, err := os.Getwd()
+		require.NoError(t, err)
+
+		exePath := filepath.Join(filepath.Dir(wd), "other", "sectool")
+		result := relativeOrAbsPath(exePath)
+		// Should return absolute path since it's outside working dir
+		assert.Equal(t, exePath, result)
 	})
 }
 

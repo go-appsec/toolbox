@@ -86,6 +86,25 @@ func readResponseBytes(resp []byte) (*http.Response, error) {
 	return http.ReadResponse(bufio.NewReader(bytes.NewReader(resp)), nil)
 }
 
+// transformRequestForValidation converts HTTP/2 request lines to HTTP/1.1 for Go's parser.
+// "POST /path HTTP/2\r\n" -> "POST /path HTTP/1.1\r\n"
+// The original request should still be sent to Burp (which handles HTTP/2 natively).
+func transformRequestForValidation(raw []byte) []byte {
+	firstLineEnd := bytes.Index(raw, []byte("\r\n"))
+	if firstLineEnd < 0 {
+		return raw
+	}
+	firstLine := raw[:firstLineEnd]
+	if bytes.HasSuffix(firstLine, []byte(" HTTP/2")) {
+		transformed := make([]byte, 0, len(raw))
+		transformed = append(transformed, firstLine[:len(firstLine)-7]...)
+		transformed = append(transformed, []byte(" HTTP/1.1")...)
+		transformed = append(transformed, raw[firstLineEnd:]...)
+		return transformed
+	}
+	return raw
+}
+
 // readResponseStatusCode extracts the HTTP status code from raw response bytes.
 // Returns 0 if the status code cannot be extracted or is invalid.
 // Handles both \r\n and \n line endings, and validates status code range.
