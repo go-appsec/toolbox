@@ -415,6 +415,91 @@ func TestHandleProxyList(t *testing.T) {
 		assert.Len(t, listResp.Flows, 1)
 		assert.Equal(t, "other.com", listResp.Flows[0].Host)
 	})
+
+	t.Run("limit", func(t *testing.T) {
+		srv, mockMCP, cleanup := testServerWithMCP(t)
+		t.Cleanup(cleanup)
+
+		mockMCP.AddProxyEntries(
+			MakeProxyEntry("GET", "/api/1", "example.com", 200, "ok"),
+			MakeProxyEntry("GET", "/api/2", "example.com", 200, "ok"),
+			MakeProxyEntry("GET", "/api/3", "example.com", 200, "ok"),
+			MakeProxyEntry("GET", "/api/4", "example.com", 200, "ok"),
+			MakeProxyEntry("GET", "/api/5", "example.com", 200, "ok"),
+		)
+
+		// Limit to 3 flows
+		w := doRequest(t, srv, "POST", "/proxy/list", ProxyListRequest{Limit: 3})
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var listResp ProxyListResponse
+		require.NoError(t, json.Unmarshal(resp.Data, &listResp))
+
+		// Should return exactly 3 flows
+		assert.Len(t, listResp.Flows, 3)
+	})
+
+	t.Run("limit_triggers_flow_mode", func(t *testing.T) {
+		srv, mockMCP, cleanup := testServerWithMCP(t)
+		t.Cleanup(cleanup)
+
+		mockMCP.AddProxyEntries(
+			MakeProxyEntry("GET", "/api/1", "example.com", 200, "ok"),
+			MakeProxyEntry("GET", "/api/1", "example.com", 200, "ok"),
+		)
+
+		// Limit without other filters should trigger flow mode
+		w := doRequest(t, srv, "POST", "/proxy/list", ProxyListRequest{Limit: 10})
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var listResp ProxyListResponse
+		require.NoError(t, json.Unmarshal(resp.Data, &listResp))
+
+		// Should have flows (not aggregates) when limit is set
+		assert.NotEmpty(t, listResp.Flows)
+		assert.Empty(t, listResp.Aggregates)
+	})
+
+	t.Run("since_last_with_limit", func(t *testing.T) {
+		srv, mockMCP, cleanup := testServerWithMCP(t)
+		t.Cleanup(cleanup)
+
+		mockMCP.AddProxyEntries(
+			MakeProxyEntry("GET", "/api/1", "example.com", 200, "ok"),
+			MakeProxyEntry("GET", "/api/2", "example.com", 200, "ok"),
+			MakeProxyEntry("GET", "/api/3", "example.com", 200, "ok"),
+			MakeProxyEntry("GET", "/api/4", "example.com", 200, "ok"),
+		)
+
+		// First request with limit 2
+		w := doRequest(t, srv, "POST", "/proxy/list", ProxyListRequest{Limit: 2})
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var listResp ProxyListResponse
+		require.NoError(t, json.Unmarshal(resp.Data, &listResp))
+		assert.Len(t, listResp.Flows, 2)
+
+		// Second request with --since last should return remaining flows
+		w = doRequest(t, srv, "POST", "/proxy/list", ProxyListRequest{Since: "last", Limit: 10})
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		require.NoError(t, json.Unmarshal(resp.Data, &listResp))
+
+		// Should return the remaining 2 flows (not all 4)
+		assert.Len(t, listResp.Flows, 2)
+	})
 }
 
 func TestHandleProxyExport(t *testing.T) {

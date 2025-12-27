@@ -58,13 +58,6 @@ proxy list [options]
   Without filters: aggregated summary grouped by host/path/method/status
   With filters: individual flows with flow_id for export
 
-  Examples:
-    sectool proxy list                                    # aggregated summary
-    sectool proxy list --host api.example.com             # flows for host
-    sectool proxy list --host "*.example.com" --method POST,PUT
-    sectool proxy list --path "/api/*" --status 200,201
-    sectool proxy list --since last                       # new flows only
-
   Options:
     --host <pattern>        host glob pattern (*, ?)
     --path <pattern>        path glob pattern (*, ?)
@@ -75,6 +68,14 @@ proxy list [options]
     --since <id>            flows after flow_id, or 'last' for new flows
     --exclude-host <pat>    exclude matching hosts
     --exclude-path <pat>    exclude matching paths
+    --limit <n>             maximum number of flows to return
+
+  Examples:
+    sectool proxy list                                    # aggregated summary
+    sectool proxy list --host api.example.com             # flows for host
+    sectool proxy list --host "*.example.com" --method POST,PUT
+    sectool proxy list --path "/api/*" --status 200,201
+    sectool proxy list --since last --limit 10            # new flows only, at most 10 results
 
   Output: Markdown table. With filters: flow_id, method, host, path, status, size
 
@@ -84,11 +85,6 @@ proxy export <flow_id>
 
   Export a captured request to disk for editing and replay.
 
-  Examples:
-    sectool proxy list --host example.com     # find flow_id
-    sectool proxy export f7k2x                # outputs: .sectool/requests/f7k2x/
-    sectool replay send --bundle .sectool/requests/f7k2x
-
   Creates bundle in .sectool/requests/<id>/:
     request.http       HTTP headers with body placeholder
     body.bin           request body (edit this for modifications)
@@ -96,6 +92,11 @@ proxy export <flow_id>
 
   Options:
     --out <path>            custom output directory
+
+  Examples:
+    sectool proxy list --host example.com     # find flow_id
+    sectool proxy export f7k2x                # outputs: .sectool/requests/f7k2x/
+    sectool replay send --bundle .sectool/requests/f7k2x
 
   Output: Bundle path and files created
 `)
@@ -105,6 +106,7 @@ func parseList(args []string) error {
 	fs := pflag.NewFlagSet("proxy list", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	var timeout time.Duration
+	var limit int
 	var host, path, method, status, contains, containsBody, since, excludeHost, excludePath string
 
 	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
@@ -117,6 +119,7 @@ func parseList(args []string) error {
 	fs.StringVar(&since, "since", "", "filter since flow_id or 'last'")
 	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")
 	fs.StringVar(&excludePath, "exclude-path", "", "exclude paths matching pattern")
+	fs.IntVar(&limit, "limit", 0, "maximum number of flows to return")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `Usage: sectool proxy list [options]
@@ -130,6 +133,7 @@ Filter examples:
   --path "/api/*"                 Path prefix
   --method POST,PUT               Multiple methods
   --status 200,201                Multiple status codes
+  --limit 10                      Return at most 10 flows
 
 Options:
 `)
@@ -140,7 +144,7 @@ Options:
 		return err
 	}
 
-	return list(timeout, host, path, method, status, contains, containsBody, since, excludeHost, excludePath)
+	return list(timeout, host, path, method, status, contains, containsBody, since, excludeHost, excludePath, limit)
 }
 
 func parseExport(args []string) error {

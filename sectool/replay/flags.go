@@ -58,13 +58,6 @@ replay send [options]
     --bundle <path>       replay from exported bundle directory
     --file <path>         replay from raw HTTP file (- for stdin)
 
-  Examples:
-    sectool replay send --flow f7k2x
-    sectool replay send --flow f7k2x --set-header "Authorization: Bearer tok"
-    sectool replay send --flow f7k2x --path /api/v2/users --set-query "id=123"
-    sectool replay send --bundle .sectool/requests/abc123
-    sectool replay send --file request.http --body payload.bin
-
   Request modifications (combine multiple):
     --set-header "Name: Value"     add or replace header
     --remove-header "Name"         remove header
@@ -80,6 +73,13 @@ replay send [options]
     --force                        send even if validation fails
     --body <path>                  body file (with --file)
 
+  Examples:
+    sectool replay send --flow f7k2x
+    sectool replay send --flow f7k2x --set-header "Authorization: Bearer tok"
+    sectool replay send --flow f7k2x --path /api/v2/users --set-query "id=123"
+    sectool replay send --bundle .sectool/requests/abc123
+    sectool replay send --file request.http --body payload.bin
+
   Output: Markdown with replay_id, status, headers, body preview
 
 ---
@@ -89,7 +89,6 @@ replay get <replay_id>
   Retrieve full details of a previous replay.
 
   Example:
-    sectool replay send --flow f7k2x        # returns replay_id
     sectool replay get rpl_abc123           # get full response
 
   Output: Markdown with status, headers, and complete response body

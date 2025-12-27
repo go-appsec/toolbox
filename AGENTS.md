@@ -177,8 +177,9 @@ All endpoints over Unix socket at `.sectool/service/socket`:
 
 ## Development Guidelines
 
-### CLI Help Text
+### CLI Conventions
 
+- All list operations (`proxy list`, `oast list`, `oast poll`) must support `--limit` flag
 - Flatten --help details at the first subcommand level (e.g., `sectool proxy --help` shows full docs for list/export)
 - Second tier subcommand help flags also exist and must be kept in sync
 

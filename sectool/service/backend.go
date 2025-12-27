@@ -63,7 +63,9 @@ type OastBackend interface {
 	// idOrDomain accepts either the short ID or the full domain.
 	// since filters events: empty returns all, "last" returns since last poll, or an event ID.
 	// wait specifies how long to block waiting for events (0 = return immediately).
-	PollSession(ctx context.Context, idOrDomain string, since string, wait time.Duration) (*OastPollResultInfo, error)
+	// limit caps the number of events returned (0 = no limit). When used with "since last",
+	// the last position is updated to the last returned event (for pagination).
+	PollSession(ctx context.Context, idOrDomain string, since string, wait time.Duration, limit int) (*OastPollResultInfo, error)
 
 	// GetEvent retrieves a single event by ID from a session.
 	// Returns the full event details without truncation.

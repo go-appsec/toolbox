@@ -30,12 +30,7 @@ LLM coding agents to perform security testing.
 
 init explore
 
-  Create guide for exploratory security testing of a feature or web app.
-  Agent will systematically probe for vulnerabilities across OWASP categories.
-
-  Example:
-    sectool init explore
-    claude --system-prompt-file .sectool/AGENT-explore.md
+  Prepare working directory for exploratory security testing of an API or web app.
 
   Creates: .sectool/AGENT-explore.md
 
@@ -43,12 +38,8 @@ init explore
 
 init test-report
 
-  Create guide for validating a known issue or bug bounty report.
+  Prepare working directory for validating a known issue or bug bounty report.
   Agent will attempt to reproduce and verify a specific vulnerability.
-
-  Example:
-    sectool init test-report
-    claude --system-prompt-file .sectool/AGENT-test-report.md
 
   Creates: .sectool/AGENT-test-report.md
 

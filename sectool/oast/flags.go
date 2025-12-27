@@ -61,9 +61,6 @@ oast create
 
   Create a new OAST session with unique domain.
 
-  Example:
-    sectool oast create
-
   Output: oast_id and domain (e.g., xyz123.oast.fun)
 
 ---
@@ -72,14 +69,15 @@ oast poll <oast_id> [options]
 
   Poll for out-of-band interactions (DNS, HTTP).
 
-  Examples:
-    sectool oast poll abc123                    # all events
-    sectool oast poll abc123 --since last       # only new events
-    sectool oast poll abc123 --wait 30s         # wait up to 30s for events
-
   Options:
     --since <id>       events after event_id, or 'last' for new events
     --wait <dur>       max wait time for events (default: 2m, max: 2m)
+    --limit <n>        maximum number of events to return
+
+  Examples:
+    sectool oast poll abc123 --limit 10         # return at most 10 events
+    sectool oast poll abc123 --since last       # only new events
+    sectool oast poll abc123 --wait 30s         # all events, wait up to 30s for events (can be combined with restrictions above)
 
   Output: Markdown table with event_id, time, type, source_ip, subdomain
 
@@ -97,12 +95,12 @@ oast get <oast_id> <event_id>
 
 ---
 
-oast list
+oast list [options]
 
-  List all active OAST sessions.
+  List all active OAST sessions (most recent first).
 
-  Example:
-    sectool oast list
+  Options:
+    --limit <n>        maximum number of sessions to return
 
   Output: Markdown table with oast_id, domain, created_at
 
@@ -111,9 +109,6 @@ oast list
 oast delete <oast_id>
 
   Delete an OAST session.
-
-  Example:
-    sectool oast delete abc123
 
   Output: Confirmation message
 `)
@@ -148,10 +143,12 @@ func parsePoll(args []string) error {
 	fs.SetInterspersed(true)
 	var timeout, wait time.Duration
 	var since string
+	var limit int
 
 	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
 	fs.StringVar(&since, "since", "", "filter events since event_id or 'last'")
 	fs.DurationVar(&wait, "wait", 120*time.Second, "max wait time for events (max 120s)")
+	fs.IntVar(&limit, "limit", 0, "maximum number of events to return")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `Usage: sectool oast poll <oast_id> [options]
@@ -175,7 +172,7 @@ Options:
 		return errors.New("oast_id required (get from 'sectool oast create' or 'sectool oast list')")
 	}
 
-	return poll(timeout, fs.Args()[0], since, wait)
+	return poll(timeout, fs.Args()[0], since, wait, limit)
 }
 
 func parseGet(args []string) error {
@@ -215,13 +212,15 @@ func parseList(args []string) error {
 	fs := pflag.NewFlagSet("oast list", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	var timeout time.Duration
+	var limit int
 
 	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
+	fs.IntVar(&limit, "limit", 0, "maximum number of sessions to return (most recent first)")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `Usage: sectool oast list [options]
 
-List active OAST sessions.
+List active OAST sessions (most recent first).
 
 Options:
 `)
@@ -232,7 +231,7 @@ Options:
 		return err
 	}
 
-	return list(timeout)
+	return list(timeout, limit)
 }
 
 func parseDelete(args []string) error {

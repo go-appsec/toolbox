@@ -203,9 +203,15 @@ func (s *Server) handleProxyList(w http.ResponseWriter, r *http.Request) {
 	// Apply client-side filters
 	filtered := applyClientFilters(allEntries, &req, s.flowStore, lastOffset)
 
-	// Track max offset for updating lastOffset
+	// Apply limit if set
+	if req.Limit > 0 && len(filtered) > req.Limit {
+		filtered = filtered[:req.Limit]
+	}
+
+	// Track max offset from the filtered (and potentially limited) results
+	// This ensures --since last tracks the last returned item, not the absolute max
 	var maxOffset uint32
-	for _, e := range allEntries {
+	for _, e := range filtered {
 		if e.offset > maxOffset {
 			maxOffset = e.offset
 		}

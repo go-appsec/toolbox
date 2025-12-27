@@ -169,7 +169,7 @@ func (b *InteractshBackend) pollLoop(sess *oastSession) {
 	<-sess.stopPolling
 }
 
-func (b *InteractshBackend) PollSession(ctx context.Context, idOrDomain string, since string, wait time.Duration) (*OastPollResultInfo, error) {
+func (b *InteractshBackend) PollSession(ctx context.Context, idOrDomain string, since string, wait time.Duration, limit int) (*OastPollResultInfo, error) {
 	sess, err := b.resolveSession(idOrDomain)
 	if err != nil {
 		return nil, err
@@ -186,7 +186,12 @@ func (b *InteractshBackend) PollSession(ctx context.Context, idOrDomain string, 
 
 		events := sess.filterEvents(since)
 		if len(events) > 0 || wait == 0 || time.Now().After(deadline) {
-			sess.lastPollIdx = len(sess.events)
+			// Apply limit if set
+			if limit > 0 && len(events) > limit {
+				events = events[:limit]
+			}
+			// Update lastPollIdx based on the last returned event (for pagination with limit)
+			sess.updateLastPollIdx(events)
 			result := &OastPollResultInfo{
 				Events:       events,
 				DroppedCount: sess.droppedCount,
@@ -199,8 +204,12 @@ func (b *InteractshBackend) PollSession(ctx context.Context, idOrDomain string, 
 		select {
 		case <-ctx.Done():
 			sess.mu.Lock()
-			sess.lastPollIdx = len(sess.events)
 			events := sess.filterEvents(since)
+			// Apply limit if set
+			if limit > 0 && len(events) > limit {
+				events = events[:limit]
+			}
+			sess.updateLastPollIdx(events)
 			result := &OastPollResultInfo{
 				Events:       events,
 				DroppedCount: sess.droppedCount,
@@ -237,6 +246,24 @@ func (s *oastSession) filterEvents(since string) []OastEventInfo {
 
 	// Event ID not found - return all events
 	return s.events
+}
+
+// updateLastPollIdx updates lastPollIdx based on returned events (for --since last tracking).
+// Caller must hold s.mu.
+func (s *oastSession) updateLastPollIdx(returnedEvents []OastEventInfo) {
+	if len(returnedEvents) == 0 {
+		return
+	}
+	// Find the index of the last returned event in s.events
+	lastEventID := returnedEvents[len(returnedEvents)-1].ID
+	for i, e := range s.events {
+		if e.ID == lastEventID {
+			s.lastPollIdx = i + 1
+			return
+		}
+	}
+	// Fallback: if not found, use len(events)
+	s.lastPollIdx = len(s.events)
 }
 
 func (b *InteractshBackend) GetEvent(ctx context.Context, idOrDomain string, eventID string) (*OastEventInfo, error) {

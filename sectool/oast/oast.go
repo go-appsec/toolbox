@@ -41,7 +41,7 @@ func create(timeout time.Duration) error {
 	return nil
 }
 
-func poll(timeout time.Duration, oastID, since string, wait time.Duration) error {
+func poll(timeout time.Duration, oastID, since string, wait time.Duration, limit int) error {
 	// Extend timeout to include wait duration
 	totalTimeout := timeout + wait
 	ctx, cancel := context.WithTimeout(context.Background(), totalTimeout)
@@ -61,6 +61,7 @@ func poll(timeout time.Duration, oastID, since string, wait time.Duration) error
 		OastID: oastID,
 		Since:  since,
 		Wait:   wait.String(),
+		Limit:  limit,
 	})
 	if err != nil {
 		return fmt.Errorf("oast poll failed: %w", err)
@@ -168,7 +169,7 @@ func formatDetailKey(key string) string {
 	return strings.Join(words, " ")
 }
 
-func list(timeout time.Duration) error {
+func list(timeout time.Duration, limit int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -182,7 +183,7 @@ func list(timeout time.Duration) error {
 		return fmt.Errorf("failed to start service: %w (check %s)", err, client.LogPath())
 	}
 
-	resp, err := client.OastList(ctx)
+	resp, err := client.OastList(ctx, &service.OastListRequest{Limit: limit})
 	if err != nil {
 		return fmt.Errorf("oast list failed: %w", err)
 	}

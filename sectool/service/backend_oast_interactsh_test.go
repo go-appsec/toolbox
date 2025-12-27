@@ -50,7 +50,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		backend := NewInteractshBackend()
 		t.Cleanup(func() { _ = backend.Close() })
 
-		_, err := backend.PollSession(t.Context(), "nonexistent", "", 0)
+		_, err := backend.PollSession(t.Context(), "nonexistent", "", 0, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
@@ -70,7 +70,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		require.NoError(t, err)
 
 		// Should be able to poll by domain
-		result, err := backend.PollSession(ctx, sess.Domain, "", 0)
+		result, err := backend.PollSession(ctx, sess.Domain, "", 0, 0)
 		require.NoError(t, err)
 		assert.Empty(t, result.Events)
 
@@ -105,19 +105,19 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 			{ID: "e3", Time: time.Now(), Type: "dns"},
 		}
 
-		result, err := backend.PollSession(t.Context(), "test123", "", 0)
+		result, err := backend.PollSession(t.Context(), "test123", "", 0, 0)
 		require.NoError(t, err)
 		assert.Len(t, result.Events, 3)
 
 		// Poll with "last" should return nothing (we just polled)
-		result, err = backend.PollSession(t.Context(), "test123", "last", 0)
+		result, err = backend.PollSession(t.Context(), "test123", "last", 0, 0)
 		require.NoError(t, err)
 		assert.Empty(t, result.Events)
 
 		sess.events = append(sess.events, OastEventInfo{ID: "e4", Time: time.Now(), Type: "smtp"})
 
 		// Poll with "last" should return the new event
-		result, err = backend.PollSession(t.Context(), "test123", "last", 0)
+		result, err = backend.PollSession(t.Context(), "test123", "last", 0, 0)
 		require.NoError(t, err)
 		assert.Len(t, result.Events, 1)
 		assert.Equal(t, "e4", result.Events[0].ID)
@@ -150,19 +150,19 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		}
 
 		// Poll since e1 should return e2 and e3
-		result, err := backend.PollSession(t.Context(), "test456", "e1", 0)
+		result, err := backend.PollSession(t.Context(), "test456", "e1", 0, 0)
 		require.NoError(t, err)
 		assert.Len(t, result.Events, 2)
 		assert.Equal(t, "e2", result.Events[0].ID)
 		assert.Equal(t, "e3", result.Events[1].ID)
 
 		// Poll since e3 should return nothing
-		result, err = backend.PollSession(t.Context(), "test456", "e3", 0)
+		result, err = backend.PollSession(t.Context(), "test456", "e3", 0, 0)
 		require.NoError(t, err)
 		assert.Empty(t, result.Events)
 
 		// Poll since nonexistent ID should return all events
-		result, err = backend.PollSession(t.Context(), "test456", "nonexistent", 0)
+		result, err = backend.PollSession(t.Context(), "test456", "nonexistent", 0, 0)
 		require.NoError(t, err)
 		assert.Len(t, result.Events, 3)
 	})
@@ -202,7 +202,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 			sess.mu.Unlock()
 		}
 
-		result, err := backend.PollSession(t.Context(), "testlimit", "", 0)
+		result, err := backend.PollSession(t.Context(), "testlimit", "", 0, 0)
 		require.NoError(t, err)
 		assert.Len(t, result.Events, MaxOastEventsPerSession)
 		assert.Equal(t, 100, result.DroppedCount)
@@ -243,7 +243,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		done := make(chan pollResult, 1)
 
 		go func() {
-			result, err := backend.PollSession(ctx, "testctx", "", 30*time.Second)
+			result, err := backend.PollSession(ctx, "testctx", "", 30*time.Second, 0)
 			done <- pollResult{result, err}
 		}()
 
@@ -270,7 +270,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		done := make(chan pollResult, 1)
 
 		go func() {
-			result, err := backend.PollSession(t.Context(), "testwait", "", 5*time.Second)
+			result, err := backend.PollSession(t.Context(), "testwait", "", 5*time.Second, 0)
 			done <- pollResult{result, err}
 		}()
 
@@ -298,7 +298,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		t.Cleanup(cleanup)
 
 		start := time.Now()
-		result, err := backend.PollSession(t.Context(), "testzero", "", 0)
+		result, err := backend.PollSession(t.Context(), "testzero", "", 0, 0)
 		elapsed := time.Since(start)
 
 		require.NoError(t, err)
@@ -312,7 +312,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 
 		sess.stopped = true
 
-		_, err := backend.PollSession(t.Context(), "teststopped", "", 0)
+		_, err := backend.PollSession(t.Context(), "teststopped", "", 0, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "deleted")
 	})
@@ -326,7 +326,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 			{ID: "e2", Time: time.Now(), Type: "http"},
 		}
 
-		_, err := backend.PollSession(t.Context(), "testidx", "", 0)
+		_, err := backend.PollSession(t.Context(), "testidx", "", 0, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 2, sess.lastPollIdx)
 
@@ -335,7 +335,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		sess.events = append(sess.events, OastEventInfo{ID: "e3", Time: time.Now(), Type: "dns"})
 		sess.mu.Unlock()
 
-		_, err = backend.PollSession(t.Context(), "testidx", "last", 0)
+		_, err = backend.PollSession(t.Context(), "testidx", "last", 0, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 3, sess.lastPollIdx)
 	})

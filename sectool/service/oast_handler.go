@@ -2,8 +2,10 @@ package service
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
+	"sort"
 	"time"
 )
 
@@ -56,8 +58,8 @@ func (s *Server) handleOastPoll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("oast/poll: polling session %s (wait=%v since=%q)", req.OastID, wait, req.Since)
-	result, err := s.oastBackend.PollSession(r.Context(), req.OastID, req.Since, wait)
+	log.Printf("oast/poll: polling session %s (wait=%v since=%q limit=%d)", req.OastID, wait, req.Since, req.Limit)
+	result, err := s.oastBackend.PollSession(r.Context(), req.OastID, req.Since, wait, req.Limit)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, ErrCodeNotFound, "session not found or deleted", err.Error())
 		return
@@ -119,6 +121,12 @@ func (s *Server) handleOastGet(w http.ResponseWriter, r *http.Request) {
 
 // handleOastList handles POST /oast/list
 func (s *Server) handleOastList(w http.ResponseWriter, r *http.Request) {
+	var req OastListRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "invalid request body", err.Error())
+		return
+	}
+
 	sessions, err := s.oastBackend.ListSessions(r.Context())
 	if err != nil {
 		if IsTimeoutError(err) {
@@ -129,6 +137,16 @@ func (s *Server) handleOastList(w http.ResponseWriter, r *http.Request) {
 				"failed to list OAST sessions", err.Error())
 		}
 		return
+	}
+
+	// Sort by creation time descending (most recent first)
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+	})
+
+	// Apply limit if set
+	if req.Limit > 0 && len(sessions) > req.Limit {
+		sessions = sessions[:req.Limit]
 	}
 
 	// Convert internal sessions to API response

@@ -364,9 +364,9 @@ func (c *Client) OastGet(ctx context.Context, req *OastGetRequest) (*OastGetResp
 }
 
 // OastList lists active OAST sessions.
-func (c *Client) OastList(ctx context.Context) (*OastListResponse, error) {
+func (c *Client) OastList(ctx context.Context, req *OastListRequest) (*OastListResponse, error) {
 	var resp OastListResponse
-	if err := c.doJSONRequest(ctx, "/oast/list", nil, &resp); err != nil {
+	if err := c.doJSONRequest(ctx, "/oast/list", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

@@ -10,7 +10,7 @@ import (
 	"github.com/jentfoo/llm-security-toolbox/sectool/service"
 )
 
-func list(timeout time.Duration, host, path, method, status, contains, containsBody, since, excludeHost, excludePath string) error {
+func list(timeout time.Duration, host, path, method, status, contains, containsBody, since, excludeHost, excludePath string, limit int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -34,6 +34,7 @@ func list(timeout time.Duration, host, path, method, status, contains, containsB
 		Since:        since,
 		ExcludeHost:  excludeHost,
 		ExcludePath:  excludePath,
+		Limit:        limit,
 	})
 	if err != nil {
 		return fmt.Errorf("proxy list failed: %w", err)

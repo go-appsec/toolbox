@@ -245,6 +245,116 @@ func TestHandleOastPoll(t *testing.T) {
 		require.NoError(t, json.Unmarshal(resp.Data, &pollResp))
 		assert.Len(t, pollResp.Events, 1)
 	})
+
+	t.Run("with_limit", func(t *testing.T) {
+		srv, _, cleanup := testServerWithMCP(t)
+		t.Cleanup(cleanup)
+
+		now := time.Now()
+		backend := srv.oastBackend.(*InteractshBackend)
+		sess := &oastSession{
+			info: OastSessionInfo{
+				ID:        "testlimit",
+				Domain:    "limit.oast.fun",
+				CreatedAt: now,
+			},
+			stopPolling: make(chan struct{}),
+			events: []OastEventInfo{
+				{ID: "e1", Time: now, Type: "dns"},
+				{ID: "e2", Time: now.Add(time.Second), Type: "dns"},
+				{ID: "e3", Time: now.Add(2 * time.Second), Type: "dns"},
+				{ID: "e4", Time: now.Add(3 * time.Second), Type: "dns"},
+			},
+		}
+		backend.mu.Lock()
+		backend.sessions["testlimit"] = sess
+		backend.byDomain["limit.oast.fun"] = "testlimit"
+		backend.mu.Unlock()
+		defer func() {
+			backend.mu.Lock()
+			delete(backend.sessions, "testlimit")
+			delete(backend.byDomain, "limit.oast.fun")
+			backend.mu.Unlock()
+		}()
+
+		// Poll with limit
+		w := doRequest(t, srv, "POST", "/oast/poll", OastPollRequest{
+			OastID: "testlimit",
+			Limit:  2,
+		})
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var pollResp OastPollResponse
+		require.NoError(t, json.Unmarshal(resp.Data, &pollResp))
+		assert.Len(t, pollResp.Events, 2)
+		assert.Equal(t, "e1", pollResp.Events[0].EventID)
+		assert.Equal(t, "e2", pollResp.Events[1].EventID)
+	})
+
+	t.Run("since_last_with_limit", func(t *testing.T) {
+		srv, _, cleanup := testServerWithMCP(t)
+		t.Cleanup(cleanup)
+
+		now := time.Now()
+		backend := srv.oastBackend.(*InteractshBackend)
+		sess := &oastSession{
+			info: OastSessionInfo{
+				ID:        "testsincelimit",
+				Domain:    "sincelimit.oast.fun",
+				CreatedAt: now,
+			},
+			stopPolling: make(chan struct{}),
+			events: []OastEventInfo{
+				{ID: "e1", Time: now, Type: "dns"},
+				{ID: "e2", Time: now.Add(time.Second), Type: "dns"},
+				{ID: "e3", Time: now.Add(2 * time.Second), Type: "dns"},
+				{ID: "e4", Time: now.Add(3 * time.Second), Type: "dns"},
+			},
+		}
+		backend.mu.Lock()
+		backend.sessions["testsincelimit"] = sess
+		backend.byDomain["sincelimit.oast.fun"] = "testsincelimit"
+		backend.mu.Unlock()
+		defer func() {
+			backend.mu.Lock()
+			delete(backend.sessions, "testsincelimit")
+			delete(backend.byDomain, "sincelimit.oast.fun")
+			backend.mu.Unlock()
+		}()
+
+		// First poll with limit 2
+		w := doRequest(t, srv, "POST", "/oast/poll", OastPollRequest{
+			OastID: "testsincelimit",
+			Limit:  2,
+		})
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var pollResp OastPollResponse
+		require.NoError(t, json.Unmarshal(resp.Data, &pollResp))
+		assert.Len(t, pollResp.Events, 2)
+
+		// Second poll with --since last should return remaining events
+		w = doRequest(t, srv, "POST", "/oast/poll", OastPollRequest{
+			OastID: "testsincelimit",
+			Since:  "last",
+		})
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		require.NoError(t, json.Unmarshal(resp.Data, &pollResp))
+
+		// Should return the remaining 2 events (e3, e4)
+		assert.Len(t, pollResp.Events, 2)
+		assert.Equal(t, "e3", pollResp.Events[0].EventID)
+		assert.Equal(t, "e4", pollResp.Events[1].EventID)
+	})
 }
 
 func TestHandleOastGet(t *testing.T) {
@@ -518,6 +628,122 @@ func TestHandleOastList(t *testing.T) {
 			_, err := time.Parse(time.RFC3339, sess.CreatedAt)
 			assert.NoError(t, err, "created_at should be RFC3339 formatted")
 		}
+	})
+
+	t.Run("with_limit", func(t *testing.T) {
+		srv, _, cleanup := testServerWithMCP(t)
+		t.Cleanup(cleanup)
+
+		createdAt := time.Date(2024, 6, 15, 10, 0, 0, 0, time.UTC)
+
+		backend := srv.oastBackend.(*InteractshBackend)
+		backend.mu.Lock()
+		backend.sessions["sess1"] = &oastSession{
+			info: OastSessionInfo{
+				ID:        "sess1",
+				Domain:    "sess1.oast.fun",
+				CreatedAt: createdAt,
+			},
+			stopPolling: make(chan struct{}),
+		}
+		backend.sessions["sess2"] = &oastSession{
+			info: OastSessionInfo{
+				ID:        "sess2",
+				Domain:    "sess2.oast.fun",
+				CreatedAt: createdAt.Add(time.Hour),
+			},
+			stopPolling: make(chan struct{}),
+		}
+		backend.sessions["sess3"] = &oastSession{
+			info: OastSessionInfo{
+				ID:        "sess3",
+				Domain:    "sess3.oast.fun",
+				CreatedAt: createdAt.Add(2 * time.Hour),
+			},
+			stopPolling: make(chan struct{}),
+		}
+		backend.byDomain["sess1.oast.fun"] = "sess1"
+		backend.byDomain["sess2.oast.fun"] = "sess2"
+		backend.byDomain["sess3.oast.fun"] = "sess3"
+		backend.mu.Unlock()
+		defer func() {
+			backend.mu.Lock()
+			delete(backend.sessions, "sess1")
+			delete(backend.sessions, "sess2")
+			delete(backend.sessions, "sess3")
+			delete(backend.byDomain, "sess1.oast.fun")
+			delete(backend.byDomain, "sess2.oast.fun")
+			delete(backend.byDomain, "sess3.oast.fun")
+			backend.mu.Unlock()
+		}()
+
+		w := doRequest(t, srv, "POST", "/oast/list", OastListRequest{Limit: 2})
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.True(t, resp.OK)
+
+		var listResp OastListResponse
+		require.NoError(t, json.Unmarshal(resp.Data, &listResp))
+		assert.Len(t, listResp.Sessions, 2)
+
+		// Should return most recent sessions first
+		assert.Equal(t, "sess3", listResp.Sessions[0].OastID)
+		assert.Equal(t, "sess2", listResp.Sessions[1].OastID)
+	})
+
+	t.Run("sorted_most_recent_first", func(t *testing.T) {
+		srv, _, cleanup := testServerWithMCP(t)
+		t.Cleanup(cleanup)
+
+		createdAt := time.Date(2024, 6, 15, 10, 0, 0, 0, time.UTC)
+
+		backend := srv.oastBackend.(*InteractshBackend)
+		backend.mu.Lock()
+		backend.sessions["old"] = &oastSession{
+			info: OastSessionInfo{
+				ID:        "old",
+				Domain:    "old.oast.fun",
+				CreatedAt: createdAt,
+			},
+			stopPolling: make(chan struct{}),
+		}
+		backend.sessions["new"] = &oastSession{
+			info: OastSessionInfo{
+				ID:        "new",
+				Domain:    "new.oast.fun",
+				CreatedAt: createdAt.Add(time.Hour),
+			},
+			stopPolling: make(chan struct{}),
+		}
+		backend.byDomain["old.oast.fun"] = "old"
+		backend.byDomain["new.oast.fun"] = "new"
+		backend.mu.Unlock()
+		defer func() {
+			backend.mu.Lock()
+			delete(backend.sessions, "old")
+			delete(backend.sessions, "new")
+			delete(backend.byDomain, "old.oast.fun")
+			delete(backend.byDomain, "new.oast.fun")
+			backend.mu.Unlock()
+		}()
+
+		w := doRequest(t, srv, "POST", "/oast/list", nil)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+		var listResp OastListResponse
+		require.NoError(t, json.Unmarshal(resp.Data, &listResp))
+		assert.Len(t, listResp.Sessions, 2)
+
+		// Most recent first
+		assert.Equal(t, "new", listResp.Sessions[0].OastID)
+		assert.Equal(t, "old", listResp.Sessions[1].OastID)
 	})
 }
 

@@ -68,16 +68,6 @@ Commands:
 
 ---
 
-service status
-  No options.
-
----
-
-service stop
-  No options.
-
----
-
 service logs [options]
   -n, --lines <num>      number of lines to show (default: 50)
   -f, --follow           follow log output continuously

@@ -154,13 +154,14 @@ type ProxyListRequest struct {
 	Since        string `json:"since,omitempty"`
 	ExcludeHost  string `json:"exclude_host,omitempty"`
 	ExcludePath  string `json:"exclude_path,omitempty"`
+	Limit        int    `json:"limit,omitempty"`
 }
 
 // HasFilters returns true if any filter is set.
 func (r *ProxyListRequest) HasFilters() bool {
 	return r.Host != "" || r.Path != "" || r.Method != "" || r.Status != "" ||
 		r.Contains != "" || r.ContainsBody != "" || r.Since != "" ||
-		r.ExcludeHost != "" || r.ExcludePath != ""
+		r.ExcludeHost != "" || r.ExcludePath != "" || r.Limit > 0
 }
 
 // ProxyListResponse is the response for POST /proxy/list.
@@ -280,6 +281,7 @@ type OastPollRequest struct {
 	OastID string `json:"oast_id"`
 	Since  string `json:"since,omitempty"`
 	Wait   string `json:"wait,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
 }
 
 // OastPollResponse is the response for POST /oast/poll.
@@ -296,6 +298,11 @@ type OastEvent struct {
 	SourceIP  string                 `json:"source_ip"`
 	Subdomain string                 `json:"subdomain"`
 	Details   map[string]interface{} `json:"details,omitempty"`
+}
+
+// OastListRequest is the request for POST /oast/list.
+type OastListRequest struct {
+	Limit int `json:"limit,omitempty"`
 }
 
 // OastListResponse is the response for POST /oast/list.
