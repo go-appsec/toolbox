@@ -507,6 +507,64 @@ func TestHandleReplaySend(t *testing.T) {
 		assert.True(t, resp.OK)
 	})
 
+	t.Run("from_file_complete", func(t *testing.T) {
+		srv, mockMCP, cleanup := testServerWithMCP(t)
+		t.Cleanup(cleanup)
+
+		// Create a file with a complete request (headers + body)
+		tmpFile := filepath.Join(t.TempDir(), "request.http")
+		completeRequest := "POST /api HTTP/1.1\r\nHost: example.com\r\nContent-Length: 13\r\n\r\n{\"foo\":\"bar\"}"
+		require.NoError(t, os.WriteFile(tmpFile, []byte(completeRequest), 0644))
+
+		mockMCP.SetSendResponse(`HttpRequestResponse{httpRequest=POST /api HTTP/1.1, httpResponse=HTTP/1.1 200 OK\r\n\r\nok, messageAnnotations=Annotations{}}`)
+
+		w := doRequest(t, srv, "POST", "/replay/send", ReplaySendRequest{FilePath: tmpFile})
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.True(t, resp.OK)
+
+		var replayResp ReplaySendResponse
+		require.NoError(t, json.Unmarshal(resp.Data, &replayResp))
+		assert.Equal(t, 200, replayResp.Status)
+	})
+
+	t.Run("from_file_with_body", func(t *testing.T) {
+		srv, mockMCP, cleanup := testServerWithMCP(t)
+		t.Cleanup(cleanup)
+
+		tmpDir := t.TempDir()
+
+		// Create headers file with placeholder
+		headersFile := filepath.Join(tmpDir, "request.http")
+		headers := "POST /api HTTP/1.1\r\nHost: example.com\r\n" + bodyPlaceholder + "\n"
+		require.NoError(t, os.WriteFile(headersFile, []byte(headers), 0644))
+
+		// Create separate body file
+		bodyFile := filepath.Join(tmpDir, "body.bin")
+		body := `{"merged":"body"}`
+		require.NoError(t, os.WriteFile(bodyFile, []byte(body), 0644))
+
+		mockMCP.SetSendResponse(`HttpRequestResponse{httpRequest=POST /api HTTP/1.1, httpResponse=HTTP/1.1 200 OK\r\n\r\nok, messageAnnotations=Annotations{}}`)
+
+		w := doRequest(t, srv, "POST", "/replay/send", ReplaySendRequest{
+			FilePath: headersFile,
+			BodyPath: bodyFile,
+		})
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.True(t, resp.OK)
+
+		var replayResp ReplaySendResponse
+		require.NoError(t, json.Unmarshal(resp.Data, &replayResp))
+		assert.Equal(t, 200, replayResp.Status)
+	})
+
 	t.Run("no_input", func(t *testing.T) {
 		srv, _, cleanup := testServerWithMCP(t)
 		t.Cleanup(cleanup)

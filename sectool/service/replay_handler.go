@@ -280,16 +280,19 @@ func (s *Server) handleReplaySend(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var body []byte
 		if req.BodyPath != "" {
-			body, err = os.ReadFile(req.BodyPath)
+			// Body provided separately - merge headers from file with body from --body
+			body, err := os.ReadFile(req.BodyPath)
 			if err != nil {
 				s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest,
 					"failed to read body file", err.Error())
 				return
 			}
+			rawRequest = reconstructRequest(fileContent, body)
+		} else {
+			// No separate body - file contains complete request, use as-is
+			rawRequest = fileContent
 		}
-		rawRequest = reconstructRequest(fileContent, body)
 
 	default:
 		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest,
