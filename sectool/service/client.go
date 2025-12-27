@@ -337,9 +337,9 @@ func (c *Client) ReplayGet(ctx context.Context, req *ReplayGetRequest) (*ReplayG
 // =============================================================================
 
 // OastCreate creates a new OAST session.
-func (c *Client) OastCreate(ctx context.Context) (*OastCreateResponse, error) {
+func (c *Client) OastCreate(ctx context.Context, req *OastCreateRequest) (*OastCreateResponse, error) {
 	var resp OastCreateResponse
-	if err := c.doJSONRequest(ctx, "/oast/create", nil, &resp); err != nil {
+	if err := c.doJSONRequest(ctx, "/oast/create", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

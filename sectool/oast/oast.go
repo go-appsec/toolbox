@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/jentfoo/llm-security-toolbox/sectool/service"
 )
 
-func create(timeout time.Duration) error {
+func create(timeout time.Duration, label string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -24,7 +25,7 @@ func create(timeout time.Duration) error {
 		return fmt.Errorf("failed to start service: %w (check %s)", err, client.LogPath())
 	}
 
-	resp, err := client.OastCreate(ctx)
+	resp, err := client.OastCreate(ctx, &service.OastCreateRequest{Label: label})
 	if err != nil {
 		return fmt.Errorf("oast create failed: %w", err)
 	}
@@ -33,10 +34,18 @@ func create(timeout time.Duration) error {
 	fmt.Println()
 	fmt.Printf("ID: `%s`\n", resp.OastID)
 	fmt.Printf("Domain: `%s`\n", resp.Domain)
+	if resp.Label != "" {
+		fmt.Printf("Label: `%s`\n", resp.Label)
+	}
 	fmt.Println()
 	fmt.Println("Use any subdomain for tagging (e.g., `sqli-test." + resp.Domain + "`)")
 	fmt.Println()
-	fmt.Printf("To poll for events: `sectool oast poll %s`\n", resp.OastID)
+	// Prefer label for poll command hint if available
+	pollRef := resp.OastID
+	if resp.Label != "" {
+		pollRef = resp.Label
+	}
+	fmt.Printf("To poll for events: `sectool oast poll %s`\n", pollRef)
 
 	return nil
 }
@@ -194,15 +203,33 @@ func list(timeout time.Duration, limit int) error {
 		return nil
 	}
 
+	// Check if any session has a label
+	hasLabels := slices.ContainsFunc(resp.Sessions, func(s service.OastSession) bool {
+		return s.Label != ""
+	})
+
 	// Format output as markdown table
-	fmt.Println("| oast_id | domain | created_at |")
-	fmt.Println("|---------|--------|------------|")
-	for _, sess := range resp.Sessions {
-		fmt.Printf("| %s | %s | %s |\n",
-			sess.OastID,
-			sess.Domain,
-			sess.CreatedAt,
-		)
+	if hasLabels {
+		fmt.Println("| oast_id | label | domain | created_at |")
+		fmt.Println("|---------|-------|--------|------------|")
+		for _, sess := range resp.Sessions {
+			fmt.Printf("| %s | %s | %s | %s |\n",
+				sess.OastID,
+				sess.Label,
+				sess.Domain,
+				sess.CreatedAt,
+			)
+		}
+	} else {
+		fmt.Println("| oast_id | domain | created_at |")
+		fmt.Println("|---------|--------|------------|")
+		for _, sess := range resp.Sessions {
+			fmt.Printf("| %s | %s | %s |\n",
+				sess.OastID,
+				sess.Domain,
+				sess.CreatedAt,
+			)
+		}
 	}
 	fmt.Printf("\n*%d active session(s)*\n", len(resp.Sessions))
 

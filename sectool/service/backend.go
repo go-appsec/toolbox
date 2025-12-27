@@ -57,7 +57,8 @@ const MaxOastEventsPerSession = 2000
 type OastBackend interface {
 	// CreateSession registers with the OAST provider and starts background polling.
 	// Returns session with short ID and domain.
-	CreateSession(ctx context.Context) (*OastSessionInfo, error)
+	// If label is non-empty, it must be unique across all sessions.
+	CreateSession(ctx context.Context, label string) (*OastSessionInfo, error)
 
 	// PollSession returns events for a session.
 	// idOrDomain accepts either the short ID or the full domain.
@@ -87,6 +88,7 @@ type OastBackend interface {
 type OastSessionInfo struct {
 	ID        string    // Short sectool ID (e.g., "a1b2c3")
 	Domain    string    // Full Interactsh domain (e.g., "xyz123.oast.fun")
+	Label     string    // Optional user-provided label for easier reference
 	CreatedAt time.Time // When the session was created
 }
 

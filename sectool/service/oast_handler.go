@@ -6,17 +6,27 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 )
 
 // handleOastCreate handles POST /oast/create
 func (s *Server) handleOastCreate(w http.ResponseWriter, r *http.Request) {
-	log.Printf("oast/create: creating new session")
-	sess, err := s.oastBackend.CreateSession(r.Context())
+	var req OastCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "invalid request body", err.Error())
+		return
+	}
+
+	log.Printf("oast/create: creating new session (label=%q)", req.Label)
+	sess, err := s.oastBackend.CreateSession(r.Context(), req.Label)
 	if err != nil {
 		if IsTimeoutError(err) {
 			s.writeError(w, http.StatusGatewayTimeout, ErrCodeTimeout,
 				"OAST session creation timed out", err.Error())
+		} else if strings.Contains(err.Error(), "already in use") {
+			s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest,
+				"failed to create OAST session", err.Error())
 		} else {
 			s.writeError(w, http.StatusInternalServerError, ErrCodeBackendError,
 				"failed to create OAST session", err.Error())
@@ -24,10 +34,11 @@ func (s *Server) handleOastCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("oast/create: created session %s with domain %s", sess.ID, sess.Domain)
+	log.Printf("oast/create: created session %s with domain %s (label=%q)", sess.ID, sess.Domain, sess.Label)
 	resp := OastCreateResponse{
 		OastID: sess.ID,
 		Domain: sess.Domain,
+		Label:  sess.Label,
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }
@@ -155,6 +166,7 @@ func (s *Server) handleOastList(w http.ResponseWriter, r *http.Request) {
 		apiSessions[i] = OastSession{
 			OastID:    sess.ID,
 			Domain:    sess.Domain,
+			Label:     sess.Label,
 			CreatedAt: sess.CreatedAt.UTC().Format(time.RFC3339),
 		}
 	}

@@ -57,15 +57,18 @@ Workflow:
 
 ---
 
-oast create
+oast create [options]
 
   Create a new OAST session with unique domain.
+
+  Options:
+    --label <str>      optional label for easier reference
 
   Output: oast_id and domain (e.g., xyz123.oast.fun)
 
 ---
 
-oast poll <oast_id> [options]
+oast poll <oast_id|label|domain> [options]
 
   Poll for out-of-band interactions (DNS, HTTP).
 
@@ -83,7 +86,7 @@ oast poll <oast_id> [options]
 
 ---
 
-oast get <oast_id> <event_id>
+oast get <oast_id|label|domain> <event_id>
 
   Get full details for a specific event without truncation.
 
@@ -106,7 +109,7 @@ oast list [options]
 
 ---
 
-oast delete <oast_id>
+oast delete <oast_id|label|domain>
 
   Delete an OAST session.
 
@@ -118,8 +121,11 @@ func parseCreate(args []string) error {
 	fs := pflag.NewFlagSet("oast create", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	var timeout time.Duration
+	var label, name string
 
 	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
+	fs.StringVar(&label, "label", "", "optional label for easier reference")
+	fs.StringVar(&name, "name", "", "alias for --label")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `Usage: sectool oast create [options]
@@ -135,7 +141,11 @@ Options:
 		return err
 	}
 
-	return create(timeout)
+	if label == "" {
+		label = name
+	}
+
+	return create(timeout, label)
 }
 
 func parsePoll(args []string) error {

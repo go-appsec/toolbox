@@ -77,13 +77,13 @@ func TestHandleOastPoll(t *testing.T) {
 			},
 		}
 		backend.mu.Lock()
-		backend.sessions["testcap"] = sess
-		backend.byDomain["cap.oast.fun"] = "testcap"
+		backend.sessions["cap.oast.fun"] = sess
+		backend.byID["testcap"] = "cap.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "testcap")
-			delete(backend.byDomain, "cap.oast.fun")
+			delete(backend.sessions, "cap.oast.fun")
+			delete(backend.byID, "testcap")
 			backend.mu.Unlock()
 		}()
 
@@ -131,13 +131,13 @@ func TestHandleOastPoll(t *testing.T) {
 			},
 		}
 		backend.mu.Lock()
-		backend.sessions["testfmt"] = sess
-		backend.byDomain["fmt.oast.fun"] = "testfmt"
+		backend.sessions["fmt.oast.fun"] = sess
+		backend.byID["testfmt"] = "fmt.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "testfmt")
-			delete(backend.byDomain, "fmt.oast.fun")
+			delete(backend.sessions, "fmt.oast.fun")
+			delete(backend.byID, "testfmt")
 			backend.mu.Unlock()
 		}()
 
@@ -179,13 +179,13 @@ func TestHandleOastPoll(t *testing.T) {
 			droppedCount: 42,
 		}
 		backend.mu.Lock()
-		backend.sessions["testdrop"] = sess
-		backend.byDomain["drop.oast.fun"] = "testdrop"
+		backend.sessions["drop.oast.fun"] = sess
+		backend.byID["testdrop"] = "drop.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "testdrop")
-			delete(backend.byDomain, "drop.oast.fun")
+			delete(backend.sessions, "drop.oast.fun")
+			delete(backend.byID, "testdrop")
 			backend.mu.Unlock()
 		}()
 
@@ -220,13 +220,13 @@ func TestHandleOastPoll(t *testing.T) {
 			},
 		}
 		backend.mu.Lock()
-		backend.sessions["testdom"] = sess
-		backend.byDomain["domain.oast.fun"] = "testdom"
+		backend.sessions["domain.oast.fun"] = sess
+		backend.byID["testdom"] = "domain.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "testdom")
-			delete(backend.byDomain, "domain.oast.fun")
+			delete(backend.sessions, "domain.oast.fun")
+			delete(backend.byID, "testdom")
 			backend.mu.Unlock()
 		}()
 
@@ -267,13 +267,13 @@ func TestHandleOastPoll(t *testing.T) {
 			},
 		}
 		backend.mu.Lock()
-		backend.sessions["testlimit"] = sess
-		backend.byDomain["limit.oast.fun"] = "testlimit"
+		backend.sessions["limit.oast.fun"] = sess
+		backend.byID["testlimit"] = "limit.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "testlimit")
-			delete(backend.byDomain, "limit.oast.fun")
+			delete(backend.sessions, "limit.oast.fun")
+			delete(backend.byID, "testlimit")
 			backend.mu.Unlock()
 		}()
 
@@ -316,13 +316,13 @@ func TestHandleOastPoll(t *testing.T) {
 			},
 		}
 		backend.mu.Lock()
-		backend.sessions["testsincelimit"] = sess
-		backend.byDomain["sincelimit.oast.fun"] = "testsincelimit"
+		backend.sessions["sincelimit.oast.fun"] = sess
+		backend.byID["testsincelimit"] = "sincelimit.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "testsincelimit")
-			delete(backend.byDomain, "sincelimit.oast.fun")
+			delete(backend.sessions, "sincelimit.oast.fun")
+			delete(backend.byID, "testsincelimit")
 			backend.mu.Unlock()
 		}()
 
@@ -424,13 +424,13 @@ func TestHandleOastGet(t *testing.T) {
 			},
 		}
 		backend.mu.Lock()
-		backend.sessions["testget"] = sess
-		backend.byDomain["get.oast.fun"] = "testget"
+		backend.sessions["get.oast.fun"] = sess
+		backend.byID["testget"] = "get.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "testget")
-			delete(backend.byDomain, "get.oast.fun")
+			delete(backend.sessions, "get.oast.fun")
+			delete(backend.byID, "testget")
 			backend.mu.Unlock()
 		}()
 
@@ -477,13 +477,13 @@ func TestHandleOastGet(t *testing.T) {
 			},
 		}
 		backend.mu.Lock()
-		backend.sessions["testfull"] = sess
-		backend.byDomain["full.oast.fun"] = "testfull"
+		backend.sessions["full.oast.fun"] = sess
+		backend.byID["testfull"] = "full.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "testfull")
-			delete(backend.byDomain, "full.oast.fun")
+			delete(backend.sessions, "full.oast.fun")
+			delete(backend.byID, "testfull")
 			backend.mu.Unlock()
 		}()
 
@@ -527,13 +527,13 @@ func TestHandleOastGet(t *testing.T) {
 			},
 		}
 		backend.mu.Lock()
-		backend.sessions["testdom"] = sess
-		backend.byDomain["domain.oast.fun"] = "testdom"
+		backend.sessions["domain.oast.fun"] = sess
+		backend.byID["testdom"] = "domain.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "testdom")
-			delete(backend.byDomain, "domain.oast.fun")
+			delete(backend.sessions, "domain.oast.fun")
+			delete(backend.byID, "testdom")
 			backend.mu.Unlock()
 		}()
 
@@ -583,7 +583,7 @@ func TestHandleOastList(t *testing.T) {
 
 		backend := srv.oastBackend.(*InteractshBackend)
 		backend.mu.Lock()
-		backend.sessions["sess1"] = &oastSession{
+		backend.sessions["sess1.oast.fun"] = &oastSession{
 			info: OastSessionInfo{
 				ID:        "sess1",
 				Domain:    "sess1.oast.fun",
@@ -591,7 +591,7 @@ func TestHandleOastList(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.sessions["sess2"] = &oastSession{
+		backend.sessions["sess2.oast.fun"] = &oastSession{
 			info: OastSessionInfo{
 				ID:        "sess2",
 				Domain:    "sess2.oast.fun",
@@ -599,15 +599,15 @@ func TestHandleOastList(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.byDomain["sess1.oast.fun"] = "sess1"
-		backend.byDomain["sess2.oast.fun"] = "sess2"
+		backend.byID["sess1"] = "sess1.oast.fun"
+		backend.byID["sess2"] = "sess2.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "sess1")
-			delete(backend.sessions, "sess2")
-			delete(backend.byDomain, "sess1.oast.fun")
-			delete(backend.byDomain, "sess2.oast.fun")
+			delete(backend.sessions, "sess1.oast.fun")
+			delete(backend.sessions, "sess2.oast.fun")
+			delete(backend.byID, "sess1")
+			delete(backend.byID, "sess2")
 			backend.mu.Unlock()
 		}()
 
@@ -638,7 +638,7 @@ func TestHandleOastList(t *testing.T) {
 
 		backend := srv.oastBackend.(*InteractshBackend)
 		backend.mu.Lock()
-		backend.sessions["sess1"] = &oastSession{
+		backend.sessions["sess1.oast.fun"] = &oastSession{
 			info: OastSessionInfo{
 				ID:        "sess1",
 				Domain:    "sess1.oast.fun",
@@ -646,7 +646,7 @@ func TestHandleOastList(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.sessions["sess2"] = &oastSession{
+		backend.sessions["sess2.oast.fun"] = &oastSession{
 			info: OastSessionInfo{
 				ID:        "sess2",
 				Domain:    "sess2.oast.fun",
@@ -654,7 +654,7 @@ func TestHandleOastList(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.sessions["sess3"] = &oastSession{
+		backend.sessions["sess3.oast.fun"] = &oastSession{
 			info: OastSessionInfo{
 				ID:        "sess3",
 				Domain:    "sess3.oast.fun",
@@ -662,18 +662,18 @@ func TestHandleOastList(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.byDomain["sess1.oast.fun"] = "sess1"
-		backend.byDomain["sess2.oast.fun"] = "sess2"
-		backend.byDomain["sess3.oast.fun"] = "sess3"
+		backend.byID["sess1"] = "sess1.oast.fun"
+		backend.byID["sess2"] = "sess2.oast.fun"
+		backend.byID["sess3"] = "sess3.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "sess1")
-			delete(backend.sessions, "sess2")
-			delete(backend.sessions, "sess3")
-			delete(backend.byDomain, "sess1.oast.fun")
-			delete(backend.byDomain, "sess2.oast.fun")
-			delete(backend.byDomain, "sess3.oast.fun")
+			delete(backend.sessions, "sess1.oast.fun")
+			delete(backend.sessions, "sess2.oast.fun")
+			delete(backend.sessions, "sess3.oast.fun")
+			delete(backend.byID, "sess1")
+			delete(backend.byID, "sess2")
+			delete(backend.byID, "sess3")
 			backend.mu.Unlock()
 		}()
 
@@ -702,7 +702,7 @@ func TestHandleOastList(t *testing.T) {
 
 		backend := srv.oastBackend.(*InteractshBackend)
 		backend.mu.Lock()
-		backend.sessions["old"] = &oastSession{
+		backend.sessions["old.oast.fun"] = &oastSession{
 			info: OastSessionInfo{
 				ID:        "old",
 				Domain:    "old.oast.fun",
@@ -710,7 +710,7 @@ func TestHandleOastList(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.sessions["new"] = &oastSession{
+		backend.sessions["new.oast.fun"] = &oastSession{
 			info: OastSessionInfo{
 				ID:        "new",
 				Domain:    "new.oast.fun",
@@ -718,15 +718,15 @@ func TestHandleOastList(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.byDomain["old.oast.fun"] = "old"
-		backend.byDomain["new.oast.fun"] = "new"
+		backend.byID["old"] = "old.oast.fun"
+		backend.byID["new"] = "new.oast.fun"
 		backend.mu.Unlock()
 		defer func() {
 			backend.mu.Lock()
-			delete(backend.sessions, "old")
-			delete(backend.sessions, "new")
-			delete(backend.byDomain, "old.oast.fun")
-			delete(backend.byDomain, "new.oast.fun")
+			delete(backend.sessions, "old.oast.fun")
+			delete(backend.sessions, "new.oast.fun")
+			delete(backend.byID, "old")
+			delete(backend.byID, "new")
 			backend.mu.Unlock()
 		}()
 
@@ -793,8 +793,8 @@ func TestHandleOastDelete(t *testing.T) {
 			stopPolling: make(chan struct{}),
 		}
 		backend.mu.Lock()
-		backend.sessions["testdel"] = sess
-		backend.byDomain["del.oast.fun"] = "testdel"
+		backend.sessions["del.oast.fun"] = sess
+		backend.byID["testdel"] = "del.oast.fun"
 		backend.mu.Unlock()
 
 		w := doRequest(t, srv, "POST", "/oast/delete", OastDeleteRequest{OastID: "testdel"})
@@ -807,7 +807,7 @@ func TestHandleOastDelete(t *testing.T) {
 
 		// Verify session is gone
 		backend.mu.RLock()
-		_, exists := backend.sessions["testdel"]
+		_, exists := backend.sessions["del.oast.fun"]
 		backend.mu.RUnlock()
 		assert.False(t, exists)
 	})
@@ -826,8 +826,8 @@ func TestHandleOastDelete(t *testing.T) {
 			stopPolling: make(chan struct{}),
 		}
 		backend.mu.Lock()
-		backend.sessions["testdeldomain"] = sess
-		backend.byDomain["deldomain.oast.fun"] = "testdeldomain"
+		backend.sessions["deldomain.oast.fun"] = sess
+		backend.byID["testdeldomain"] = "deldomain.oast.fun"
 		backend.mu.Unlock()
 
 		// Delete by domain
@@ -841,7 +841,7 @@ func TestHandleOastDelete(t *testing.T) {
 
 		// Verify session is gone
 		backend.mu.RLock()
-		_, exists := backend.sessions["testdeldomain"]
+		_, exists := backend.sessions["deldomain.oast.fun"]
 		backend.mu.RUnlock()
 		assert.False(t, exists)
 	})

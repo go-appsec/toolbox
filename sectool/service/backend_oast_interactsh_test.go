@@ -20,7 +20,7 @@ func TestInteractshBackend_CreateAndClose(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	t.Cleanup(cancel)
 
-	sess, err := backend.CreateSession(ctx)
+	sess, err := backend.CreateSession(ctx, "")
 	require.NoError(t, err)
 	require.NotEmpty(t, sess.ID)
 	require.NotEmpty(t, sess.Domain)
@@ -66,7 +66,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		t.Cleanup(cancel)
 
-		sess, err := backend.CreateSession(ctx)
+		sess, err := backend.CreateSession(ctx, "")
 		require.NoError(t, err)
 
 		// Should be able to poll by domain
@@ -84,7 +84,8 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		defer func() {
 			backend.mu.Lock()
 			backend.sessions = make(map[string]*oastSession)
-			backend.byDomain = make(map[string]string)
+			backend.byID = make(map[string]string)
+			backend.byLabel = make(map[string]string)
 			backend.mu.Unlock()
 		}()
 
@@ -96,8 +97,8 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.sessions["test123"] = sess
-		backend.byDomain["test.oast.fun"] = "test123"
+		backend.sessions["test.oast.fun"] = sess
+		backend.byID["test123"] = "test.oast.fun"
 
 		sess.events = []OastEventInfo{
 			{ID: "e1", Time: time.Now(), Type: "dns"},
@@ -128,7 +129,8 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		defer func() {
 			backend.mu.Lock()
 			backend.sessions = make(map[string]*oastSession)
-			backend.byDomain = make(map[string]string)
+			backend.byID = make(map[string]string)
+			backend.byLabel = make(map[string]string)
 			backend.mu.Unlock()
 		}()
 
@@ -140,8 +142,8 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.sessions["test456"] = sess
-		backend.byDomain["test2.oast.fun"] = "test456"
+		backend.sessions["test2.oast.fun"] = sess
+		backend.byID["test456"] = "test2.oast.fun"
 
 		sess.events = []OastEventInfo{
 			{ID: "e1", Time: time.Now(), Type: "dns"},
@@ -172,7 +174,8 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		defer func() {
 			backend.mu.Lock()
 			backend.sessions = make(map[string]*oastSession)
-			backend.byDomain = make(map[string]string)
+			backend.byID = make(map[string]string)
+			backend.byLabel = make(map[string]string)
 			backend.mu.Unlock()
 		}()
 
@@ -184,8 +187,8 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.sessions["testlimit"] = sess
-		backend.byDomain["limit.oast.fun"] = "testlimit"
+		backend.sessions["limit.oast.fun"] = sess
+		backend.byID["testlimit"] = "limit.oast.fun"
 
 		// Fill buffer beyond limit
 		for i := 0; i < MaxOastEventsPerSession+100; i++ {
@@ -219,13 +222,14 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.sessions[id] = sess
-		backend.byDomain[domain] = id
+		backend.sessions[domain] = sess
+		backend.byID[id] = domain
 
 		cleanup := func() {
 			backend.mu.Lock()
 			backend.sessions = make(map[string]*oastSession)
-			backend.byDomain = make(map[string]string)
+			backend.byID = make(map[string]string)
+			backend.byLabel = make(map[string]string)
 			backend.mu.Unlock()
 		}
 		return backend, sess, cleanup
@@ -361,7 +365,7 @@ func TestInteractshBackend_CreateAfterClose(t *testing.T) {
 	backend := NewInteractshBackend()
 	_ = backend.Close()
 
-	_, err := backend.CreateSession(t.Context())
+	_, err := backend.CreateSession(t.Context(), "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
 }
@@ -574,8 +578,8 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				{ID: "e1", Time: time.Now(), Type: "dns"},
 			},
 		}
-		backend.sessions["test123"] = sess
-		backend.byDomain["test.oast.fun"] = "test123"
+		backend.sessions["test.oast.fun"] = sess
+		backend.byID["test123"] = "test.oast.fun"
 
 		_, err := backend.GetEvent(t.Context(), "test123", "nonexistent")
 		require.Error(t, err)
@@ -606,8 +610,8 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				{ID: "e3", Time: eventTime.Add(2 * time.Minute), Type: "smtp"},
 			},
 		}
-		backend.sessions["test456"] = sess
-		backend.byDomain["test2.oast.fun"] = "test456"
+		backend.sessions["test2.oast.fun"] = sess
+		backend.byID["test456"] = "test2.oast.fun"
 
 		event, err := backend.GetEvent(t.Context(), "test456", "e2")
 		require.NoError(t, err)
@@ -632,8 +636,8 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				{ID: "evt1", Time: time.Now(), Type: "dns"},
 			},
 		}
-		backend.sessions["testdom"] = sess
-		backend.byDomain["domain.oast.fun"] = "testdom"
+		backend.sessions["domain.oast.fun"] = sess
+		backend.byID["testdom"] = "domain.oast.fun"
 
 		event, err := backend.GetEvent(t.Context(), "domain.oast.fun", "evt1")
 		require.NoError(t, err)
@@ -655,8 +659,8 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				{ID: "e1", Time: time.Now(), Type: "dns"},
 			},
 		}
-		backend.sessions["teststopped"] = sess
-		backend.byDomain["stopped.oast.fun"] = "teststopped"
+		backend.sessions["stopped.oast.fun"] = sess
+		backend.byID["teststopped"] = "stopped.oast.fun"
 
 		_, err := backend.GetEvent(t.Context(), "teststopped", "e1")
 		require.Error(t, err)
@@ -678,8 +682,8 @@ func TestInteractshBackend_DeleteSession(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.sessions["testdel"] = sess
-		backend.byDomain["del.oast.fun"] = "testdel"
+		backend.sessions["del.oast.fun"] = sess
+		backend.byID["testdel"] = "del.oast.fun"
 
 		err := backend.DeleteSession(t.Context(), "testdel")
 		require.NoError(t, err)
@@ -700,8 +704,8 @@ func TestInteractshBackend_DeleteSession(t *testing.T) {
 			},
 			stopPolling: make(chan struct{}),
 		}
-		backend.sessions["testdeldomain"] = sess
-		backend.byDomain["deldomain.oast.fun"] = "testdeldomain"
+		backend.sessions["deldomain.oast.fun"] = sess
+		backend.byID["testdeldomain"] = "deldomain.oast.fun"
 
 		err := backend.DeleteSession(t.Context(), "deldomain.oast.fun")
 		require.NoError(t, err)

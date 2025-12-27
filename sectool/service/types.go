@@ -270,10 +270,16 @@ type ReplayGetResponse struct {
 // OAST Types
 // =============================================================================
 
+// OastCreateRequest is the request for POST /oast/create.
+type OastCreateRequest struct {
+	Label string `json:"label,omitempty"`
+}
+
 // OastCreateResponse is the response for POST /oast/create.
 type OastCreateResponse struct {
 	OastID string `json:"oast_id"`
 	Domain string `json:"domain"`
+	Label  string `json:"label,omitempty"`
 }
 
 // OastPollRequest is the request for POST /oast/poll.
@@ -314,6 +320,7 @@ type OastListResponse struct {
 type OastSession struct {
 	OastID    string `json:"oast_id"`
 	Domain    string `json:"domain"`
+	Label     string `json:"label,omitempty"`
 	CreatedAt string `json:"created_at"`
 }
 

@@ -28,8 +28,9 @@ const (
 // InteractshBackend implements OastBackend using Interactsh.
 type InteractshBackend struct {
 	mu       sync.RWMutex
-	sessions map[string]*oastSession // by short ID
-	byDomain map[string]string       // domain -> short ID
+	sessions map[string]*oastSession // by domain (canonical key)
+	byID     map[string]string       // short ID -> domain
+	byLabel  map[string]string       // label -> domain (only non-empty labels)
 	closed   bool
 }
 
@@ -54,15 +55,25 @@ type oastSession struct {
 func NewInteractshBackend() *InteractshBackend {
 	return &InteractshBackend{
 		sessions: make(map[string]*oastSession),
-		byDomain: make(map[string]string),
+		byID:     make(map[string]string),
+		byLabel:  make(map[string]string),
 	}
 }
 
-func (b *InteractshBackend) CreateSession(ctx context.Context) (*OastSessionInfo, error) {
+func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*OastSessionInfo, error) {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		return nil, errors.New("backend is closed")
+	}
+	// Check label uniqueness before creating interactsh client
+	if label != "" {
+		if existingDomain, exists := b.byLabel[label]; exists {
+			existingSess := b.sessions[existingDomain]
+			b.mu.Unlock()
+			return nil, fmt.Errorf("label %q already in use by session %s; delete it first with: sectool oast delete %s",
+				label, existingSess.info.ID, existingSess.info.ID)
+		}
 	}
 	b.mu.Unlock()
 
@@ -79,6 +90,7 @@ func (b *InteractshBackend) CreateSession(ctx context.Context) (*OastSessionInfo
 		info: OastSessionInfo{
 			ID:        sessionID,
 			Domain:    domain,
+			Label:     label,
 			CreatedAt: time.Now(),
 		},
 		client:      c,
@@ -92,17 +104,31 @@ func (b *InteractshBackend) CreateSession(ctx context.Context) (*OastSessionInfo
 		return nil, errors.New("backend is closed")
 	}
 
-	// Ensure uniqueness
-	for b.sessions[sessionID] != nil {
+	// Re-check label uniqueness in case of race
+	if label != "" {
+		if existingDomain, exists := b.byLabel[label]; exists {
+			existingSess := b.sessions[existingDomain]
+			b.mu.Unlock()
+			_ = c.Close()
+			return nil, fmt.Errorf("label %q already in use by session %s; delete it first with: sectool oast delete %s",
+				label, existingSess.info.ID, existingSess.info.ID)
+		}
+	}
+
+	// Ensure ID uniqueness
+	for b.byID[sessionID] != "" {
 		sessionID = ids.Generate(ids.DefaultLength)
 		sess.info.ID = sessionID
 	}
 
-	b.sessions[sessionID] = sess
-	b.byDomain[domain] = sessionID
+	b.sessions[domain] = sess
+	b.byID[sessionID] = domain
+	if label != "" {
+		b.byLabel[label] = domain
+	}
 	b.mu.Unlock()
 
-	log.Printf("oast: created session %s with domain %s", sessionID, domain)
+	log.Printf("oast: created session %s with domain %s (label=%q)", sessionID, domain, label)
 
 	// Start background polling
 	go b.pollLoop(sess)
@@ -338,8 +364,11 @@ func (b *InteractshBackend) deleteSession(sess *oastSession) error {
 	}
 
 	b.mu.Lock()
-	delete(b.sessions, sess.info.ID)
-	delete(b.byDomain, sess.info.Domain)
+	delete(b.sessions, sess.info.Domain)
+	delete(b.byID, sess.info.ID)
+	if sess.info.Label != "" {
+		delete(b.byLabel, sess.info.Label)
+	}
 	b.mu.Unlock()
 
 	log.Printf("oast: session %s deleted", sess.info.ID)
@@ -369,22 +398,29 @@ func (b *InteractshBackend) Close() error {
 	return nil
 }
 
-// resolveSession finds a session by ID or domain.
-func (b *InteractshBackend) resolveSession(idOrDomain string) (*oastSession, error) {
+// resolveSession finds a session by ID, label, or domain.
+func (b *InteractshBackend) resolveSession(identifier string) (*oastSession, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	// Try as ID first
-	if sess, ok := b.sessions[idOrDomain]; ok {
-		return sess, nil
-	}
-
-	// Try as domain
-	if id, ok := b.byDomain[idOrDomain]; ok {
-		if sess, ok := b.sessions[id]; ok {
+	if domain, ok := b.byID[identifier]; ok {
+		if sess, ok := b.sessions[domain]; ok {
 			return sess, nil
 		}
 	}
 
-	return nil, fmt.Errorf("session not found: %s", idOrDomain)
+	// Try as label
+	if domain, ok := b.byLabel[identifier]; ok {
+		if sess, ok := b.sessions[domain]; ok {
+			return sess, nil
+		}
+	}
+
+	// Try as domain directly
+	if sess, ok := b.sessions[identifier]; ok {
+		return sess, nil
+	}
+
+	return nil, fmt.Errorf("session not found: %s", identifier)
 }
