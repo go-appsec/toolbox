@@ -309,6 +309,17 @@ func (s *Server) handleReplaySend(w http.ResponseWriter, r *http.Request) {
 	headers, body := splitHeadersBody(rawRequest)
 	headers = applyHeaderModifications(headers, &req)
 
+	// Apply JSON body modifications if any
+	if len(req.SetJSON) > 0 || len(req.RemoveJSON) > 0 {
+		modifiedBody, err := modifyJSONBody(body, req.SetJSON, req.RemoveJSON)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest,
+				"JSON body modification failed", err.Error())
+			return
+		}
+		body = modifiedBody
+	}
+
 	// Update Content-Length if body was modified (or not from bundle)
 	// For bundles: only update if body size differs from original (body was edited)
 	// For non-bundles: always update to ensure correctness

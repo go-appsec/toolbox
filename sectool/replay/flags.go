@@ -67,6 +67,14 @@ replay send [options]
     --remove-query "key"           remove query param
     --target "https://other:8443"  override destination host
 
+  JSON body modifications:
+    --set-json "key=value"         set key (infers type: null/bool/number/object/string)
+    --set-json "key"               set key to null (no = sign)
+    --remove-json "key"            remove key from JSON body
+
+    Nested paths: user.email, items[0].id, data.users[0].name
+    Objects/arrays: --set-json 'meta={"k":"v"}' or 'ids=[1,2,3]'
+
   Other options:
     --follow-redirects             follow 3xx redirects
     --request-timeout <dur>        HTTP timeout (0 = no timeout)
@@ -77,6 +85,7 @@ replay send [options]
     sectool replay send --flow f7k2x
     sectool replay send --flow f7k2x --set-header "Authorization: Bearer tok"
     sectool replay send --flow f7k2x --path /api/v2/users --set-query "id=123"
+    sectool replay send --flow f7k2x --set-json "user.role=admin"
     sectool replay send --bundle .sectool/requests/abc123
     sectool replay send --file request.http --body payload.bin
 
@@ -104,6 +113,7 @@ func parseSend(args []string) error {
 	var headers, removeHeaders []string
 	var path, query string
 	var setQuery, removeQuery []string
+	var setJSON, removeJSON []string
 
 	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
 	fs.StringVar(&flow, "flow", "", "flow_id to replay from proxy history")
@@ -117,6 +127,8 @@ func parseSend(args []string) error {
 	fs.StringVar(&query, "query", "", "replace entire query string (e.g., id=1&debug=true)")
 	fs.StringArrayVar(&setQuery, "set-query", nil, "add or replace query param (repeatable, e.g., id=123)")
 	fs.StringArrayVar(&removeQuery, "remove-query", nil, "remove query param by name (repeatable)")
+	fs.StringArrayVar(&setJSON, "set-json", nil, "set JSON key (repeatable, e.g., user.role=admin)")
+	fs.StringArrayVar(&removeJSON, "remove-json", nil, "remove JSON key (repeatable)")
 	fs.BoolVar(&followRedirects, "follow-redirects", false, "follow 3xx redirects")
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "HTTP request timeout (0 = no timeout)")
 	fs.BoolVar(&force, "force", false, "send request even if validation fails")
@@ -158,6 +170,26 @@ Request modifications:
 
   Query modification order: remove -> set
 
+JSON body modifications:
+  Modify JSON request bodies inline without editing files. Requires the request
+  body to be valid JSON (returns error with hint otherwise).
+
+  Smart type inference:
+    --set-json "key=value"         Infers type from value:
+                                   - null, true, false -> literal
+                                   - 123, 3.14 -> number
+                                   - {"a":1}, [1,2] -> object/array
+                                   - everything else -> string
+    --set-json "key"               Set to null (no = sign)
+    --remove-json "key"            Remove key from JSON
+
+  Nested paths (dot notation with array indices):
+    --set-json "user.email=test@evil.com"
+    --set-json "items[0].id=injected"
+    --set-json 'config={"debug":true}'
+
+  Modification order: remove -> set
+
 Validation:
   Requests are validated before sending. If validation fails, the request
   is NOT sent and errors are displayed. Use --force to send anyway (useful
@@ -191,6 +223,7 @@ Options:
 
 	return send(timeout, flow, bundle, file, body, target, headers, removeHeaders,
 		path, query, setQuery, removeQuery,
+		setJSON, removeJSON,
 		followRedirects, requestTimeout, force)
 }
 

@@ -15,6 +15,7 @@ import (
 
 func send(timeout time.Duration, flow, bundle, file, body, target string, headers, removeHeaders []string,
 	path, query string, setQuery, removeQuery []string,
+	setJSON, removeJSON []string,
 	followRedirects bool, requestTimeout time.Duration, force bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -80,6 +81,8 @@ func send(timeout time.Duration, flow, bundle, file, body, target string, header
 		Query:           query,
 		SetQuery:        setQuery,
 		RemoveQuery:     removeQuery,
+		SetJSON:         setJSON,
+		RemoveJSON:      removeJSON,
 		FollowRedirects: followRedirects,
 		Force:           force,
 	}
