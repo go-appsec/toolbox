@@ -229,6 +229,28 @@ func TestTruncatePath(t *testing.T) {
 	}
 }
 
+func TestPathWithoutQuery(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/api/users", "/api/users"},
+		{"/search?q=test", "/search"},
+		{"/api?a=1&b=2", "/api"},
+		{"?query=only", ""},
+		{"/path/with/multiple?a=1?b=2", "/path/with/multiple"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			assert.Equal(t, tt.want, pathWithoutQuery(tt.path))
+		})
+	}
+}
+
 func TestPreviewBody(t *testing.T) {
 	t.Parallel()
 
@@ -648,6 +670,41 @@ func TestApplyClientFilters(t *testing.T) {
 		result := applyClientFilters(entries, req, nil, 0)
 		assert.Len(t, result, 1)
 		assert.Equal(t, "/page", result[0].path)
+	})
+
+	t.Run("path_filter_matches_full_path_with_query", func(t *testing.T) {
+		entriesWithQuery := []flowEntry{
+			{offset: 0, method: "GET", host: "example.com", path: "/api?q=test", status: 200},
+			{offset: 1, method: "GET", host: "example.com", path: "/other?q=test", status: 200},
+		}
+		req := &ProxyListRequest{Path: "/api*"}
+		result := applyClientFilters(entriesWithQuery, req, nil, 0)
+		assert.Len(t, result, 1)
+		assert.Equal(t, "/api?q=test", result[0].path)
+	})
+
+	t.Run("path_filter_matches_without_query", func(t *testing.T) {
+		entriesWithQuery := []flowEntry{
+			{offset: 0, method: "GET", host: "example.com", path: "/api?q=test&page=1", status: 200},
+			{offset: 1, method: "GET", host: "example.com", path: "/other?q=test", status: 200},
+		}
+		// Pattern /api should match /api?q=test&page=1 by matching the path without query
+		req := &ProxyListRequest{Path: "/api"}
+		result := applyClientFilters(entriesWithQuery, req, nil, 0)
+		assert.Len(t, result, 1)
+		assert.Equal(t, "/api?q=test&page=1", result[0].path)
+	})
+
+	t.Run("path_filter_glob_matches_without_query", func(t *testing.T) {
+		entriesWithQuery := []flowEntry{
+			{offset: 0, method: "GET", host: "example.com", path: "/search?q=test", status: 200},
+			{offset: 1, method: "GET", host: "example.com", path: "/api/search?q=test", status: 200},
+		}
+		// Pattern /search should match only /search?q=test (not /api/search?q=test)
+		req := &ProxyListRequest{Path: "/search"}
+		result := applyClientFilters(entriesWithQuery, req, nil, 0)
+		assert.Len(t, result, 1)
+		assert.Equal(t, "/search?q=test", result[0].path)
 	})
 }
 

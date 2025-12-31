@@ -47,6 +47,14 @@ func truncatePath(path string, maxLen int) string {
 	return path[:maxLen-3] + "..."
 }
 
+// pathWithoutQuery returns the path portion before any query string.
+func pathWithoutQuery(path string) string {
+	if idx := strings.Index(path, "?"); idx != -1 {
+		return path[:idx]
+	}
+	return path
+}
+
 // matchesGlob checks if s matches a simple glob pattern.
 func matchesGlob(s, pattern string) bool {
 	if pattern == "" {
@@ -286,8 +294,8 @@ func applyClientFilters(entries []flowEntry, req *ProxyListRequest, store *store
 			return false // Status filter
 		} else if req.Host != "" && !matchesGlob(e.host, req.Host) {
 			return false // Host filter (if using client-side filtering)
-		} else if req.Path != "" && !matchesGlob(e.path, req.Path) {
-			return false // Path filter (if using client-side filtering)
+		} else if req.Path != "" && !matchesGlob(e.path, req.Path) && !matchesGlob(pathWithoutQuery(e.path), req.Path) {
+			return false
 		} else if req.ExcludeHost != "" && matchesGlob(e.host, req.ExcludeHost) {
 			return false // Exclude host
 		} else if req.ExcludePath != "" && matchesGlob(e.path, req.ExcludePath) {
