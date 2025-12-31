@@ -11,7 +11,7 @@ import (
 	"github.com/jentfoo/llm-security-toolbox/sectool/cli"
 )
 
-var proxySubcommands = []string{"list", "export", "help"} // TODO: "intercept", "rule" planned
+var proxySubcommands = []string{"list", "export", "rule", "help"} // TODO - "intercept" planned
 
 func Parse(args []string) error {
 	if len(args) < 1 {
@@ -24,11 +24,10 @@ func Parse(args []string) error {
 		return parseList(args[1:])
 	case "export":
 		return parseExport(args[1:])
-	// TODO: planned features
-	// case "intercept":
+	// case "intercept": // TODO - planned
 	// 	return parseIntercept(args[1:])
-	// case "rule":
-	// 	return parseRule(args[1:])
+	case "rule":
+		return parseRule(args[1:])
 	case "help", "--help", "-h":
 		printUsage()
 		return nil
@@ -106,6 +105,73 @@ proxy export <flow_id>
     sectool replay send --bundle .sectool/requests/f7k2x
 
   Output: Bundle path and files created
+
+---
+
+proxy rule <command> [options]
+
+  Manage match and replace rules for request/response modification.
+  Rules are applied by Burp's proxy to all traffic flowing through it.
+
+  Commands:
+    list       List configured rules
+    add        Add a new rule
+    update     Modify an existing rule
+    delete     Remove a rule
+
+  Rule types:
+    --request --header        Modify request headers (default)
+    --request --body          Modify request body
+    --response --header       Modify response headers
+    --response --body         Modify response body
+
+proxy rule list [options]
+
+  Options:
+    --websocket             List WebSocket rules instead of HTTP
+    --limit <n>             Maximum rules to display
+
+proxy rule add [options] [match] [replace]
+
+  Add request header (default): match is optional, replace is the header to add.
+  For other types: match is the pattern, replace is the replacement.
+
+  Options:
+    --match <pattern>       Pattern to match (alternative to positional arg)
+    --replace <string>      Replacement string (alternative to positional arg)
+    --request               Apply to requests (default)
+    --response              Apply to responses
+    --header                Match/replace headers (default)
+    --body                  Match/replace body content
+    --regex                 Treat match as regex pattern
+    --label <name>          Optional label for easier reference
+    --websocket             Apply to WebSocket messages
+
+  Examples:
+    sectool proxy rule add "X-Custom: value"
+    sectool proxy rule add --regex "^User-Agent.*$" "User-Agent: Custom"
+    sectool proxy rule add --response --header --regex "^Set-Cookie.*$" ""
+    sectool proxy rule add --request --body "old" "new" --label my-rule
+
+proxy rule update <rule_id> [options] [match] [replace]
+
+  Update an existing rule. All fields are replaced.
+  Lookup by rule_id or label. Searches both HTTP and WebSocket rules.
+
+  Options: Same as 'add' (except --websocket is ignored)
+
+  Examples:
+    sectool proxy rule update abc123 --request --header "X-New: value"
+    sectool proxy rule update my-rule --request --body "updated" "value"
+
+proxy rule delete <rule_id>
+
+  Delete a rule by ID or label.
+  Searches both HTTP and WebSocket rules automatically.
+
+  Examples:
+    sectool proxy rule delete abc123
+    sectool proxy rule delete my-rule
 `)
 }
 
@@ -201,7 +267,7 @@ Options:
 	return export(timeout, fs.Args()[0], out)
 }
 
-// TODO: planned intercept and rule features
+// TODO - planned intercept feature
 /*
 func parseIntercept(args []string) error {
 	fs := pflag.NewFlagSet("proxy intercept", pflag.ContinueOnError)
@@ -234,8 +300,9 @@ Options:
 
 	return intercept(timeout, state)
 }
+*/
 
-var ruleSubcommands = []string{"add", "list", "remove", "help"}
+var ruleSubcommands = []string{"list", "add", "update", "delete", "help"}
 
 func parseRule(args []string) error {
 	if len(args) < 1 {
@@ -244,12 +311,14 @@ func parseRule(args []string) error {
 	}
 
 	switch args[0] {
-	case "add":
-		return parseRuleAdd(args[1:])
 	case "list":
 		return parseRuleList(args[1:])
-	case "remove":
-		return parseRuleRemove(args[1:])
+	case "add":
+		return parseRuleAdd(args[1:])
+	case "update":
+		return parseRuleUpdate(args[1:])
+	case "delete":
+		return parseRuleDelete(args[1:])
 	case "help", "--help", "-h":
 		printRuleUsage()
 		return nil
@@ -261,57 +330,33 @@ func parseRule(args []string) error {
 func printRuleUsage() {
 	fmt.Fprint(os.Stderr, `Usage: sectool proxy rule <command> [options]
 
-Manage intercept rules (planned for future release).
+Manage match and replace rules for request/response modification.
 
 Commands:
-  add        Add an intercept rule
-  list       List active intercept rules
-  remove     Remove an intercept rule
+  list       List configured rules
+  add        Add a new rule
+  update     Modify an existing rule
+  delete     Remove a rule
 
 Use "sectool proxy rule <command> --help" for more information.
 `)
-}
-
-func parseRuleAdd(args []string) error {
-	fs := pflag.NewFlagSet("proxy rule add", pflag.ContinueOnError)
-	fs.SetInterspersed(true)
-	var timeout time.Duration
-	var host, path, method, action string
-
-	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
-	fs.StringVar(&host, "host", "", "host pattern to match")
-	fs.StringVar(&path, "path", "", "path pattern to match")
-	fs.StringVar(&method, "method", "", "HTTP method to match")
-	fs.StringVar(&action, "action", "intercept", "action: intercept, allow, drop")
-
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: sectool proxy rule add [options]
-
-Add an intercept rule.
-
-Options:
-`)
-		fs.PrintDefaults()
-	}
-
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	return ruleAdd(timeout, host, path, method, action)
 }
 
 func parseRuleList(args []string) error {
 	fs := pflag.NewFlagSet("proxy rule list", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	var timeout time.Duration
+	var websocket bool
+	var limit int
 
 	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
+	fs.BoolVar(&websocket, "websocket", false, "list WebSocket rules")
+	fs.IntVar(&limit, "limit", 0, "maximum rules to display")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `Usage: sectool proxy rule list [options]
 
-List active intercept rules.
+List configured match/replace rules.
 
 Options:
 `)
@@ -322,20 +367,98 @@ Options:
 		return err
 	}
 
-	return ruleList(timeout)
+	return ruleList(timeout, websocket, limit)
 }
 
-func parseRuleRemove(args []string) error {
-	fs := pflag.NewFlagSet("proxy rule remove", pflag.ContinueOnError)
+func parseRuleAdd(args []string) error {
+	fs := pflag.NewFlagSet("proxy rule add", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	var timeout time.Duration
+	var websocket, request, response, header, body, isRegex bool
+	var label, name, match, replace string
 
 	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
+	fs.BoolVar(&websocket, "websocket", false, "apply to WebSocket messages")
+	fs.BoolVar(&request, "request", false, "apply to requests (default)")
+	fs.BoolVar(&response, "response", false, "apply to responses")
+	fs.BoolVar(&header, "header", false, "match/replace headers (default)")
+	fs.BoolVar(&body, "body", false, "match/replace body content")
+	fs.BoolVar(&isRegex, "regex", false, "treat match as regex pattern")
+	fs.StringVar(&label, "label", "", "optional label for easier reference")
+	fs.StringVar(&name, "name", "", "alias for --label")
+	fs.StringVar(&match, "match", "", "pattern to match")
+	fs.StringVar(&replace, "replace", "", "replacement string")
+	_ = fs.MarkHidden("name")
 
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: sectool proxy rule remove <rule_id> [options]
+		fmt.Fprint(os.Stderr, `Usage: sectool proxy rule add [options] [match] [replace]
 
-Remove an intercept rule.
+Add a match/replace rule.
+For header add (default): only replace is needed (adds header).
+For replacements: both match and replace are needed.
+
+Examples:
+  sectool proxy rule add "X-Custom: value"                         # Add request header
+  sectool proxy rule add --regex "^User-Agent.*$" "User-Agent: X"  # Replace User-Agent
+  sectool proxy rule add --response --header --regex "^Set-Cookie.*$" ""  # Remove cookies
+
+Options:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if name != "" && label == "" {
+		label = name
+	}
+
+	ruleType := resolveRuleType(response, body)
+
+	// Positional args override empty flags
+	posArgs := fs.Args()
+	if match == "" && replace == "" {
+		switch len(posArgs) {
+		case 1:
+			replace = posArgs[0]
+		case 2:
+			match = posArgs[0]
+			replace = posArgs[1]
+		}
+	}
+
+	return ruleAdd(timeout, websocket, ruleType, match, replace, label, isRegex)
+}
+
+func parseRuleUpdate(args []string) error {
+	fs := pflag.NewFlagSet("proxy rule update", pflag.ContinueOnError)
+	fs.SetInterspersed(true)
+	var timeout time.Duration
+	var request, response, header, body, isRegex bool
+	var label, name, match, replace string
+
+	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
+	fs.BoolVar(&request, "request", false, "apply to requests (default)")
+	fs.BoolVar(&response, "response", false, "apply to responses")
+	fs.BoolVar(&header, "header", false, "match/replace headers (default)")
+	fs.BoolVar(&body, "body", false, "match/replace body content")
+	fs.BoolVar(&isRegex, "regex", false, "treat match as regex pattern")
+	fs.StringVar(&label, "label", "", "new label for the rule")
+	fs.StringVar(&name, "name", "", "alias for --label")
+	fs.StringVar(&match, "match", "", "pattern to match")
+	fs.StringVar(&replace, "replace", "", "replacement string")
+	_ = fs.MarkHidden("name")
+	// Accept --websocket for tolerance but ignore it (searches both sets automatically)
+	fs.Bool("websocket", false, "")
+	_ = fs.MarkHidden("websocket")
+
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `Usage: sectool proxy rule update <rule_id> [options] [match] [replace]
+
+Update an existing rule. Lookup by rule_id or label.
+Searches both HTTP and WebSocket rules automatically.
 
 Options:
 `)
@@ -349,6 +472,69 @@ Options:
 		return errors.New("rule_id required")
 	}
 
-	return ruleRemove(timeout, fs.Args()[0])
+	if name != "" && label == "" {
+		label = name
+	}
+
+	ruleID := fs.Args()[0]
+	ruleType := resolveRuleType(response, body)
+
+	// Positional args override empty flags
+	posArgs := fs.Args()[1:]
+	if match == "" && replace == "" {
+		switch len(posArgs) {
+		case 1:
+			replace = posArgs[0]
+		case 2:
+			match = posArgs[0]
+			replace = posArgs[1]
+		}
+	}
+
+	return ruleUpdate(timeout, ruleID, ruleType, match, replace, label, isRegex)
 }
-*/
+
+func parseRuleDelete(args []string) error {
+	fs := pflag.NewFlagSet("proxy rule delete", pflag.ContinueOnError)
+	fs.SetInterspersed(true)
+	var timeout time.Duration
+
+	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
+	// Accept --websocket for tolerance but ignore it (searches both sets automatically)
+	fs.Bool("websocket", false, "")
+	_ = fs.MarkHidden("websocket")
+
+	fs.Usage = func() {
+		fmt.Fprint(os.Stderr, `Usage: sectool proxy rule delete <rule_id> [options]
+
+Delete a rule by ID or label.
+Searches both HTTP and WebSocket rules automatically.
+
+Options:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	} else if len(fs.Args()) < 1 {
+		fs.Usage()
+		return errors.New("rule_id required")
+	}
+
+	return ruleDelete(timeout, fs.Args()[0])
+}
+
+// resolveRuleType determines the rule type from flags.
+// Defaults to request_header if no flags are set.
+func resolveRuleType(response, body bool) string {
+	prefix := "request"
+	if response {
+		prefix = "response"
+	}
+
+	if body {
+		return prefix + "_body"
+	}
+	return prefix + "_header"
+}

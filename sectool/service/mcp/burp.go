@@ -825,6 +825,95 @@ func (c *BurpClient) SetActiveEditorContents(ctx context.Context, text string) e
 	})
 }
 
+// ErrConfigEditingDisabled is returned when Burp's MCP config editing is not enabled.
+var ErrConfigEditingDisabled = errors.New("config editing disabled in Burp MCP settings")
+
+// GetMatchReplaceRules retrieves HTTP match/replace rules from project options.
+func (c *BurpClient) GetMatchReplaceRules(ctx context.Context) ([]MatchReplaceRule, error) {
+	return c.getMatchReplaceRulesFromKey(ctx, "match_replace_rules")
+}
+
+// SetMatchReplaceRules sets HTTP match/replace rules in project options.
+func (c *BurpClient) SetMatchReplaceRules(ctx context.Context, rules []MatchReplaceRule) error {
+	return c.setMatchReplaceRulesToKey(ctx, "match_replace_rules", rules)
+}
+
+// GetWSMatchReplaceRules retrieves WebSocket match/replace rules from project options.
+func (c *BurpClient) GetWSMatchReplaceRules(ctx context.Context) ([]MatchReplaceRule, error) {
+	return c.getMatchReplaceRulesFromKey(ctx, "ws_match_replace_rules")
+}
+
+// SetWSMatchReplaceRules sets WebSocket match/replace rules in project options.
+func (c *BurpClient) SetWSMatchReplaceRules(ctx context.Context, rules []MatchReplaceRule) error {
+	return c.setMatchReplaceRulesToKey(ctx, "ws_match_replace_rules", rules)
+}
+
+func (c *BurpClient) getMatchReplaceRulesFromKey(ctx context.Context, key string) ([]MatchReplaceRule, error) {
+	var rules []MatchReplaceRule
+	err := c.withConn(ctx, func(opCtx context.Context) error {
+		result, err := c.mcpClient.CallTool(opCtx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name:      "output_project_options",
+				Arguments: map[string]interface{}{},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("output_project_options failed: %w", err)
+		} else if result.IsError {
+			return fmt.Errorf("MCP error: %s", extractTextContent(result.Content))
+		}
+
+		var config struct {
+			Proxy map[string]json.RawMessage `json:"proxy"`
+		}
+		if err := json.Unmarshal([]byte(extractTextContent(result.Content)), &config); err != nil {
+			return fmt.Errorf("parse project options: %w", err)
+		}
+
+		raw, ok := config.Proxy[key]
+		if !ok {
+			return nil // no rules configured
+		} else if err := json.Unmarshal(raw, &rules); err != nil {
+			return fmt.Errorf("parse %s: %w", key, err)
+		}
+		return nil
+	})
+	return rules, err
+}
+
+func (c *BurpClient) setMatchReplaceRulesToKey(ctx context.Context, key string, rules []MatchReplaceRule) error {
+	return c.withConn(ctx, func(opCtx context.Context) error {
+		config := map[string]interface{}{
+			"proxy": map[string]interface{}{
+				key: rules,
+			},
+		}
+		configJSON, err := json.Marshal(config)
+		if err != nil {
+			return fmt.Errorf("marshal config: %w", err)
+		}
+
+		result, err := c.mcpClient.CallTool(opCtx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name: "set_project_options",
+				Arguments: map[string]interface{}{
+					"json": string(configJSON),
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("set_project_options failed: %w", err)
+		} else if result.IsError {
+			msg := extractTextContent(result.Content)
+			if strings.Contains(msg, "User has disabled configuration editing") {
+				return ErrConfigEditingDisabled
+			}
+			return fmt.Errorf("MCP error: %s", msg)
+		}
+		return nil
+	})
+}
+
 func extractTextContent(content []mcp.Content) string {
 	for _, item := range content {
 		if textContent, ok := item.(mcp.TextContent); ok {

@@ -52,7 +52,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 
 		_, err := backend.PollSession(t.Context(), "nonexistent", "", 0, 0)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not found")
+		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("by_domain", func(t *testing.T) {
@@ -561,7 +561,7 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 
 		_, err := backend.GetEvent(t.Context(), "nonexistent", "event1")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not found")
+		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("event_not_found", func(t *testing.T) {
@@ -583,7 +583,7 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 
 		_, err := backend.GetEvent(t.Context(), "test123", "nonexistent")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "event not found")
+		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("returns_event_by_id", func(t *testing.T) {
@@ -690,7 +690,7 @@ func TestInteractshBackend_DeleteSession(t *testing.T) {
 
 		err = backend.DeleteSession(t.Context(), "testdel")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not found")
+		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("delete_by_domain", func(t *testing.T) {

@@ -2,7 +2,22 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
+)
+
+// ErrLabelExists is returned when label conflicts with an existing entry (rule or OAST).
+var ErrLabelExists = errors.New("label already exists")
+
+// ErrNotFound is returned when a requested resource (rule, session, etc.) doesn't exist.
+var ErrNotFound = errors.New("not found")
+
+// Rule type constants for match/replace rules.
+const (
+	RuleTypeRequestHeader  = "request_header"
+	RuleTypeRequestBody    = "request_body"
+	RuleTypeResponseHeader = "response_header"
+	RuleTypeResponseBody   = "response_body"
 )
 
 // HttpBackend defines the interface for proxy history and request sending.
@@ -18,6 +33,31 @@ type HttpBackend interface {
 	// SendRequest sends an HTTP request and returns the response.
 	// The request is raw HTTP bytes. Response is returned as headers and body.
 	SendRequest(ctx context.Context, name string, req SendRequestInput) (*SendRequestResult, error)
+
+	// ListRules returns all enabled match/replace rules managed by sectool.
+	// websocket=true returns WebSocket rules, false returns HTTP rules.
+	ListRules(ctx context.Context, websocket bool) ([]RuleEntry, error)
+
+	// AddRule creates a new match/replace rule.
+	// Returns the created rule with assigned ID.
+	AddRule(ctx context.Context, websocket bool, rule ProxyRuleInput) (*RuleEntry, error)
+
+	// UpdateRule modifies an existing rule by ID or label.
+	// Searches both HTTP and WebSocket rules automatically.
+	UpdateRule(ctx context.Context, idOrLabel string, rule ProxyRuleInput) (*RuleEntry, error)
+
+	// DeleteRule removes a rule by ID or label.
+	// Searches both HTTP and WebSocket rules automatically.
+	DeleteRule(ctx context.Context, idOrLabel string) error
+}
+
+// ProxyRuleInput contains parameters for creating/updating a rule.
+type ProxyRuleInput struct {
+	Label   string // Optional label for easier reference
+	Type    string // Required: rule type
+	IsRegex bool
+	Match   string
+	Replace string
 }
 
 // ProxyEntry represents a single proxy history entry in HttpBackend-agnostic form.

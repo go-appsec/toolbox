@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jentfoo/llm-security-toolbox/sectool/service/ids"
 	"github.com/jentfoo/llm-security-toolbox/sectool/service/mcp"
 )
 
@@ -456,4 +457,246 @@ func parseBurpResponse(raw string) (headers, body []byte, err error) {
 // This is not part of the HttpBackend interface as it's Burp-specific.
 func (b *BurpBackend) SetInterceptState(ctx context.Context, intercepting bool) error {
 	return b.client.SetInterceptState(ctx, intercepting)
+}
+
+// sectool comment prefix identifies rules managed by sectool
+const sectoolRulePrefix = "sectool:"
+
+func (b *BurpBackend) ListRules(ctx context.Context, websocket bool) ([]RuleEntry, error) {
+	burpRules, err := b.getAllRules(ctx, websocket)
+	if err != nil {
+		return nil, fmt.Errorf("list rules: %w", err)
+	}
+
+	rules := make([]RuleEntry, 0, len(burpRules))
+	for _, r := range burpRules {
+		if !r.Enabled {
+			continue
+		}
+		id, label, ok := parseSectoolComment(r.Comment)
+		if !ok {
+			continue
+		}
+		rules = append(rules, RuleEntry{
+			RuleID:  id,
+			Label:   label,
+			Type:    r.RuleType,
+			IsRegex: r.Category == mcp.RuleCategoryRegex,
+			Match:   r.StringMatch,
+			Replace: r.StringReplace,
+		})
+	}
+	return rules, nil
+}
+
+func (b *BurpBackend) AddRule(ctx context.Context, websocket bool, input ProxyRuleInput) (*RuleEntry, error) {
+	httpRules, err := b.getAllRules(ctx, false)
+	if err != nil {
+		return nil, fmt.Errorf("add rule: %w", err)
+	}
+	wsRules, err := b.getAllRules(ctx, true)
+	if err != nil {
+		return nil, fmt.Errorf("add rule: %w", err)
+	}
+
+	if input.Label != "" {
+		if err := b.checkLabelUnique(input.Label, "", httpRules, wsRules); err != nil {
+			return nil, err
+		}
+	}
+
+	burpRules := httpRules
+	if websocket {
+		burpRules = wsRules
+	}
+
+	id := ids.Generate(0)
+	newRule := mcp.MatchReplaceRule{
+		Category:      mcp.RuleCategoryLiteral,
+		Comment:       formatSectoolComment(id, input.Label),
+		Enabled:       true,
+		RuleType:      input.Type,
+		StringMatch:   input.Match,
+		StringReplace: input.Replace,
+	}
+	if input.IsRegex {
+		newRule.Category = mcp.RuleCategoryRegex
+	}
+
+	burpRules = append(burpRules, newRule)
+	if err := b.setAllRules(ctx, websocket, burpRules); err != nil {
+		return nil, fmt.Errorf("add rule: %w", err)
+	}
+
+	return &RuleEntry{
+		RuleID:  id,
+		Label:   input.Label,
+		Type:    input.Type,
+		IsRegex: input.IsRegex,
+		Match:   input.Match,
+		Replace: input.Replace,
+	}, nil
+}
+
+func (b *BurpBackend) UpdateRule(ctx context.Context, idOrLabel string, input ProxyRuleInput) (*RuleEntry, error) {
+	httpRules, err := b.getAllRules(ctx, false)
+	if err != nil {
+		return nil, fmt.Errorf("update rule: %w", err)
+	}
+	wsRules, err := b.getAllRules(ctx, true)
+	if err != nil {
+		return nil, fmt.Errorf("update rule: %w", err)
+	}
+
+	// Search HTTP rules first
+	if idx := b.findRuleIndex(httpRules, idOrLabel); idx >= 0 {
+		return b.updateRuleInSet(ctx, false, httpRules, idx, input, httpRules, wsRules)
+	}
+	// Search WebSocket rules
+	if idx := b.findRuleIndex(wsRules, idOrLabel); idx >= 0 {
+		return b.updateRuleInSet(ctx, true, wsRules, idx, input, httpRules, wsRules)
+	}
+
+	return nil, ErrNotFound
+}
+
+func (b *BurpBackend) updateRuleInSet(ctx context.Context, websocket bool, rules []mcp.MatchReplaceRule, idx int, input ProxyRuleInput, httpRules, wsRules []mcp.MatchReplaceRule) (*RuleEntry, error) {
+	id, _, _ := parseSectoolComment(rules[idx].Comment)
+
+	if input.Label != "" {
+		if err := b.checkLabelUnique(input.Label, id, httpRules, wsRules); err != nil {
+			return nil, err
+		}
+	}
+
+	rules[idx].Comment = formatSectoolComment(id, input.Label)
+	rules[idx].RuleType = input.Type
+	rules[idx].StringMatch = input.Match
+	rules[idx].StringReplace = input.Replace
+	if input.IsRegex {
+		rules[idx].Category = mcp.RuleCategoryRegex
+	} else {
+		rules[idx].Category = mcp.RuleCategoryLiteral
+	}
+
+	if err := b.setAllRules(ctx, websocket, rules); err != nil {
+		return nil, fmt.Errorf("update rule: %w", err)
+	}
+
+	return &RuleEntry{
+		RuleID:  id,
+		Label:   input.Label,
+		Type:    input.Type,
+		IsRegex: input.IsRegex,
+		Match:   input.Match,
+		Replace: input.Replace,
+	}, nil
+}
+
+func (b *BurpBackend) DeleteRule(ctx context.Context, idOrLabel string) error {
+	// Try HTTP rules first
+	httpRules, err := b.getAllRules(ctx, false)
+	if err != nil {
+		return fmt.Errorf("delete rule: %w", err)
+	}
+
+	if idx := b.findRuleIndex(httpRules, idOrLabel); idx >= 0 {
+		httpRules = append(httpRules[:idx], httpRules[idx+1:]...)
+		if err := b.setAllRules(ctx, false, httpRules); err != nil {
+			return fmt.Errorf("delete rule: %w", err)
+		}
+		return nil
+	}
+
+	// Try WebSocket rules
+	wsRules, err := b.getAllRules(ctx, true)
+	if err != nil {
+		return fmt.Errorf("delete rule: %w", err)
+	}
+
+	if idx := b.findRuleIndex(wsRules, idOrLabel); idx >= 0 {
+		wsRules = append(wsRules[:idx], wsRules[idx+1:]...)
+		if err := b.setAllRules(ctx, true, wsRules); err != nil {
+			return fmt.Errorf("delete rule: %w", err)
+		}
+		return nil
+	}
+
+	return ErrNotFound
+}
+
+func (b *BurpBackend) getAllRules(ctx context.Context, websocket bool) ([]mcp.MatchReplaceRule, error) {
+	if websocket {
+		return b.client.GetWSMatchReplaceRules(ctx)
+	}
+	return b.client.GetMatchReplaceRules(ctx)
+}
+
+func (b *BurpBackend) setAllRules(ctx context.Context, websocket bool, rules []mcp.MatchReplaceRule) error {
+	var err error
+	if websocket {
+		err = b.client.SetWSMatchReplaceRules(ctx, rules)
+	} else {
+		err = b.client.SetMatchReplaceRules(ctx, rules)
+	}
+	if errors.Is(err, mcp.ErrConfigEditingDisabled) {
+		return fmt.Errorf("%w; enable 'Edit config' in Burp's MCP settings", err)
+	}
+	return err
+}
+
+func (b *BurpBackend) findRuleIndex(rules []mcp.MatchReplaceRule, idOrLabel string) int {
+	for i, r := range rules {
+		id, label, ok := parseSectoolComment(r.Comment)
+		if !ok {
+			continue
+		}
+		if id == idOrLabel || (label != "" && label == idOrLabel) {
+			return i
+		}
+	}
+	return -1
+}
+
+// checkLabelUnique verifies a label is unique across both HTTP and WS rules.
+// excludeID allows skipping a rule being updated.
+func (b *BurpBackend) checkLabelUnique(label, excludeID string, httpRules, wsRules []mcp.MatchReplaceRule) error {
+	for _, rules := range [][]mcp.MatchReplaceRule{httpRules, wsRules} {
+		for _, r := range rules {
+			id, existingLabel, ok := parseSectoolComment(r.Comment)
+			if !ok || (excludeID != "" && id == excludeID) {
+				continue
+			}
+			if existingLabel == label {
+				return fmt.Errorf("%w: %s", ErrLabelExists, label)
+			}
+		}
+	}
+	return nil
+}
+
+// formatSectoolComment creates a comment string from ID and optional label.
+func formatSectoolComment(id, label string) string {
+	if label == "" {
+		return sectoolRulePrefix + id
+	}
+	return sectoolRulePrefix + id + ":" + label
+}
+
+// parseSectoolComment extracts ID and optional label from a sectool comment.
+// Format: "sectool:id" or "sectool:id:label"
+func parseSectoolComment(comment string) (id, label string, ok bool) {
+	if !strings.HasPrefix(comment, sectoolRulePrefix) {
+		return "", "", false
+	}
+	rest := comment[len(sectoolRulePrefix):]
+	parts := strings.SplitN(rest, ":", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		return "", "", false
+	}
+	id = parts[0]
+	if len(parts) > 1 {
+		label = parts[1]
+	}
+	return id, label, true
 }

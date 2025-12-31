@@ -2,6 +2,8 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -387,4 +389,158 @@ func (s *Server) handleProxyExport(w http.ResponseWriter, r *http.Request) {
 		BundleID:   bundleID,
 		BundlePath: bundlePath,
 	})
+}
+
+// handleRuleList handles POST /proxy/rule/list
+func (s *Server) handleRuleList(w http.ResponseWriter, r *http.Request) {
+	var req RuleListRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "invalid request body", err.Error())
+		return
+	}
+
+	log.Printf("proxy/rule/list: websocket=%t", req.WebSocket)
+
+	rules, err := s.httpBackend.ListRules(r.Context(), req.WebSocket)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, ErrCodeBackendError,
+			"failed to list rules", err.Error())
+		return
+	}
+
+	if req.Limit > 0 && len(rules) > req.Limit {
+		rules = rules[:req.Limit]
+	}
+
+	log.Printf("proxy/rule/list: returning %d rules", len(rules))
+	s.writeJSON(w, http.StatusOK, RuleListResponse{Rules: rules})
+}
+
+// handleRuleAdd handles POST /proxy/rule/add
+func (s *Server) handleRuleAdd(w http.ResponseWriter, r *http.Request) {
+	var req RuleAddRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "invalid request body", err.Error())
+		return
+	} else if req.Type == "" {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "type is required", "")
+		return
+	} else if err := validateRuleType(req.Type); err != nil {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error(), "")
+		return
+	} else if req.Match == "" && req.Replace == "" {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "match or replace is required", "")
+		return
+	}
+
+	log.Printf("proxy/rule/add: type=%s label=%q websocket=%t", req.Type, req.Label, req.WebSocket)
+
+	rule, err := s.httpBackend.AddRule(r.Context(), req.WebSocket, ProxyRuleInput{
+		Label:   req.Label,
+		Type:    req.Type,
+		IsRegex: req.IsRegex,
+		Match:   req.Match,
+		Replace: req.Replace,
+	})
+	if err != nil {
+		if errors.Is(err, ErrLabelExists) {
+			s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest,
+				"failed to add rule", err.Error())
+		} else {
+			s.writeError(w, http.StatusInternalServerError, ErrCodeBackendError,
+				"failed to add rule", err.Error())
+		}
+		return
+	}
+
+	log.Printf("proxy/rule/add: created rule %s", rule.RuleID)
+	s.writeJSON(w, http.StatusOK, rule)
+}
+
+// handleRuleUpdate handles POST /proxy/rule/update
+func (s *Server) handleRuleUpdate(w http.ResponseWriter, r *http.Request) {
+	var req RuleUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "invalid request body", err.Error())
+		return
+	} else if req.RuleID == "" {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "rule_id is required", "")
+		return
+	} else if req.Type == "" {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "type is required", "")
+		return
+	} else if err := validateRuleType(req.Type); err != nil {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error(), "")
+		return
+	} else if req.Match == "" && req.Replace == "" {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "match or replace is required", "")
+		return
+	}
+
+	log.Printf("proxy/rule/update: rule=%s", req.RuleID)
+
+	rule, err := s.httpBackend.UpdateRule(r.Context(), req.RuleID, ProxyRuleInput{
+		Label:   req.Label,
+		Type:    req.Type,
+		IsRegex: req.IsRegex,
+		Match:   req.Match,
+		Replace: req.Replace,
+	})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, ErrCodeNotFound, "rule not found", "")
+		} else if errors.Is(err, ErrLabelExists) {
+			s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest,
+				"failed to update rule", err.Error())
+		} else {
+			s.writeError(w, http.StatusInternalServerError, ErrCodeBackendError,
+				"failed to update rule", err.Error())
+		}
+		return
+	}
+
+	log.Printf("proxy/rule/update: updated rule %s", rule.RuleID)
+	s.writeJSON(w, http.StatusOK, rule)
+}
+
+// handleRuleDelete handles POST /proxy/rule/delete
+func (s *Server) handleRuleDelete(w http.ResponseWriter, r *http.Request) {
+	var req RuleDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "invalid request body", err.Error())
+		return
+	} else if req.RuleID == "" {
+		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "rule_id is required", "")
+		return
+	}
+
+	log.Printf("proxy/rule/delete: rule=%s", req.RuleID)
+
+	if err := s.httpBackend.DeleteRule(r.Context(), req.RuleID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, ErrCodeNotFound, "rule not found", "")
+		} else {
+			s.writeError(w, http.StatusInternalServerError, ErrCodeBackendError,
+				"failed to delete rule", err.Error())
+		}
+		return
+	}
+
+	log.Printf("proxy/rule/delete: deleted rule %s", req.RuleID)
+	s.writeJSON(w, http.StatusOK, RuleDeleteResponse{})
+}
+
+var validRuleTypes = map[string]bool{
+	RuleTypeRequestHeader:  true,
+	RuleTypeRequestBody:    true,
+	RuleTypeResponseHeader: true,
+	RuleTypeResponseBody:   true,
+}
+
+func validateRuleType(t string) error {
+	if !validRuleTypes[t] {
+		return fmt.Errorf("invalid rule type %q: must be %s, %s, %s, or %s",
+			t, RuleTypeRequestHeader, RuleTypeRequestBody, RuleTypeResponseHeader, RuleTypeResponseBody)
+	}
+	return nil
 }

@@ -2,11 +2,11 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -24,7 +24,7 @@ func (s *Server) handleOastCreate(w http.ResponseWriter, r *http.Request) {
 		if IsTimeoutError(err) {
 			s.writeError(w, http.StatusGatewayTimeout, ErrCodeTimeout,
 				"OAST session creation timed out", err.Error())
-		} else if strings.Contains(err.Error(), "already in use") {
+		} else if errors.Is(err, ErrLabelExists) {
 			s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest,
 				"failed to create OAST session", err.Error())
 		} else {
@@ -72,7 +72,12 @@ func (s *Server) handleOastPoll(w http.ResponseWriter, r *http.Request) {
 	log.Printf("oast/poll: polling session %s (wait=%v since=%q limit=%d)", req.OastID, wait, req.Since, req.Limit)
 	result, err := s.oastBackend.PollSession(r.Context(), req.OastID, req.Since, wait, req.Limit)
 	if err != nil {
-		s.writeError(w, http.StatusNotFound, ErrCodeNotFound, "session not found or deleted", err.Error())
+		if errors.Is(err, ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, ErrCodeNotFound, "session not found", err.Error())
+		} else {
+			s.writeError(w, http.StatusInternalServerError, ErrCodeBackendError,
+				"failed to poll session", err.Error())
+		}
 		return
 	}
 
@@ -114,7 +119,12 @@ func (s *Server) handleOastGet(w http.ResponseWriter, r *http.Request) {
 	log.Printf("oast/get: getting event %s from session %s", req.EventID, req.OastID)
 	event, err := s.oastBackend.GetEvent(r.Context(), req.OastID, req.EventID)
 	if err != nil {
-		s.writeError(w, http.StatusNotFound, ErrCodeNotFound, "session or event not found", err.Error())
+		if errors.Is(err, ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, ErrCodeNotFound, "session or event not found", err.Error())
+		} else {
+			s.writeError(w, http.StatusInternalServerError, ErrCodeBackendError,
+				"failed to get event", err.Error())
+		}
 		return
 	}
 
@@ -191,7 +201,12 @@ func (s *Server) handleOastDelete(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("oast/delete: deleting session %s", req.OastID)
 	if err := s.oastBackend.DeleteSession(r.Context(), req.OastID); err != nil {
-		s.writeError(w, http.StatusNotFound, ErrCodeNotFound, "session not found", err.Error())
+		if errors.Is(err, ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, ErrCodeNotFound, "session not found", err.Error())
+		} else {
+			s.writeError(w, http.StatusInternalServerError, ErrCodeBackendError,
+				"failed to delete session", err.Error())
+		}
 		return
 	}
 

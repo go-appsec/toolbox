@@ -368,3 +368,58 @@ type OastDeleteRequest struct {
 
 // OastDeleteResponse is the response for POST /oast/delete.
 type OastDeleteResponse struct{}
+
+// =============================================================================
+// Rule Types
+// =============================================================================
+
+// RuleListRequest is the request for POST /proxy/rule/list.
+type RuleListRequest struct {
+	WebSocket bool `json:"websocket,omitempty"`
+	Limit     int  `json:"limit,omitempty"`
+}
+
+// RuleListResponse is the response for POST /proxy/rule/list.
+type RuleListResponse struct {
+	Rules []RuleEntry `json:"rules"`
+}
+
+// RuleEntry represents a match/replace rule in API responses.
+type RuleEntry struct {
+	RuleID  string `json:"rule_id"`
+	Label   string `json:"label,omitempty"`
+	Type    string `json:"type"`
+	IsRegex bool   `json:"is_regex,omitempty"`
+	Match   string `json:"match,omitempty"`
+	Replace string `json:"replace,omitempty"`
+}
+
+// RuleAddRequest is the request for POST /proxy/rule/add.
+type RuleAddRequest struct {
+	WebSocket bool   `json:"websocket,omitempty"`
+	Label     string `json:"label,omitempty"`
+	Type      string `json:"type"`
+	IsRegex   bool   `json:"is_regex,omitempty"`
+	Match     string `json:"match,omitempty"`
+	Replace   string `json:"replace,omitempty"`
+}
+
+// RuleUpdateRequest is the request for POST /proxy/rule/update.
+// Searches both HTTP and WebSocket rules automatically.
+type RuleUpdateRequest struct {
+	RuleID  string `json:"rule_id"`
+	Label   string `json:"label,omitempty"`
+	Type    string `json:"type"`
+	IsRegex bool   `json:"is_regex,omitempty"`
+	Match   string `json:"match,omitempty"`
+	Replace string `json:"replace,omitempty"`
+}
+
+// RuleDeleteRequest is the request for POST /proxy/rule/delete.
+// Searches both HTTP and WebSocket rules automatically.
+type RuleDeleteRequest struct {
+	RuleID string `json:"rule_id"`
+}
+
+// RuleDeleteResponse is the response for POST /proxy/rule/delete.
+type RuleDeleteResponse struct{}

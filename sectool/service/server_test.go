@@ -34,9 +34,7 @@ func TestServerRun(t *testing.T) {
 	t.Parallel()
 
 	t.Run("creates_dirs_on_start", func(t *testing.T) {
-		mockMCP := NewTestMCPServer()
-		t.Cleanup(mockMCP.Close)
-
+		mockMCP := NewTestMCPServer(t)
 		workDir := t.TempDir()
 		srv, err := NewServer(DaemonFlags{
 			WorkDir:    workDir,
@@ -79,9 +77,7 @@ func TestServerRun(t *testing.T) {
 func TestRequestShutdownIdempotent(t *testing.T) {
 	t.Parallel()
 
-	mockMCP := NewTestMCPServer()
-	t.Cleanup(mockMCP.Close)
-
+	mockMCP := NewTestMCPServer(t)
 	workDir := t.TempDir()
 	srv, err := NewServer(DaemonFlags{
 		WorkDir:    workDir,
@@ -111,9 +107,7 @@ func TestRequestShutdownIdempotent(t *testing.T) {
 func TestServerLockPreventsSecondInstance(t *testing.T) {
 	t.Parallel()
 
-	mockMCP := NewTestMCPServer()
-	t.Cleanup(mockMCP.Close)
-
+	mockMCP := NewTestMCPServer(t)
 	workDir := t.TempDir()
 
 	srv1, err := NewServer(DaemonFlags{

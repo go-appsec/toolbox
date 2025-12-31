@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -17,9 +18,21 @@ type TestMCPServer struct {
 	HTTPServer *httptest.Server
 	MCPServer  *server.MCPServer
 
-	mu            sync.Mutex
-	proxyHistory  []testProxyEntry
-	sendResponses []string // Stack of responses for send_http1_request
+	mu               sync.Mutex
+	proxyHistory     []testProxyEntry
+	sendResponses    []string // Stack of responses for send_http1_request
+	matchReplaceHTTP []testMatchReplaceRule
+	matchReplaceWS   []testMatchReplaceRule
+}
+
+type testMatchReplaceRule struct {
+	Category      string `json:"category"`
+	Comment       string `json:"comment"`
+	Enabled       bool   `json:"enabled"`
+	RuleType      string `json:"rule_type,omitempty"`
+	Direction     string `json:"direction,omitempty"`
+	StringMatch   string `json:"string_match,omitempty"`
+	StringReplace string `json:"string_replace,omitempty"`
 }
 
 type testProxyEntry struct {
@@ -29,7 +42,9 @@ type testProxyEntry struct {
 }
 
 // NewTestMCPServer creates a mock MCP server for testing.
-func NewTestMCPServer() *TestMCPServer {
+func NewTestMCPServer(t *testing.T) *TestMCPServer {
+	t.Helper()
+
 	ts := &TestMCPServer{}
 
 	mcpServer := server.NewMCPServer("test-burp-mcp", "1.0.0",
@@ -156,21 +171,68 @@ func NewTestMCPServer() *TestMCPServer {
 		},
 	)
 
+	mcpServer.AddTool(
+		mcp.NewTool("output_project_options",
+			mcp.WithDescription("Output project options"),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ts.mu.Lock()
+			defer ts.mu.Unlock()
+
+			opts := map[string]interface{}{
+				"proxy": map[string]interface{}{
+					"match_replace_rules":    ts.matchReplaceHTTP,
+					"ws_match_replace_rules": ts.matchReplaceWS,
+				},
+			}
+			data, _ := json.Marshal(opts)
+			return mcp.NewToolResultText(string(data)), nil
+		},
+	)
+
+	mcpServer.AddTool(
+		mcp.NewTool("set_project_options",
+			mcp.WithDescription("Set project options"),
+			mcp.WithString("json", mcp.Description("JSON config")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ts.mu.Lock()
+			defer ts.mu.Unlock()
+
+			args := req.Params.Arguments.(map[string]any)
+			jsonStr := args["json"].(string)
+
+			var opts struct {
+				Proxy struct {
+					MatchReplaceRules   []testMatchReplaceRule `json:"match_replace_rules"`
+					WSMatchReplaceRules []testMatchReplaceRule `json:"ws_match_replace_rules"`
+				} `json:"proxy"`
+			}
+			if err := json.Unmarshal([]byte(jsonStr), &opts); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid JSON: %v", err)), nil
+			}
+
+			if opts.Proxy.MatchReplaceRules != nil {
+				ts.matchReplaceHTTP = opts.Proxy.MatchReplaceRules
+			}
+			if opts.Proxy.WSMatchReplaceRules != nil {
+				ts.matchReplaceWS = opts.Proxy.WSMatchReplaceRules
+			}
+			return mcp.NewToolResultText("Project configuration has been applied"), nil
+		},
+	)
+
 	httpServer := server.NewTestServer(mcpServer)
 
 	ts.HTTPServer = httpServer
 	ts.MCPServer = mcpServer
+	t.Cleanup(httpServer.Close)
 	return ts
 }
 
 // URL returns the SSE endpoint URL for the test server.
 func (t *TestMCPServer) URL() string {
 	return t.HTTPServer.URL + "/sse"
-}
-
-// Close shuts down the test server.
-func (t *TestMCPServer) Close() {
-	t.HTTPServer.Close()
 }
 
 // AddProxyEntry adds an entry to the mock proxy history.

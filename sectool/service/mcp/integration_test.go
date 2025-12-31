@@ -442,3 +442,170 @@ func TestBurpSetActiveEditorContents(t *testing.T) {
 
 	t.Log("SetActiveEditorContents succeeded")
 }
+
+// =============================================================================
+// Match/Replace Rules Integration Tests
+// =============================================================================
+
+func TestBurpGetMatchReplaceRules(t *testing.T) {
+	client := connectOrSkip(t)
+
+	rules, err := client.GetMatchReplaceRules(t.Context())
+	require.NoError(t, err)
+
+	t.Logf("Retrieved %d HTTP match/replace rules", len(rules))
+	for i, rule := range rules {
+		t.Logf("  [%d] type=%s enabled=%v comment=%q match=%q replace=%q",
+			i, rule.RuleType, rule.Enabled, rule.Comment,
+			truncate(rule.StringMatch, 50), truncate(rule.StringReplace, 50))
+	}
+}
+
+func TestBurpGetWSMatchReplaceRules(t *testing.T) {
+	client := connectOrSkip(t)
+
+	rules, err := client.GetWSMatchReplaceRules(t.Context())
+	require.NoError(t, err)
+
+	t.Logf("Retrieved %d WebSocket match/replace rules", len(rules))
+	for i, rule := range rules {
+		t.Logf("  [%d] type=%s enabled=%v comment=%q",
+			i, rule.RuleType, rule.Enabled, rule.Comment)
+	}
+}
+
+func TestBurpSetMatchReplaceRules(t *testing.T) {
+	t.Run("add_remove", func(t *testing.T) {
+		ctx := t.Context()
+		client := connectOrSkip(t)
+
+		// Get original rules to restore later
+		original, err := client.GetMatchReplaceRules(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			// Restore original rules
+			_ = client.SetMatchReplaceRules(t.Context(), original)
+		})
+
+		// Add a test rule
+		testRule := MatchReplaceRule{
+			Category:      RuleCategoryLiteral,
+			Comment:       "sectool-mcp-integration-test",
+			Enabled:       true,
+			RuleType:      RuleTypeRequestHeader,
+			StringMatch:   "",
+			StringReplace: "X-Sectool-MCP-Test: integration",
+		}
+		newRules := append([]MatchReplaceRule{testRule}, original...)
+
+		err = client.SetMatchReplaceRules(ctx, newRules)
+		require.NoError(t, err)
+
+		// Verify the rule was added
+		updated, err := client.GetMatchReplaceRules(ctx)
+		require.NoError(t, err)
+
+		var found bool
+		for _, r := range updated {
+			if r.Comment == "sectool-mcp-integration-test" {
+				found = true
+				assert.Equal(t, "X-Sectool-MCP-Test: integration", r.StringReplace)
+				assert.True(t, r.Enabled)
+				break
+			}
+		}
+		assert.True(t, found, "test rule should be present")
+		t.Log("Successfully added and verified test rule")
+	})
+
+	t.Run("regex_rule", func(t *testing.T) {
+		ctx := t.Context()
+		client := connectOrSkip(t)
+
+		original, err := client.GetMatchReplaceRules(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = client.SetMatchReplaceRules(t.Context(), original)
+		})
+
+		// Add a regex rule
+		testRule := MatchReplaceRule{
+			Category:      RuleCategoryRegex,
+			Comment:       "sectool-mcp-regex-test",
+			Enabled:       true,
+			RuleType:      RuleTypeRequestHeader,
+			StringMatch:   "^X-Test-Header:.*$",
+			StringReplace: "X-Test-Header: replaced",
+		}
+		newRules := append([]MatchReplaceRule{testRule}, original...)
+
+		err = client.SetMatchReplaceRules(ctx, newRules)
+		require.NoError(t, err)
+
+		updated, err := client.GetMatchReplaceRules(ctx)
+		require.NoError(t, err)
+
+		var found bool
+		for _, r := range updated {
+			if r.Comment == "sectool-mcp-regex-test" {
+				found = true
+				assert.Equal(t, RuleCategoryRegex, r.Category)
+				assert.Equal(t, "^X-Test-Header:.*$", r.StringMatch)
+				break
+			}
+		}
+		assert.True(t, found, "regex test rule should be present")
+		t.Log("Successfully added regex rule")
+	})
+
+	t.Run("all_rule_types", func(t *testing.T) {
+		ctx := t.Context()
+		client := connectOrSkip(t)
+
+		original, err := client.GetMatchReplaceRules(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_ = client.SetMatchReplaceRules(t.Context(), original)
+		})
+
+		// Test rule types that Burp MCP actually supports
+		ruleTypes := []string{
+			RuleTypeRequestHeader,
+			RuleTypeRequestBody,
+			RuleTypeResponseHeader,
+			RuleTypeResponseBody,
+		}
+
+		testRules := make([]MatchReplaceRule, 0, len(ruleTypes))
+		for _, rt := range ruleTypes {
+			testRules = append(testRules, MatchReplaceRule{
+				Category:      RuleCategoryLiteral,
+				Comment:       "sectool-type-test-" + rt,
+				Enabled:       false, // Disabled for safety
+				RuleType:      rt,
+				StringMatch:   "match-" + rt,
+				StringReplace: "replace-" + rt,
+			})
+		}
+		newRules := append(testRules, original...)
+
+		err = client.SetMatchReplaceRules(ctx, newRules)
+		require.NoError(t, err)
+
+		updated, err := client.GetMatchReplaceRules(ctx)
+		require.NoError(t, err)
+
+		// Verify rule types were added
+		foundTypes := make(map[string]bool)
+		for _, r := range updated {
+			if strings.HasPrefix(r.Comment, "sectool-type-test-") {
+				foundTypes[r.RuleType] = true
+			}
+		}
+
+		for _, rt := range ruleTypes {
+			assert.True(t, foundTypes[rt], "rule type %s should be present", rt)
+		}
+		t.Logf("Successfully added %d rule types", len(ruleTypes))
+	})
+}

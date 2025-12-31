@@ -10,6 +10,11 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
 // extractRequestMeta extracts method, host, path from raw HTTP request.
 // Returns empty strings on parse failure.
 func extractRequestMeta(raw string) (method, host, path string) {
@@ -47,7 +52,7 @@ func splitHeadersBody(raw []byte) (headers, body []byte) {
 // inferSchemeAndPort determines scheme and port from host string.
 // Returns scheme, port, and host without port suffix.
 func inferSchemeAndPort(host string) (scheme string, port int, hostOnly string) {
-	scheme = "https"
+	scheme = schemeHTTPS
 	port = 443
 	hostOnly = host
 
@@ -57,7 +62,7 @@ func inferSchemeAndPort(host string) (scheme string, port int, hostOnly string) 
 			port = p
 			hostOnly = host[:idx]
 			if port == 80 {
-				scheme = "http"
+				scheme = schemeHTTP
 			}
 		}
 	}

@@ -17,9 +17,7 @@ func TestServiceEndToEnd(t *testing.T) {
 	t.Parallel()
 
 	t.Run("client_health_check", func(t *testing.T) {
-		mockMCP := NewTestMCPServer()
-		t.Cleanup(mockMCP.Close)
-
+		mockMCP := NewTestMCPServer(t)
 		workDir := t.TempDir()
 		srv, err := NewServer(DaemonFlags{
 			WorkDir:    workDir,
@@ -69,9 +67,7 @@ func TestServiceEndToEnd(t *testing.T) {
 		})
 
 		t.Run("running", func(t *testing.T) {
-			mockMCP := NewTestMCPServer()
-			t.Cleanup(mockMCP.Close)
-
+			mockMCP := NewTestMCPServer(t)
 			srv, err := NewServer(DaemonFlags{
 				WorkDir:    workDir,
 				BurpMCPURL: mockMCP.URL(),
@@ -99,11 +95,8 @@ func TestServiceEndToEnd(t *testing.T) {
 	})
 
 	t.Run("client_stop", func(t *testing.T) {
-		mockMCP := NewTestMCPServer()
-		t.Cleanup(mockMCP.Close)
-
+		mockMCP := NewTestMCPServer(t)
 		workDir := t.TempDir()
-
 		srv, err := NewServer(DaemonFlags{
 			WorkDir:    workDir,
 			BurpMCPURL: mockMCP.URL(),
@@ -161,9 +154,7 @@ func TestServiceEndToEnd(t *testing.T) {
 	})
 
 	t.Run("bundle_cleanup_on_shutdown", func(t *testing.T) {
-		mockMCP := NewTestMCPServer()
-		t.Cleanup(mockMCP.Close)
-
+		mockMCP := NewTestMCPServer(t)
 		workDir := t.TempDir()
 		requestsDir := filepath.Join(workDir, ".sectool", "requests")
 
@@ -236,11 +227,8 @@ func TestServiceEndToEnd(t *testing.T) {
 func TestClientErrorHandling(t *testing.T) {
 	t.Parallel()
 
-	mockMCP := NewTestMCPServer()
-	t.Cleanup(mockMCP.Close)
-
 	workDir := t.TempDir()
-
+	mockMCP := NewTestMCPServer(t)
 	srv, err := NewServer(DaemonFlags{
 		WorkDir:    workDir,
 		BurpMCPURL: mockMCP.URL(),
@@ -276,11 +264,8 @@ func TestClientErrorHandling(t *testing.T) {
 func TestRegisterHealthMetric(t *testing.T) {
 	t.Parallel()
 
-	mockMCP := NewTestMCPServer()
-	t.Cleanup(mockMCP.Close)
-
+	mockMCP := NewTestMCPServer(t)
 	workDir := t.TempDir()
-
 	srv, err := NewServer(DaemonFlags{
 		WorkDir:    workDir,
 		BurpMCPURL: mockMCP.URL(),

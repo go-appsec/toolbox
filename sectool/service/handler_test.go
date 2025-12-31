@@ -10,10 +10,10 @@ import (
 )
 
 // testServerWithMCP creates a test server with mock MCP and returns cleanup func.
-func testServerWithMCP(t *testing.T) (*Server, *TestMCPServer, func()) {
+func testServerWithMCP(t *testing.T) (*Server, *TestMCPServer) {
 	t.Helper()
 
-	mockMCP := NewTestMCPServer()
+	mockMCP := NewTestMCPServer(t)
 	workDir := t.TempDir()
 
 	srv, err := NewServer(DaemonFlags{
@@ -29,13 +29,12 @@ func testServerWithMCP(t *testing.T) (*Server, *TestMCPServer, func()) {
 	}()
 	srv.WaitTillStarted()
 
-	cleanup := func() {
+	t.Cleanup(func() {
 		srv.RequestShutdown()
 		<-serverErr
-		mockMCP.Close()
-	}
+	})
 
-	return srv, mockMCP, cleanup
+	return srv, mockMCP
 }
 
 // doRequest is a helper to make HTTP requests to the server.

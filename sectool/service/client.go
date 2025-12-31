@@ -379,3 +379,43 @@ func (c *Client) OastDelete(ctx context.Context, req *OastDeleteRequest) (*OastD
 	}
 	return &resp, nil
 }
+
+// =============================================================================
+// Rule API
+// =============================================================================
+
+// RuleList lists match/replace rules.
+func (c *Client) RuleList(ctx context.Context, req *RuleListRequest) (*RuleListResponse, error) {
+	var resp RuleListResponse
+	if err := c.doJSONRequest(ctx, "/proxy/rule/list", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// RuleAdd creates a new match/replace rule.
+func (c *Client) RuleAdd(ctx context.Context, req *RuleAddRequest) (*RuleEntry, error) {
+	var resp RuleEntry
+	if err := c.doJSONRequest(ctx, "/proxy/rule/add", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// RuleUpdate modifies an existing match/replace rule.
+func (c *Client) RuleUpdate(ctx context.Context, req *RuleUpdateRequest) (*RuleEntry, error) {
+	var resp RuleEntry
+	if err := c.doJSONRequest(ctx, "/proxy/rule/update", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// RuleDelete removes a match/replace rule.
+func (c *Client) RuleDelete(ctx context.Context, req *RuleDeleteRequest) (*RuleDeleteResponse, error) {
+	var resp RuleDeleteResponse
+	if err := c.doJSONRequest(ctx, "/proxy/rule/delete", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

@@ -20,11 +20,6 @@ import (
 	"github.com/jentfoo/llm-security-toolbox/sectool/service/store"
 )
 
-const (
-	schemeHTTPS = "https"
-	schemeHTTP  = "http"
-)
-
 // updateContentLength updates or adds Content-Length header.
 func updateContentLength(headers []byte, length int) []byte {
 	// Match Content-Length header line (case-insensitive)

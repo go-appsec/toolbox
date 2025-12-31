@@ -70,8 +70,8 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 		if existingDomain, exists := b.byLabel[label]; exists {
 			existingSess := b.sessions[existingDomain]
 			b.mu.Unlock()
-			return nil, fmt.Errorf("label %q already in use by session %s; delete it first with: sectool oast delete %s",
-				label, existingSess.info.ID, existingSess.info.ID)
+			return nil, fmt.Errorf("%w: %q already in use by session %s; delete it first with: sectool oast delete %s",
+				ErrLabelExists, label, existingSess.info.ID, existingSess.info.ID)
 		}
 	}
 	b.mu.Unlock()
@@ -108,8 +108,8 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 			existingSess := b.sessions[existingDomain]
 			b.mu.Unlock()
 			_ = c.Close()
-			return nil, fmt.Errorf("label %q already in use by session %s; delete it first with: sectool oast delete %s",
-				label, existingSess.info.ID, existingSess.info.ID)
+			return nil, fmt.Errorf("%w: %q already in use by session %s; delete it first with: sectool oast delete %s",
+				ErrLabelExists, label, existingSess.info.ID, existingSess.info.ID)
 		}
 	}
 
@@ -312,7 +312,7 @@ func (b *InteractshBackend) GetEvent(ctx context.Context, idOrDomain string, eve
 		}
 	}
 
-	return nil, fmt.Errorf("event not found: %s", eventID)
+	return nil, fmt.Errorf("%w: event %s", ErrNotFound, eventID)
 }
 
 func (b *InteractshBackend) ListSessions(ctx context.Context) ([]OastSessionInfo, error) {
@@ -421,5 +421,5 @@ func (b *InteractshBackend) resolveSession(identifier string) (*oastSession, err
 		return sess, nil
 	}
 
-	return nil, fmt.Errorf("session not found: %s", identifier)
+	return nil, fmt.Errorf("%w: %s", ErrNotFound, identifier)
 }

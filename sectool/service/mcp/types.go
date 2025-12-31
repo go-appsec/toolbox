@@ -50,3 +50,27 @@ type WebSocketHistoryEntry struct {
 	Payload   string `json:"payload"`
 	Opcode    string `json:"opcode,omitempty"`
 }
+
+// MatchReplaceRule represents a Burp proxy match and replace rule.
+type MatchReplaceRule struct {
+	Category      string `json:"category"` // "regex" or "literal"
+	Comment       string `json:"comment"`  // stores sectool ID and optional label
+	Enabled       bool   `json:"enabled"`
+	RuleType      string `json:"rule_type"`
+	StringMatch   string `json:"string_match,omitempty"`
+	StringReplace string `json:"string_replace,omitempty"`
+}
+
+// Rule type constants for HTTP match/replace rules.
+const (
+	RuleTypeRequestHeader  = "request_header"
+	RuleTypeRequestBody    = "request_body"
+	RuleTypeResponseHeader = "response_header"
+	RuleTypeResponseBody   = "response_body"
+)
+
+// Rule category constants.
+const (
+	RuleCategoryRegex   = "regex"
+	RuleCategoryLiteral = "literal"
+)

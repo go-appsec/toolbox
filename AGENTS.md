@@ -49,7 +49,10 @@ make lint           # Run golangci-lint and go vet
 | `service/socket_security.go` | Secure listener wrapper, socket path validation |
 | `service/socket_security_{linux,darwin,other}.go` | Peer credential verification (SO_PEERCRED/LOCAL_PEERCRED) |
 | `proxy/flags.go` | Subcommand parsing (list/export/intercept/rule) |
-| `proxy/proxy.go` | Command implementations |
+| `proxy/proxy.go` | Shared client proxy utilities |
+| `proxy/list.go` | List command implementation |
+| `proxy/export.go` | Export command implementation |
+| `proxy/rule.go` | Rule CRUD command implementations |
 | `replay/flags.go` | Subcommand parsing (send/get) |
 | `replay/replay.go` | Command implementations |
 | `oast/flags.go` | Subcommand parsing (create/poll/list/delete) |

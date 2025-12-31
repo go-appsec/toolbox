@@ -302,6 +302,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /oast/list", s.handleOastList)
 	mux.HandleFunc("POST /oast/delete", s.handleOastDelete)
 
+	mux.HandleFunc("POST /proxy/rule/list", s.handleRuleList)
+	mux.HandleFunc("POST /proxy/rule/add", s.handleRuleAdd)
+	mux.HandleFunc("POST /proxy/rule/update", s.handleRuleUpdate)
+	mux.HandleFunc("POST /proxy/rule/delete", s.handleRuleDelete)
+
 	return mux
 }
 
