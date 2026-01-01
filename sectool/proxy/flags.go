@@ -119,11 +119,9 @@ proxy rule <command> [options]
     update     Modify an existing rule
     delete     Remove a rule
 
-  Rule types:
-    --request --header        Modify request headers (default)
-    --request --body          Modify request body
-    --response --header       Modify response headers
-    --response --body         Modify response body
+  Types:
+    HTTP:      request_header (default), request_body, response_header, response_body
+    WebSocket: ws:to-server, ws:to-client, ws:both
 
 proxy rule list [options]
 
@@ -133,36 +131,37 @@ proxy rule list [options]
 
 proxy rule add [options] [match] [replace]
 
-  Add request header (default): match is optional, replace is the header to add.
-  For other types: match is the pattern, replace is the replacement.
+  For header add: only replace is needed (adds header).
+  For replacements: both match and replace are needed.
 
   Options:
+    --type <type>           Rule type (default: request_header)
     --match <pattern>       Pattern to match (alternative to positional arg)
     --replace <string>      Replacement string (alternative to positional arg)
-    --request               Apply to requests (default)
-    --response              Apply to responses
-    --header                Match/replace headers (default)
-    --body                  Match/replace body content
     --regex                 Treat match as regex pattern
     --label <name>          Optional label for easier reference
-    --websocket             Apply to WebSocket messages
 
   Examples:
     sectool proxy rule add "X-Custom: value"
+    sectool proxy rule add --type response_header "X-Frame-Options: DENY"
     sectool proxy rule add --regex "^User-Agent.*$" "User-Agent: Custom"
-    sectool proxy rule add --response --header --regex "^Set-Cookie.*$" ""
-    sectool proxy rule add --request --body "old" "new" --label my-rule
+    sectool proxy rule add --type ws:both "old" "new"
 
 proxy rule update <rule_id> [options] [match] [replace]
 
-  Update an existing rule. All fields are replaced.
-  Lookup by rule_id or label. Searches both HTTP and WebSocket rules.
+  Update an existing rule. Lookup by rule_id or label.
+  Searches both HTTP and WebSocket rules automatically.
 
-  Options: Same as 'add' (except --websocket is ignored)
+  Options:
+    --type <type>           Rule type (required)
+    --match <pattern>       Pattern to match
+    --replace <string>      Replacement string
+    --regex                 Treat match as regex pattern
+    --label <name>          New label for the rule
 
   Examples:
-    sectool proxy rule update abc123 --request --header "X-New: value"
-    sectool proxy rule update my-rule --request --body "updated" "value"
+    sectool proxy rule update abc123 --type request_header "X-New: value"
+    sectool proxy rule update my-rule --type request_body "updated" "value"
 
 proxy rule delete <rule_id>
 
@@ -374,15 +373,11 @@ func parseRuleAdd(args []string) error {
 	fs := pflag.NewFlagSet("proxy rule add", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	var timeout time.Duration
-	var websocket, request, response, header, body, isRegex bool
-	var label, name, match, replace string
+	var isRegex bool
+	var ruleType, label, name, match, replace string
 
 	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
-	fs.BoolVar(&websocket, "websocket", false, "apply to WebSocket messages")
-	fs.BoolVar(&request, "request", false, "apply to requests (default)")
-	fs.BoolVar(&response, "response", false, "apply to responses")
-	fs.BoolVar(&header, "header", false, "match/replace headers (default)")
-	fs.BoolVar(&body, "body", false, "match/replace body content")
+	fs.StringVar(&ruleType, "type", "request_header", "rule type")
 	fs.BoolVar(&isRegex, "regex", false, "treat match as regex pattern")
 	fs.StringVar(&label, "label", "", "optional label for easier reference")
 	fs.StringVar(&name, "name", "", "alias for --label")
@@ -394,13 +389,18 @@ func parseRuleAdd(args []string) error {
 		fmt.Fprint(os.Stderr, `Usage: sectool proxy rule add [options] [match] [replace]
 
 Add a match/replace rule.
-For header add (default): only replace is needed (adds header).
+For header add: only replace is needed (adds header).
 For replacements: both match and replace are needed.
 
+Types:
+  HTTP:      request_header (default), request_body, response_header, response_body
+  WebSocket: ws:to-server, ws:to-client, ws:both
+
 Examples:
-  sectool proxy rule add "X-Custom: value"                         # Add request header
-  sectool proxy rule add --regex "^User-Agent.*$" "User-Agent: X"  # Replace User-Agent
-  sectool proxy rule add --response --header --regex "^Set-Cookie.*$" ""  # Remove cookies
+  sectool proxy rule add "X-Custom: value"                              # Add request header
+  sectool proxy rule add --type response_header "X-Frame-Options: DENY" # Add response header
+  sectool proxy rule add --regex "^User-Agent.*$" "User-Agent: X"       # Replace User-Agent
+  sectool proxy rule add --type ws:both "old" "new"                     # WebSocket replacement
 
 Options:
 `)
@@ -415,8 +415,6 @@ Options:
 		label = name
 	}
 
-	ruleType := resolveRuleType(response, body)
-
 	// Positional args override empty flags
 	posArgs := fs.Args()
 	if match == "" && replace == "" {
@@ -429,36 +427,34 @@ Options:
 		}
 	}
 
-	return ruleAdd(timeout, websocket, ruleType, match, replace, label, isRegex)
+	return ruleAdd(timeout, ruleType, match, replace, label, isRegex)
 }
 
 func parseRuleUpdate(args []string) error {
 	fs := pflag.NewFlagSet("proxy rule update", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	var timeout time.Duration
-	var request, response, header, body, isRegex bool
-	var label, name, match, replace string
+	var isRegex bool
+	var ruleType, label, name, match, replace string
 
 	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
-	fs.BoolVar(&request, "request", false, "apply to requests (default)")
-	fs.BoolVar(&response, "response", false, "apply to responses")
-	fs.BoolVar(&header, "header", false, "match/replace headers (default)")
-	fs.BoolVar(&body, "body", false, "match/replace body content")
+	fs.StringVar(&ruleType, "type", "", "rule type (required)")
 	fs.BoolVar(&isRegex, "regex", false, "treat match as regex pattern")
 	fs.StringVar(&label, "label", "", "new label for the rule")
 	fs.StringVar(&name, "name", "", "alias for --label")
 	fs.StringVar(&match, "match", "", "pattern to match")
 	fs.StringVar(&replace, "replace", "", "replacement string")
 	_ = fs.MarkHidden("name")
-	// Accept --websocket for tolerance but ignore it (searches both sets automatically)
-	fs.Bool("websocket", false, "")
-	_ = fs.MarkHidden("websocket")
 
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `Usage: sectool proxy rule update <rule_id> [options] [match] [replace]
 
 Update an existing rule. Lookup by rule_id or label.
 Searches both HTTP and WebSocket rules automatically.
+
+Types:
+  HTTP:      request_header, request_body, response_header, response_body
+  WebSocket: ws:to-server, ws:to-client, ws:both
 
 Options:
 `)
@@ -477,7 +473,6 @@ Options:
 	}
 
 	ruleID := fs.Args()[0]
-	ruleType := resolveRuleType(response, body)
 
 	// Positional args override empty flags
 	posArgs := fs.Args()[1:]
@@ -523,18 +518,4 @@ Options:
 	}
 
 	return ruleDelete(timeout, fs.Args()[0])
-}
-
-// resolveRuleType determines the rule type from flags.
-// Defaults to request_header if no flags are set.
-func resolveRuleType(response, body bool) string {
-	prefix := "request"
-	if response {
-		prefix = "response"
-	}
-
-	if body {
-		return prefix + "_body"
-	}
-	return prefix + "_header"
 }

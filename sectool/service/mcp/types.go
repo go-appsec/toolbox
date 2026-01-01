@@ -52,6 +52,8 @@ type WebSocketHistoryEntry struct {
 }
 
 // MatchReplaceRule represents a Burp proxy match and replace rule.
+// HTTP rules use RuleType values: request_header, request_body, response_header, response_body
+// WebSocket rules use RuleType values: client_to_server, server_to_client, both_directions
 type MatchReplaceRule struct {
 	Category      string `json:"category"` // "regex" or "literal"
 	Comment       string `json:"comment"`  // stores sectool ID and optional label

@@ -774,3 +774,40 @@ func TestReadResponseBytes(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateRuleTypeAny(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		ruleType string
+		wantErr  bool
+	}{
+		// HTTP types - all valid
+		{"http_request_header", RuleTypeRequestHeader, false},
+		{"http_request_body", RuleTypeRequestBody, false},
+		{"http_response_header", RuleTypeResponseHeader, false},
+		{"http_response_body", RuleTypeResponseBody, false},
+
+		// WebSocket types - all valid
+		{"ws_to_server", "ws:to-server", false},
+		{"ws_to_client", "ws:to-client", false},
+		{"ws_both", "ws:both", false},
+
+		// Invalid types
+		{"invalid_type", "invalid", true},
+		{"empty_type", "", true},
+		{"burp_internal_type", "client_to_server", true}, // Burp's internal format should not be accepted
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRuleTypeAny(tt.ruleType)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

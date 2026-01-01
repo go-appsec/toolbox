@@ -146,9 +146,11 @@ func (m *mcpServer) proxyRuleListTool() mcp.Tool {
 
 func (m *mcpServer) proxyRuleAddTool() mcp.Tool {
 	return mcp.NewTool("proxy_rule_add",
-		mcp.WithDescription(`Add Burp proxy match/replace rule (HTTP default; websocket=true for WS). Persists across all traffic (vs replay_send for one-off edits).
+		mcp.WithDescription(`Add Burp proxy match/replace rule. Persists across all traffic (vs replay_send for one-off edits).
 
-type: request_header|request_body|response_header|response_body
+Types:
+  HTTP:      request_header (default), request_body, response_header, response_body
+  WebSocket: ws:to-server, ws:to-client, ws:both
 
 Usage:
 - Substitute: set both match and replace
@@ -156,12 +158,11 @@ Usage:
 - Add header: set replace only (e.g., "X-Test: 1")
 
 Regex: is_regex=true (Java regex). Labels must be unique.`),
-		mcp.WithString("type", mcp.Required(), mcp.Description("Rule type: request_header, request_body, response_header, response_body")),
+		mcp.WithString("type", mcp.Required(), mcp.Description("Rule type: request_header, request_body, response_header, response_body, ws:to-server, ws:to-client, ws:both")),
 		mcp.WithString("match", mcp.Description("Pattern to match")),
 		mcp.WithString("replace", mcp.Description("Replacement text")),
 		mcp.WithString("label", mcp.Description("Optional unique label (usable as rule_id)")),
 		mcp.WithBoolean("is_regex", mcp.Description("Treat match as regex pattern (Java regex syntax)")),
-		mcp.WithBoolean("websocket", mcp.Description("Add as WebSocket rule instead of HTTP")),
 	)
 }
 
@@ -171,7 +172,7 @@ func (m *mcpServer) proxyRuleUpdateTool() mcp.Tool {
 
 Requires at least match or replace. To rename label only, resend existing values with new label.`),
 		mcp.WithString("rule_id", mcp.Required(), mcp.Description("Rule ID or label to update")),
-		mcp.WithString("type", mcp.Required(), mcp.Description("Rule type: request_header, request_body, response_header, response_body")),
+		mcp.WithString("type", mcp.Required(), mcp.Description("Rule type: HTTP uses request_header/request_body/response_header/response_body; WebSocket uses ws:to-server/ws:to-client/ws:both")),
 		mcp.WithString("match", mcp.Description("Pattern to match")),
 		mcp.WithString("replace", mcp.Description("Replacement text")),
 		mcp.WithString("label", mcp.Description("Optional new label (unique); omit to keep existing")),
@@ -348,7 +349,7 @@ func (m *mcpServer) handleProxyRuleAdd(ctx context.Context, req mcp.CallToolRequ
 	if ruleType == "" {
 		return errorResult("type is required"), nil
 	}
-	if err := validateRuleType(ruleType); err != nil {
+	if err := validateRuleTypeAny(ruleType); err != nil {
 		return errorResult(err.Error()), nil
 	}
 
@@ -357,13 +358,11 @@ func (m *mcpServer) handleProxyRuleAdd(ctx context.Context, req mcp.CallToolRequ
 	if match == "" && replace == "" {
 		return errorResult("match or replace is required"), nil
 	}
-
-	websocket := req.GetBool("websocket", false)
 	label := req.GetString("label", "")
 
-	log.Printf("mcp/proxy_rule_add: type=%s label=%q websocket=%t", ruleType, label, websocket)
+	log.Printf("mcp/proxy_rule_add: type=%s label=%q", ruleType, label)
 
-	rule, err := m.service.httpBackend.AddRule(ctx, websocket, ProxyRuleInput{
+	rule, err := m.service.httpBackend.AddRule(ctx, ProxyRuleInput{
 		Label:   label,
 		Type:    ruleType,
 		IsRegex: req.GetBool("is_regex", false),
@@ -391,7 +390,7 @@ func (m *mcpServer) handleProxyRuleUpdate(ctx context.Context, req mcp.CallToolR
 	if ruleType == "" {
 		return errorResult("type is required"), nil
 	}
-	if err := validateRuleType(ruleType); err != nil {
+	if err := validateRuleTypeAny(ruleType); err != nil {
 		return errorResult(err.Error()), nil
 	}
 

@@ -39,8 +39,9 @@ type HttpBackend interface {
 	ListRules(ctx context.Context, websocket bool) ([]RuleEntry, error)
 
 	// AddRule creates a new match/replace rule.
+	// WebSocket vs HTTP is inferred from rule.Type (ws:* types are WebSocket).
 	// Returns the created rule with assigned ID.
-	AddRule(ctx context.Context, websocket bool, rule ProxyRuleInput) (*RuleEntry, error)
+	AddRule(ctx context.Context, rule ProxyRuleInput) (*RuleEntry, error)
 
 	// UpdateRule modifies an existing rule by ID or label.
 	// Searches both HTTP and WebSocket rules automatically.

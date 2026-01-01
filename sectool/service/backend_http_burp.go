@@ -90,7 +90,7 @@ func (b *BurpBackend) SendRequest(ctx context.Context, name string, req SendRequ
 
 // doSendRequest performs the actual request sending.
 func (b *BurpBackend) doSendRequest(ctx context.Context, name string, req SendRequestInput) (*SendRequestResult, error) {
-	// Build descriptive tab name: sectool-domain/path [id]
+	// Build descriptive tab name: st-domain/path [id]
 	reqPath := extractRequestPath(req.RawRequest)
 	if len(reqPath) > 8 {
 		reqPath = reqPath[:8] + ".."
@@ -407,7 +407,8 @@ func extractMethod(raw []byte) string {
 	return string(parts[0])
 }
 
-// extractRequestPath extracts the path from a raw request's request line.
+// extractRequestPath extracts the path from a raw request's request line,
+// stripping any query parameters.
 func extractRequestPath(raw []byte) string {
 	lines := bytes.SplitN(raw, []byte("\r\n"), 2)
 	if len(lines) == 0 {
@@ -417,7 +418,12 @@ func extractRequestPath(raw []byte) string {
 	if len(parts) < 2 {
 		return "/"
 	}
-	return string(parts[1])
+	path := string(parts[1])
+	// Strip query parameters
+	if idx := strings.Index(path, "?"); idx >= 0 {
+		path = path[:idx]
+	}
+	return path
 }
 
 // parseBurpResponse extracts HTTP response from Burp's toString format.
@@ -477,10 +483,17 @@ func (b *BurpBackend) ListRules(ctx context.Context, websocket bool) ([]RuleEntr
 		if !ok {
 			continue
 		}
+
+		// Convert Burp's format to ws: prefixed types for WebSocket rules
+		ruleType := r.RuleType
+		if websocket {
+			ruleType = burpToWSType(r.RuleType)
+		}
+
 		rules = append(rules, RuleEntry{
 			RuleID:  id,
 			Label:   label,
-			Type:    r.RuleType,
+			Type:    ruleType,
 			IsRegex: r.Category == mcp.RuleCategoryRegex,
 			Match:   r.StringMatch,
 			Replace: r.StringReplace,
@@ -489,7 +502,7 @@ func (b *BurpBackend) ListRules(ctx context.Context, websocket bool) ([]RuleEntr
 	return rules, nil
 }
 
-func (b *BurpBackend) AddRule(ctx context.Context, websocket bool, input ProxyRuleInput) (*RuleEntry, error) {
+func (b *BurpBackend) AddRule(ctx context.Context, input ProxyRuleInput) (*RuleEntry, error) {
 	httpRules, err := b.getAllRules(ctx, false)
 	if err != nil {
 		return nil, fmt.Errorf("add rule: %w", err)
@@ -505,9 +518,16 @@ func (b *BurpBackend) AddRule(ctx context.Context, websocket bool, input ProxyRu
 		}
 	}
 
+	websocket := isWSType(input.Type)
 	burpRules := httpRules
 	if websocket {
 		burpRules = wsRules
+	}
+
+	// Convert ws: prefixed types to Burp's format
+	ruleType := input.Type
+	if websocket {
+		ruleType = wsToBurpType(input.Type)
 	}
 
 	id := ids.Generate(0)
@@ -515,7 +535,7 @@ func (b *BurpBackend) AddRule(ctx context.Context, websocket bool, input ProxyRu
 		Category:      mcp.RuleCategoryLiteral,
 		Comment:       formatSectoolComment(id, input.Label),
 		Enabled:       true,
-		RuleType:      input.Type,
+		RuleType:      ruleType,
 		StringMatch:   input.Match,
 		StringReplace: input.Replace,
 	}
@@ -575,8 +595,21 @@ func (b *BurpBackend) updateRuleInSet(ctx context.Context, websocket bool, rules
 		}
 	}
 
+	// Validate type matches rule category (ws:* for WebSocket, HTTP types for HTTP)
+	ruleType := input.Type
+	if websocket {
+		if !isWSType(input.Type) {
+			return nil, fmt.Errorf("cannot update WebSocket rule with HTTP type %q: use ws:to-server, ws:to-client, or ws:both", input.Type)
+		}
+		ruleType = wsToBurpType(input.Type)
+	} else {
+		if isWSType(input.Type) {
+			return nil, fmt.Errorf("cannot update HTTP rule with WebSocket type %q", input.Type)
+		}
+	}
+
 	rules[idx].Comment = formatSectoolComment(id, label)
-	rules[idx].RuleType = input.Type
+	rules[idx].RuleType = ruleType
 	rules[idx].StringMatch = input.Match
 	rules[idx].StringReplace = input.Replace
 	if input.IsRegex {
@@ -662,6 +695,39 @@ func (b *BurpBackend) findRuleIndex(rules []mcp.MatchReplaceRule, idOrLabel stri
 		}
 	}
 	return -1
+}
+
+// isWSType returns true if the type is a WebSocket type (ws: prefix).
+func isWSType(t string) bool {
+	return strings.HasPrefix(t, "ws:")
+}
+
+// wsToBurpType converts ws: prefixed types to Burp's WebSocket rule_type values.
+func wsToBurpType(wsType string) string {
+	switch wsType {
+	case "ws:to-server":
+		return "client_to_server"
+	case "ws:to-client":
+		return "server_to_client"
+	case "ws:both":
+		return "both_directions"
+	default:
+		return wsType // pass through unknown types
+	}
+}
+
+// burpToWSType converts Burp's WebSocket rule_type values to ws: prefixed types.
+func burpToWSType(burpType string) string {
+	switch burpType {
+	case "client_to_server":
+		return "ws:to-server"
+	case "server_to_client":
+		return "ws:to-client"
+	case "both_directions":
+		return "ws:both"
+	default:
+		return burpType // pass through unknown types
+	}
 }
 
 // checkLabelUnique verifies a label is unique across both HTTP and WS rules.

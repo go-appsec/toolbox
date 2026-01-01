@@ -395,13 +395,13 @@ type RuleEntry struct {
 }
 
 // RuleAddRequest is the request for POST /proxy/rule/add.
+// WebSocket vs HTTP is inferred from Type (ws:* types are WebSocket).
 type RuleAddRequest struct {
-	WebSocket bool   `json:"websocket,omitempty"`
-	Label     string `json:"label,omitempty"`
-	Type      string `json:"type"`
-	IsRegex   bool   `json:"is_regex,omitempty"`
-	Match     string `json:"match,omitempty"`
-	Replace   string `json:"replace,omitempty"`
+	Label   string `json:"label,omitempty"`
+	Type    string `json:"type"`
+	IsRegex bool   `json:"is_regex,omitempty"`
+	Match   string `json:"match,omitempty"`
+	Replace string `json:"replace,omitempty"`
 }
 
 // RuleUpdateRequest is the request for POST /proxy/rule/update.

@@ -85,11 +85,14 @@ func TestBurpBackendRules(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name      string
-		websocket bool
+		name       string
+		websocket  bool
+		ruleType1  string // primary type for add tests
+		ruleType2  string // secondary type for regex tests
+		updateType string // type for update tests
 	}{
-		{"http_rules", false},
-		{"ws_rules", true},
+		{"http_rules", false, mcp.RuleTypeRequestHeader, mcp.RuleTypeResponseHeader, mcp.RuleTypeRequestBody},
+		{"ws_rules", true, "ws:to-server", "ws:to-client", "ws:both"},
 	}
 
 	for _, tc := range testCases {
@@ -110,9 +113,9 @@ func TestBurpBackendRules(t *testing.T) {
 			})
 
 			t.Run("add_rule", func(t *testing.T) {
-				rule, err := backend.AddRule(t.Context(), tc.websocket, ProxyRuleInput{
+				rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
 					Label:   "test-add",
-					Type:    mcp.RuleTypeRequestHeader,
+					Type:    tc.ruleType1,
 					IsRegex: false,
 					Match:   "",
 					Replace: "X-Test: value",
@@ -122,7 +125,7 @@ func TestBurpBackendRules(t *testing.T) {
 
 				assert.NotEmpty(t, rule.RuleID)
 				assert.Equal(t, "test-add", rule.Label)
-				assert.Equal(t, mcp.RuleTypeRequestHeader, rule.Type)
+				assert.Equal(t, tc.ruleType1, rule.Type)
 				assert.False(t, rule.IsRegex)
 				assert.Equal(t, "X-Test: value", rule.Replace)
 
@@ -134,9 +137,9 @@ func TestBurpBackendRules(t *testing.T) {
 			})
 
 			t.Run("add_regex_rule", func(t *testing.T) {
-				rule, err := backend.AddRule(t.Context(), tc.websocket, ProxyRuleInput{
+				rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
 					Label:   "test-regex",
-					Type:    mcp.RuleTypeResponseHeader,
+					Type:    tc.ruleType2,
 					IsRegex: true,
 					Match:   "^X-Remove.*$",
 					Replace: "",
@@ -149,9 +152,9 @@ func TestBurpBackendRules(t *testing.T) {
 			})
 
 			t.Run("duplicate_label_rejected", func(t *testing.T) {
-				_, err := backend.AddRule(t.Context(), tc.websocket, ProxyRuleInput{
+				_, err := backend.AddRule(t.Context(), ProxyRuleInput{
 					Label: "test-add",
-					Type:  mcp.RuleTypeRequestHeader,
+					Type:  tc.ruleType1,
 				})
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), "already exists")
@@ -161,7 +164,7 @@ func TestBurpBackendRules(t *testing.T) {
 				// Try to update test-regex rule to have test-add's label
 				_, err := backend.UpdateRule(t.Context(), createdRuleIDs[1], ProxyRuleInput{
 					Label: "test-add",
-					Type:  mcp.RuleTypeRequestHeader,
+					Type:  tc.ruleType1,
 				})
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), "already exists")
@@ -170,7 +173,7 @@ func TestBurpBackendRules(t *testing.T) {
 			t.Run("update_by_id", func(t *testing.T) {
 				updated, err := backend.UpdateRule(t.Context(), createdRuleIDs[0], ProxyRuleInput{
 					Label:   "test-updated",
-					Type:    mcp.RuleTypeRequestBody,
+					Type:    tc.updateType,
 					IsRegex: true,
 					Match:   "old",
 					Replace: "new",
@@ -179,14 +182,14 @@ func TestBurpBackendRules(t *testing.T) {
 
 				assert.Equal(t, createdRuleIDs[0], updated.RuleID)
 				assert.Equal(t, "test-updated", updated.Label)
-				assert.Equal(t, mcp.RuleTypeRequestBody, updated.Type)
+				assert.Equal(t, tc.updateType, updated.Type)
 				assert.True(t, updated.IsRegex)
 			})
 
 			t.Run("update_by_label", func(t *testing.T) {
 				updated, err := backend.UpdateRule(t.Context(), "test-regex", ProxyRuleInput{
 					Label:   "test-regex-updated",
-					Type:    mcp.RuleTypeResponseBody,
+					Type:    tc.ruleType2,
 					IsRegex: false,
 					Match:   "find",
 					Replace: "replace",
@@ -197,16 +200,16 @@ func TestBurpBackendRules(t *testing.T) {
 
 			t.Run("update_preserves_label", func(t *testing.T) {
 				// Add a rule with a label
-				rule, err := backend.AddRule(t.Context(), tc.websocket, ProxyRuleInput{
+				rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
 					Label:   "preserved-label",
-					Type:    mcp.RuleTypeRequestHeader,
+					Type:    tc.ruleType1,
 					Replace: "X-Original: value",
 				})
 				require.NoError(t, err)
 
 				// Update the rule without providing a label (empty string)
 				updated, err := backend.UpdateRule(t.Context(), rule.RuleID, ProxyRuleInput{
-					Type:    mcp.RuleTypeRequestHeader,
+					Type:    tc.ruleType1,
 					Replace: "X-Updated: value",
 				})
 				require.NoError(t, err)
@@ -235,7 +238,7 @@ func TestBurpBackendRules(t *testing.T) {
 
 			t.Run("update_not_found", func(t *testing.T) {
 				_, err := backend.UpdateRule(t.Context(), "nonexistent", ProxyRuleInput{
-					Type:    mcp.RuleTypeRequestHeader,
+					Type:    tc.ruleType1,
 					Replace: "X-Test: value",
 				})
 				require.Error(t, err)
@@ -243,9 +246,9 @@ func TestBurpBackendRules(t *testing.T) {
 			})
 
 			t.Run("delete_by_id", func(t *testing.T) {
-				rule, err := backend.AddRule(t.Context(), tc.websocket, ProxyRuleInput{
+				rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
 					Label: "to-delete-by-id",
-					Type:  mcp.RuleTypeRequestHeader,
+					Type:  tc.ruleType1,
 				})
 				require.NoError(t, err)
 
@@ -260,9 +263,9 @@ func TestBurpBackendRules(t *testing.T) {
 			})
 
 			t.Run("delete_by_label", func(t *testing.T) {
-				rule, err := backend.AddRule(t.Context(), tc.websocket, ProxyRuleInput{
+				rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
 					Label: "to-delete-by-label",
-					Type:  mcp.RuleTypeRequestHeader,
+					Type:  tc.ruleType1,
 				})
 				require.NoError(t, err)
 
@@ -285,6 +288,48 @@ func TestBurpBackendRules(t *testing.T) {
 	}
 }
 
+func TestWsToBurpType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"ws:to-server", "client_to_server"},
+		{"ws:to-client", "server_to_client"},
+		{"ws:both", "both_directions"},
+		{"unknown", "unknown"},               // pass through unknown types
+		{"request_header", "request_header"}, // HTTP types pass through
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, wsToBurpType(tt.input))
+		})
+	}
+}
+
+func TestBurpToWSType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"client_to_server", "ws:to-server"},
+		{"server_to_client", "ws:to-client"},
+		{"both_directions", "ws:both"},
+		{"unknown", "unknown"},               // pass through unknown types
+		{"request_header", "request_header"}, // HTTP types pass through
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, burpToWSType(tt.input))
+		})
+	}
+}
+
 func TestBurpBackendRuleIsolation(t *testing.T) {
 	t.Parallel()
 
@@ -296,16 +341,16 @@ func TestBurpBackendRuleIsolation(t *testing.T) {
 	backend := &BurpBackend{client: client}
 
 	// Add HTTP rule
-	httpRule, err := backend.AddRule(t.Context(), false, ProxyRuleInput{
+	httpRule, err := backend.AddRule(t.Context(), ProxyRuleInput{
 		Label: "http-only",
 		Type:  mcp.RuleTypeRequestHeader,
 	})
 	require.NoError(t, err)
 
-	// Add WS rule
-	wsRule, err := backend.AddRule(t.Context(), true, ProxyRuleInput{
+	// Add WS rule with ws: prefixed type
+	wsRule, err := backend.AddRule(t.Context(), ProxyRuleInput{
 		Label: "ws-only",
-		Type:  mcp.RuleTypeRequestBody,
+		Type:  "ws:both",
 	})
 	require.NoError(t, err)
 
@@ -314,10 +359,55 @@ func TestBurpBackendRuleIsolation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, httpRules, 1)
 	assert.Equal(t, httpRule.RuleID, httpRules[0].RuleID)
+	assert.Equal(t, mcp.RuleTypeRequestHeader, httpRules[0].Type)
 
-	// WS rule should only appear in WS list
+	// WS rule should only appear in WS list with ws: prefixed type
 	wsRules, err := backend.ListRules(t.Context(), true)
 	require.NoError(t, err)
 	require.Len(t, wsRules, 1)
 	assert.Equal(t, wsRule.RuleID, wsRules[0].RuleID)
+	assert.Equal(t, "ws:both", wsRules[0].Type)
+}
+
+func TestBurpBackendUpdateTypeMismatch(t *testing.T) {
+	t.Parallel()
+
+	mockServer := NewTestMCPServer(t)
+	client := mcp.New(mockServer.URL())
+	require.NoError(t, client.Connect(t.Context()))
+	t.Cleanup(func() { _ = client.Close() })
+
+	backend := &BurpBackend{client: client}
+
+	// Add HTTP rule
+	httpRule, err := backend.AddRule(t.Context(), ProxyRuleInput{
+		Label: "http-rule",
+		Type:  mcp.RuleTypeRequestHeader,
+	})
+	require.NoError(t, err)
+
+	// Add WS rule
+	wsRule, err := backend.AddRule(t.Context(), ProxyRuleInput{
+		Label: "ws-rule",
+		Type:  "ws:both",
+	})
+	require.NoError(t, err)
+
+	t.Run("http_with_ws_type", func(t *testing.T) {
+		_, err := backend.UpdateRule(t.Context(), httpRule.RuleID, ProxyRuleInput{
+			Type:    "ws:to-server",
+			Replace: "test",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot update HTTP rule with WebSocket type")
+	})
+
+	t.Run("ws_with_http_type", func(t *testing.T) {
+		_, err := backend.UpdateRule(t.Context(), wsRule.RuleID, ProxyRuleInput{
+			Type:    mcp.RuleTypeRequestHeader,
+			Replace: "test",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot update WebSocket rule with HTTP type")
+	})
 }

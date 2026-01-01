@@ -431,7 +431,7 @@ func (s *Server) handleRuleAdd(w http.ResponseWriter, r *http.Request) {
 	} else if req.Type == "" {
 		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "type is required", "")
 		return
-	} else if err := validateRuleType(req.Type); err != nil {
+	} else if err := validateRuleTypeAny(req.Type); err != nil {
 		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error(), "")
 		return
 	} else if req.Match == "" && req.Replace == "" {
@@ -439,15 +439,9 @@ func (s *Server) handleRuleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("proxy/rule/add: type=%s label=%q websocket=%t", req.Type, req.Label, req.WebSocket)
+	log.Printf("proxy/rule/add: type=%s label=%q", req.Type, req.Label)
 
-	rule, err := s.httpBackend.AddRule(r.Context(), req.WebSocket, ProxyRuleInput{
-		Label:   req.Label,
-		Type:    req.Type,
-		IsRegex: req.IsRegex,
-		Match:   req.Match,
-		Replace: req.Replace,
-	})
+	rule, err := s.httpBackend.AddRule(r.Context(), ProxyRuleInput(req))
 	if err != nil {
 		if errors.Is(err, ErrLabelExists) {
 			s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest,
@@ -475,7 +469,7 @@ func (s *Server) handleRuleUpdate(w http.ResponseWriter, r *http.Request) {
 	} else if req.Type == "" {
 		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "type is required", "")
 		return
-	} else if err := validateRuleType(req.Type); err != nil {
+	} else if err := validateRuleTypeAny(req.Type); err != nil {
 		s.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error(), "")
 		return
 	} else if req.Match == "" && req.Replace == "" {
@@ -537,16 +531,20 @@ func (s *Server) handleRuleDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 var validRuleTypes = map[string]bool{
+	// HTTP types
 	RuleTypeRequestHeader:  true,
 	RuleTypeRequestBody:    true,
 	RuleTypeResponseHeader: true,
 	RuleTypeResponseBody:   true,
+	// WebSocket types
+	"ws:to-server": true,
+	"ws:to-client": true,
+	"ws:both":      true,
 }
 
-func validateRuleType(t string) error {
+func validateRuleTypeAny(t string) error {
 	if !validRuleTypes[t] {
-		return fmt.Errorf("invalid rule type %q: must be %s, %s, %s, or %s",
-			t, RuleTypeRequestHeader, RuleTypeRequestBody, RuleTypeResponseHeader, RuleTypeResponseBody)
+		return fmt.Errorf("invalid rule type %q", t)
 	}
 	return nil
 }

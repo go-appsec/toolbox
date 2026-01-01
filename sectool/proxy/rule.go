@@ -98,7 +98,7 @@ func truncate(s string, max int) string {
 	return s[:max-2] + ".."
 }
 
-func ruleAdd(timeout time.Duration, websocket bool, ruleType, match, replace, label string, isRegex bool) error {
+func ruleAdd(timeout time.Duration, ruleType, match, replace, label string, isRegex bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -113,12 +113,11 @@ func ruleAdd(timeout time.Duration, websocket bool, ruleType, match, replace, la
 	}
 
 	resp, err := client.RuleAdd(ctx, &service.RuleAddRequest{
-		WebSocket: websocket,
-		Label:     label,
-		Type:      ruleType,
-		IsRegex:   isRegex,
-		Match:     match,
-		Replace:   replace,
+		Label:   label,
+		Type:    ruleType,
+		IsRegex: isRegex,
+		Match:   match,
+		Replace: replace,
 	})
 	if err != nil {
 		return fmt.Errorf("rule add failed: %w", err)

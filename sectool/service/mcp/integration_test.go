@@ -168,7 +168,7 @@ func TestBurpCreateRepeaterTab(t *testing.T) {
 	client := connectOrSkip(t)
 
 	params := RepeaterTabParams{
-		TabName:        "sectool-test",
+		TabName:        "st-test",
 		Content:        "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
 		TargetHostname: "example.com",
 		TargetPort:     443,
@@ -182,7 +182,7 @@ func TestBurpCreateRepeaterTab_HTTP(t *testing.T) {
 	client := connectOrSkip(t)
 
 	params := RepeaterTabParams{
-		TabName:        "sectool-http-test",
+		TabName:        "st-http-test",
 		Content:        "GET /get HTTP/1.1\r\nHost: httpbin.org\r\n\r\n",
 		TargetHostname: "httpbin.org",
 		TargetPort:     80,
@@ -352,7 +352,7 @@ func TestBurpSendToIntruder(t *testing.T) {
 	client := connectOrSkip(t)
 
 	params := IntruderParams{
-		TabName:        "sectool-intruder-test",
+		TabName:        "st-intruder-test",
 		Content:        "GET /get?param=FUZZ HTTP/1.1\r\nHost: httpbin.org\r\n\r\n",
 		TargetHostname: "httpbin.org",
 		TargetPort:     443,
@@ -490,7 +490,7 @@ func TestBurpSetMatchReplaceRules(t *testing.T) {
 		// Add a test rule
 		testRule := MatchReplaceRule{
 			Category:      RuleCategoryLiteral,
-			Comment:       "sectool-mcp-integration-test",
+			Comment:       "sectool:mcp-integration-test",
 			Enabled:       true,
 			RuleType:      RuleTypeRequestHeader,
 			StringMatch:   "",
@@ -507,7 +507,7 @@ func TestBurpSetMatchReplaceRules(t *testing.T) {
 
 		var found bool
 		for _, r := range updated {
-			if r.Comment == "sectool-mcp-integration-test" {
+			if r.Comment == "sectool:mcp-integration-test" {
 				found = true
 				assert.Equal(t, "X-Sectool-MCP-Test: integration", r.StringReplace)
 				assert.True(t, r.Enabled)
@@ -531,7 +531,7 @@ func TestBurpSetMatchReplaceRules(t *testing.T) {
 		// Add a regex rule
 		testRule := MatchReplaceRule{
 			Category:      RuleCategoryRegex,
-			Comment:       "sectool-mcp-regex-test",
+			Comment:       "sectool:mcp-regex-test",
 			Enabled:       true,
 			RuleType:      RuleTypeRequestHeader,
 			StringMatch:   "^X-Test-Header:.*$",
@@ -547,7 +547,7 @@ func TestBurpSetMatchReplaceRules(t *testing.T) {
 
 		var found bool
 		for _, r := range updated {
-			if r.Comment == "sectool-mcp-regex-test" {
+			if r.Comment == "sectool:mcp-regex-test" {
 				found = true
 				assert.Equal(t, RuleCategoryRegex, r.Category)
 				assert.Equal(t, "^X-Test-Header:.*$", r.StringMatch)
@@ -580,7 +580,7 @@ func TestBurpSetMatchReplaceRules(t *testing.T) {
 		for _, rt := range ruleTypes {
 			testRules = append(testRules, MatchReplaceRule{
 				Category:      RuleCategoryLiteral,
-				Comment:       "sectool-type-test-" + rt,
+				Comment:       "sectool:type-test-" + rt,
 				Enabled:       false, // Disabled for safety
 				RuleType:      rt,
 				StringMatch:   "match-" + rt,
@@ -598,7 +598,7 @@ func TestBurpSetMatchReplaceRules(t *testing.T) {
 		// Verify rule types were added
 		foundTypes := make(map[string]bool)
 		for _, r := range updated {
-			if strings.HasPrefix(r.Comment, "sectool-type-test-") {
+			if strings.HasPrefix(r.Comment, "sectool:type-test-") {
 				foundTypes[r.RuleType] = true
 			}
 		}
