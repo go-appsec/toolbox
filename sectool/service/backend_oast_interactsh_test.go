@@ -97,6 +97,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 				Domain:    "test.oast.fun",
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.sessions["test.oast.fun"] = sess
@@ -142,6 +143,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 				Domain:    "test2.oast.fun",
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.sessions["test2.oast.fun"] = sess
@@ -187,6 +189,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 				Domain:    "limit.oast.fun",
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.sessions["limit.oast.fun"] = sess
@@ -222,6 +225,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 				Domain:    domain,
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.sessions[domain] = sess
@@ -287,6 +291,8 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 			Time: time.Now(),
 			Type: "http",
 		})
+		close(sess.notify)
+		sess.notify = make(chan struct{})
 		sess.mu.Unlock()
 
 		select {
@@ -316,7 +322,10 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 		backend, sess, cleanup := setupBackend("teststopped", "stopped.oast.fun")
 		t.Cleanup(cleanup)
 
+		sess.mu.Lock()
 		sess.stopped = true
+		close(sess.notify)
+		sess.mu.Unlock()
 
 		_, err := backend.PollSession(t.Context(), "teststopped", "", 0, 0)
 		require.Error(t, err)
@@ -575,6 +584,7 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				ID:     "test123",
 				Domain: "test.oast.fun",
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e1", Time: time.Now(), Type: "dns"},
@@ -598,6 +608,7 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				ID:     "test456",
 				Domain: "test2.oast.fun",
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e1", Time: eventTime, Type: "dns", SourceIP: "1.1.1.1"},
@@ -633,6 +644,7 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				ID:     "testdom",
 				Domain: "domain.oast.fun",
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "evt1", Time: time.Now(), Type: "dns"},
@@ -650,11 +662,14 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 		backend := NewInteractshBackend()
 		t.Cleanup(func() { _ = backend.Close() })
 
+		notify := make(chan struct{})
+		close(notify) // already stopped
 		sess := &oastSession{
 			info: OastSessionInfo{
 				ID:     "teststopped",
 				Domain: "stopped.oast.fun",
 			},
+			notify:      notify,
 			stopPolling: make(chan struct{}),
 			stopped:     true,
 			events: []OastEventInfo{
@@ -682,6 +697,7 @@ func TestInteractshBackend_DeleteSession(t *testing.T) {
 				ID:     "testdel",
 				Domain: "del.oast.fun",
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.sessions["del.oast.fun"] = sess
@@ -704,6 +720,7 @@ func TestInteractshBackend_DeleteSession(t *testing.T) {
 				ID:     "testdeldomain",
 				Domain: "deldomain.oast.fun",
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.sessions["deldomain.oast.fun"] = sess

@@ -67,6 +67,7 @@ func TestHandleOastPoll(t *testing.T) {
 				Domain:    "cap.oast.fun",
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e1", Time: time.Now(), Type: "dns"},
@@ -113,6 +114,7 @@ func TestHandleOastPoll(t *testing.T) {
 				Domain:    "fmt.oast.fun",
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 			events: []OastEventInfo{
 				{
@@ -207,6 +209,7 @@ func TestHandleOastPoll(t *testing.T) {
 				Domain:    "domain.oast.fun",
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e1", Time: time.Now(), Type: "dns"},
@@ -250,6 +253,7 @@ func TestHandleOastPoll(t *testing.T) {
 				Domain:    "limit.oast.fun",
 				CreatedAt: now,
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e1", Time: now, Type: "dns"},
@@ -298,6 +302,7 @@ func TestHandleOastPoll(t *testing.T) {
 				Domain:    "sincelimit.oast.fun",
 				CreatedAt: now,
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e1", Time: now, Type: "dns"},
@@ -405,6 +410,7 @@ func TestHandleOastGet(t *testing.T) {
 				Domain:    "get.oast.fun",
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e1", Time: time.Now(), Type: "dns"},
@@ -447,6 +453,7 @@ func TestHandleOastGet(t *testing.T) {
 				Domain:    "full.oast.fun",
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 			events: []OastEventInfo{
 				{
@@ -506,6 +513,7 @@ func TestHandleOastGet(t *testing.T) {
 				Domain:    "domain.oast.fun",
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e1", Time: time.Now(), Type: "dns", SourceIP: "1.2.3.4"},
@@ -572,6 +580,7 @@ func TestHandleOastList(t *testing.T) {
 				Domain:    "sess1.oast.fun",
 				CreatedAt: createdAt,
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.sessions["sess2.oast.fun"] = &oastSession{
@@ -580,6 +589,7 @@ func TestHandleOastList(t *testing.T) {
 				Domain:    "sess2.oast.fun",
 				CreatedAt: createdAt.Add(time.Hour),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.byID["sess1"] = "sess1.oast.fun"
@@ -626,6 +636,7 @@ func TestHandleOastList(t *testing.T) {
 				Domain:    "sess1.oast.fun",
 				CreatedAt: createdAt,
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.sessions["sess2.oast.fun"] = &oastSession{
@@ -634,6 +645,7 @@ func TestHandleOastList(t *testing.T) {
 				Domain:    "sess2.oast.fun",
 				CreatedAt: createdAt.Add(time.Hour),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.sessions["sess3.oast.fun"] = &oastSession{
@@ -642,6 +654,7 @@ func TestHandleOastList(t *testing.T) {
 				Domain:    "sess3.oast.fun",
 				CreatedAt: createdAt.Add(2 * time.Hour),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.byID["sess1"] = "sess1.oast.fun"
@@ -689,6 +702,7 @@ func TestHandleOastList(t *testing.T) {
 				Domain:    "old.oast.fun",
 				CreatedAt: createdAt,
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.sessions["new.oast.fun"] = &oastSession{
@@ -697,6 +711,7 @@ func TestHandleOastList(t *testing.T) {
 				Domain:    "new.oast.fun",
 				CreatedAt: createdAt.Add(time.Hour),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.byID["old"] = "old.oast.fun"
@@ -768,6 +783,7 @@ func TestHandleOastDelete(t *testing.T) {
 				Domain:    "del.oast.fun",
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.mu.Lock()
@@ -800,6 +816,7 @@ func TestHandleOastDelete(t *testing.T) {
 				Domain:    "deldomain.oast.fun",
 				CreatedAt: time.Now(),
 			},
+			notify:      make(chan struct{}),
 			stopPolling: make(chan struct{}),
 		}
 		backend.mu.Lock()

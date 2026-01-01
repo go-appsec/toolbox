@@ -16,8 +16,6 @@ import (
 )
 
 const (
-	// pollCheckInterval is how often PollSession checks for new events in the local buffer.
-	pollCheckInterval = 100 * time.Millisecond
 	// interactshPollInterval is how often the interactsh client polls the server.
 	interactshPollInterval = 10 * time.Second
 	// sessionCloseTimeout is how long to wait when closing a session.
@@ -42,6 +40,7 @@ type oastSession struct {
 	client *oobclient.Client
 
 	mu           sync.Mutex
+	notify       chan struct{} // closed when new events arrive, then replaced
 	events       []OastEventInfo
 	droppedCount int
 	lastPollIdx  int // Index after last poll (for "last" filter)
@@ -92,6 +91,7 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 			CreatedAt: time.Now(),
 		},
 		client:      c,
+		notify:      make(chan struct{}),
 		stopPolling: make(chan struct{}),
 	}
 
@@ -144,7 +144,7 @@ func (b *InteractshBackend) pollLoop(sess *oastSession) {
 		}
 
 		var eventTime time.Time
-		if interaction.Timestamp.IsZero() {
+		if !interaction.Timestamp.IsZero() {
 			eventTime = interaction.Timestamp
 		} else {
 			eventTime = time.Now()
@@ -180,6 +180,11 @@ func (b *InteractshBackend) pollLoop(sess *oastSession) {
 			Details:   details,
 		}
 		sess.events = append(sess.events, event)
+
+		// Notify waiters by closing channel, then replace for next notification
+		close(sess.notify)
+		sess.notify = make(chan struct{})
+
 		log.Printf("oast: session %s received %s event from %s", sess.info.ID, event.Type, event.SourceIP)
 	}
 
@@ -210,12 +215,10 @@ func (b *InteractshBackend) PollSession(ctx context.Context, idOrDomain string, 
 		}
 
 		events := sess.filterEvents(since)
-		if len(events) > 0 || wait == 0 || time.Now().After(deadline) {
-			// Apply limit if set
+		if len(events) > 0 || wait == 0 || time.Now().After(deadline) || ctx.Err() != nil {
 			if limit > 0 && len(events) > limit {
 				events = events[:limit]
 			}
-			// Update lastPollIdx based on the last returned event (for pagination with limit)
 			sess.updateLastPollIdx(events)
 			result := &OastPollResultInfo{
 				Events:       events,
@@ -224,25 +227,14 @@ func (b *InteractshBackend) PollSession(ctx context.Context, idOrDomain string, 
 			sess.mu.Unlock()
 			return result, nil
 		}
+
+		notify := sess.notify // capture before unlocking
 		sess.mu.Unlock()
 
 		select {
+		case <-notify: // channel closed = new events or session stopped
 		case <-ctx.Done():
-			sess.mu.Lock()
-			events := sess.filterEvents(since)
-			// Apply limit if set
-			if limit > 0 && len(events) > limit {
-				events = events[:limit]
-			}
-			sess.updateLastPollIdx(events)
-			result := &OastPollResultInfo{
-				Events:       events,
-				DroppedCount: sess.droppedCount,
-			}
-			sess.mu.Unlock()
-			return result, nil
-		case <-time.After(pollCheckInterval):
-			// Check for new events
+		case <-time.After(time.Until(deadline)):
 		}
 	}
 }
@@ -342,6 +334,7 @@ func (b *InteractshBackend) deleteSession(sess *oastSession) error {
 		return nil
 	}
 	sess.stopped = true
+	close(sess.notify) // wake any waiters
 	sess.mu.Unlock()
 
 	close(sess.stopPolling)
