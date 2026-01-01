@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -150,7 +151,7 @@ Incremental: since=flow_id or "last" for new entries only.`),
 		mcp.WithString("status", mcp.Description("Filter by status code(s), comma-separated (e.g., '200,302')")),
 		mcp.WithString("contains", mcp.Description("Filter by text in URL or headers (does not search body)")),
 		mcp.WithString("contains_body", mcp.Description("Filter by text in request or response body")),
-		mcp.WithString("since", mcp.Description("Only entries after this flow_id (exclusive), or 'last' for new entries (server remembers last position)")),
+		mcp.WithString("since", mcp.Description("Only entries after this flow_id (exclusive), or 'last' to get entries added since your last proxy_list call (per-session cursor)")),
 		mcp.WithString("exclude_host", mcp.Description("Exclude hosts matching glob pattern")),
 		mcp.WithString("exclude_path", mcp.Description("Exclude paths matching glob pattern")),
 		mcp.WithNumber("limit", mcp.Description("Max results to return")),
@@ -183,14 +184,9 @@ Types:
   HTTP:      request_header (default), request_body, response_header, response_body
   WebSocket: ws:to-server, ws:to-client, ws:both
 
-Usage:
-- Substitute: set both match and replace
-- Delete pattern: set match only
-- Add header: set replace only (e.g., "X-Test: 1")
-
 Regex: is_regex=true (Java regex). Labels must be unique.`),
 		mcp.WithString("type", mcp.Required(), mcp.Description("Rule type: request_header, request_body, response_header, response_body, ws:to-server, ws:to-client, ws:both")),
-		mcp.WithString("match", mcp.Description("Pattern to match")),
+		mcp.WithString("match", mcp.Description("Pattern to find")),
 		mcp.WithString("replace", mcp.Description("Replacement text")),
 		mcp.WithString("label", mcp.Description("Optional unique label (usable as rule_id)")),
 		mcp.WithBoolean("is_regex", mcp.Description("Treat match as regex pattern (Java regex syntax)")),
@@ -286,7 +282,7 @@ Options:
 
 Response includes events (event_id) and optional dropped_count; use oast_get for full event details.`),
 		mcp.WithString("oast_id", mcp.Required(), mcp.Description("OAST session ID, label, or domain")),
-		mcp.WithString("since", mcp.Description("Return events after this event_id, or 'last' for new events (server remembers last position)")),
+		mcp.WithString("since", mcp.Description("Return events after this event_id, or 'last' to get events received since your last oast_poll call (per-session cursor)")),
 		mcp.WithString("wait", mcp.Description("Long-poll duration (e.g., '30s', max 120s)")),
 		mcp.WithNumber("limit", mcp.Description("Maximum number of events to return")),
 	)
@@ -411,23 +407,34 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 	respHeaders, respBody := splitHeadersBody(rawResp)
 	respCode, respStatusLine := parseResponseStatus(respHeaders)
 
+	// Extract version from request line
+	var version string
+	if idx := strings.Index(proxyEntries[0].Request, "\r\n"); idx > 0 {
+		if parts := strings.SplitN(proxyEntries[0].Request[:idx], " ", 3); len(parts) >= 3 {
+			version = parts[2]
+		}
+	}
+
 	scheme, _, _ := inferSchemeAndPort(host)
 	fullURL := scheme + "://" + host + path
 
 	log.Printf("mcp/proxy_get: flow=%s method=%s url=%s", flowID, method, fullURL)
 
 	return jsonResult(ProxyGetResponse{
-		FlowID:      flowID,
-		Method:      method,
-		URL:         fullURL,
-		ReqHeaders:  string(reqHeaders),
-		ReqBody:     previewBody(reqBody, fullBodyMaxSize),
-		ReqSize:     len(reqBody),
-		Status:      respCode,
-		StatusLine:  respStatusLine,
-		RespHeaders: string(respHeaders),
-		RespBody:    previewBody(respBody, fullBodyMaxSize),
-		RespSize:    len(respBody),
+		FlowID:            flowID,
+		Method:            method,
+		URL:               fullURL,
+		ReqHeaders:        string(reqHeaders),
+		ReqHeadersParsed:  parseHeadersToMap(string(reqHeaders)),
+		ReqLine:           &RequestLine{Path: path, Version: version},
+		ReqBody:           previewBody(reqBody, fullBodyMaxSize),
+		ReqSize:           len(reqBody),
+		Status:            respCode,
+		StatusLine:        respStatusLine,
+		RespHeaders:       string(respHeaders),
+		RespHeadersParsed: parseHeadersToMap(string(respHeaders)),
+		RespBody:          previewBody(respBody, fullBodyMaxSize),
+		RespSize:          len(respBody),
 	})
 }
 
@@ -706,13 +713,14 @@ func (m *mcpServer) handleReplayGet(ctx context.Context, req mcp.CallToolRequest
 	respCode, respStatusLine := parseResponseStatus(result.Headers)
 
 	return jsonResult(ReplayGetResponse{
-		ReplayID:    replayID,
-		Duration:    result.Duration.String(),
-		Status:      respCode,
-		StatusLine:  respStatusLine,
-		RespHeaders: string(result.Headers),
-		RespBody:    previewBody(result.Body, fullBodyMaxSize),
-		RespSize:    len(result.Body),
+		ReplayID:          replayID,
+		Duration:          result.Duration.String(),
+		Status:            respCode,
+		StatusLine:        respStatusLine,
+		RespHeaders:       string(result.Headers),
+		RespHeadersParsed: parseHeadersToMap(string(result.Headers)),
+		RespBody:          previewBody(result.Body, fullBodyMaxSize),
+		RespSize:          len(result.Body),
 	})
 }
 

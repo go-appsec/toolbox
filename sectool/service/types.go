@@ -229,17 +229,27 @@ type ProxyExportResponse struct {
 // ProxyGetResponse is the response for the proxy_get MCP tool.
 // Returns full request and response data for a proxy history entry.
 type ProxyGetResponse struct {
-	FlowID      string `json:"flow_id"`
-	Method      string `json:"method"`
-	URL         string `json:"url"`
-	ReqHeaders  string `json:"request_headers"`
-	ReqBody     string `json:"request_body"`
-	ReqSize     int    `json:"request_size"`
-	Status      int    `json:"status"`
-	StatusLine  string `json:"status_line"`
-	RespHeaders string `json:"response_headers"`
-	RespBody    string `json:"response_body"`
-	RespSize    int    `json:"response_size"`
+	FlowID            string              `json:"flow_id"`
+	Method            string              `json:"method"`
+	URL               string              `json:"url"`
+	ReqHeaders        string              `json:"request_headers"`
+	ReqHeadersParsed  map[string][]string `json:"request_headers_parsed,omitempty"`
+	ReqLine           *RequestLine        `json:"request_line,omitempty"`
+	ReqBody           string              `json:"request_body"`
+	ReqSize           int                 `json:"request_size"`
+	Status            int                 `json:"status"`
+	StatusLine        string              `json:"status_line"`
+	RespHeaders       string              `json:"response_headers"`
+	RespHeadersParsed map[string][]string `json:"response_headers_parsed,omitempty"`
+	RespBody          string              `json:"response_body"`
+	RespSize          int                 `json:"response_size"`
+}
+
+// RequestLine contains path and version from the HTTP request line.
+// Method is omitted as it's already a top-level field.
+type RequestLine struct {
+	Path    string `json:"path"`    // request target including query string
+	Version string `json:"version"` // e.g., "HTTP/1.1", "HTTP/2"
 }
 
 // =============================================================================
@@ -297,13 +307,14 @@ type ReplayGetRequest struct {
 // Unlike ReplaySendResponse which returns a preview, this returns the full response.
 // Body is returned as text if UTF-8, or "<BINARY:N Bytes>" placeholder if binary.
 type ReplayGetResponse struct {
-	ReplayID    string `json:"replay_id"`
-	Duration    string `json:"duration"`
-	Status      int    `json:"status"`
-	StatusLine  string `json:"status_line"`
-	RespHeaders string `json:"response_headers"`
-	RespBody    string `json:"response_body"`
-	RespSize    int    `json:"response_size"`
+	ReplayID          string              `json:"replay_id"`
+	Duration          string              `json:"duration"`
+	Status            int                 `json:"status"`
+	StatusLine        string              `json:"status_line"`
+	RespHeaders       string              `json:"response_headers"`
+	RespHeadersParsed map[string][]string `json:"response_headers_parsed,omitempty"`
+	RespBody          string              `json:"response_body"`
+	RespSize          int                 `json:"response_size"`
 }
 
 // =============================================================================

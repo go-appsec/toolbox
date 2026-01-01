@@ -170,6 +170,27 @@ func extractHeaderLines(raw string) []string {
 	return result
 }
 
+// parseHeadersToMap parses raw HTTP into a header map, skipping the first line.
+// Header names are normalized to canonical form (e.g., "content-type" -> "Content-Type").
+func parseHeadersToMap(raw string) map[string][]string {
+	result := make(map[string][]string)
+	lines := strings.Split(raw, "\r\n")
+
+	// Skip first line (request/status line)
+	for i := 1; i < len(lines); i++ {
+		line := lines[i]
+		if line == "" {
+			break // end of headers
+		}
+		if idx := strings.Index(line, ":"); idx > 0 {
+			name := http.CanonicalHeaderKey(strings.TrimSpace(line[:idx]))
+			value := strings.TrimSpace(line[idx+1:])
+			result[name] = append(result[name], value)
+		}
+	}
+	return result
+}
+
 // PathQueryOpts contains options for modifying the path and query string.
 type PathQueryOpts struct {
 	Path        string   // replace entire path (without query)
