@@ -2,14 +2,26 @@
 
 An LLM-first security testing toolkit that enables coding agents to collaborate with you on security testing. Sectool provides two integration modes—MCP API for direct tool calls or CLI with system prompts—letting you brainstorm with an agent, validate security reports together, or have the agent probe vulnerabilities in parallel with your own testing.
 
+## Project Status
+
+Early development, but usable! Current plans:
+
+1. **Evaluate CLI and MCP interfaces** — We suspect both will be retained long-term, but need more testing to confirm.
+2. **Refactor once the agent interface is well-designed** — The current code design is an artifact of prototype iterations.
+3. **Pre-compiled binaries after stabilization** — Until then, `make build` is required to use this project.
+
+We will keep adding features (see [Issues](https://github.com/go-harden/llm-security-toolbox/issues) for planned work) with the goal of enabling a highly collaborative security agent experience.
+
+Questions or recommendations? Please [open an Issue](https://github.com/go-harden/llm-security-toolbox/issues)!
+
 ## Getting Started
 
 ### 1. Install sectool
 
-Download the binary for your platform from the [latest release](https://github.com/jentfoo/llm-security-toolbox/releases), or build from source:
+Download the binary for your platform from the [latest release](https://github.com/go-harden/llm-security-toolbox/releases), or build from source:
 
 ```bash
-git clone https://github.com/jentfoo/llm-security-toolbox.git
+git clone https://github.com/go-harden/llm-security-toolbox.git
 cd llm-security-toolbox
 make build
 ```
@@ -20,7 +32,7 @@ Install [Burp Suite Community](https://portswigger.net/burp/communitydownload) a
 
 Start Burp and ensure the MCP server is running on `http://127.0.0.1:9876/sse`. It's best if your burp session starts fresh without a proxy history for when starting with your agent.
 
-> Note: Burp MCP is currently required. A built-in proxy is planned for future releases ([#3](https://github.com/jentfoo/llm-security-toolbox/issues/3)).
+> Note: Burp MCP is currently required. A built-in proxy is planned for future releases ([#3](https://github.com/go-harden/llm-security-toolbox/issues/3)).
 
 ### 3. Choose your integration mode
 
