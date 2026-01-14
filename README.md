@@ -47,7 +47,27 @@ Run sectool as an MCP server for direct tool integration:
 sectool --mcp
 ```
 
-This starts an SSE server on port 9119. Configure your agent:
+This starts an SSE server on port 9119.
+
+**Workflow modes:** Use `--workflow` to configure how the agent receives testing instructions:
+
+```bash
+sectool --mcp                        # Default: agent selects task type via workflow tool
+sectool --mcp --workflow explore     # Pre-set exploration mode (token-optimized)
+sectool --mcp --workflow test-report # Pre-set validation mode (token-optimized)
+sectool --mcp --workflow none        # No workflow instructions
+```
+
+| Mode | Description |
+|------|-------------|
+| (default) | Agent decides task type by calling `workflow` tool first, receives collaboration instructions, all tools available |
+| `explore` | Exploratory security testing; token-optimized (no tool call needed), all tools available |
+| `test-report` | Validating a specific vulnerability report; token-optimized, crawl tools excluded |
+| `none` | No workflow instructions, all tools available immediately |
+
+Agents generally want to do everything for you (sometimes poorly), or step you through a process without adding much value. Our workflow instructions guide a more collaborative approach that strikes a balance between these extremes, while focusing instruction tokens on specific task goals. If the default behavior doesn't work for you, try `--workflow none` and [open an issue](https://github.com/go-harden/llm-security-toolbox/issues) describing your experience or recommendations.
+
+Configure your agent:
 
 **Claude Code:**
 ```bash
