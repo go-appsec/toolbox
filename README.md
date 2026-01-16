@@ -1,6 +1,6 @@
 # go-harden/llm-security-toolbox
 
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/go-harden/llm-security-toolbox/blob/master/LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/go-harden/llm-security-toolbox/blob/main/LICENSE)
 [![Build Status](https://github.com/go-harden/llm-security-toolbox/actions/workflows/tests-main.yml/badge.svg)](https://github.com/go-harden/llm-security-toolbox/actions/workflows/tests-main.yml)
 
 An LLM-first security testing toolkit that enables coding agents to collaborate with you on security testing. Sectool provides two integration modes—MCP API for direct tool calls or CLI with system prompts—letting you brainstorm with an agent, validate security reports together, or have the agent probe vulnerabilities in parallel with your own testing.
