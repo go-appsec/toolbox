@@ -19,7 +19,7 @@ var RevNum = "dev"
 
 // UserAgent returns the standard user agent string for sectool requests.
 func UserAgent() string {
-	return "go-harden/llm-security-toolbox sectool-v" + Version + "-" + RevNum
+	return "Mozilla/5.0 (compatible; go-harden/llm-security-toolbox sectool-v" + Version + "-" + RevNum + ")"
 }
 
 type Config struct {
