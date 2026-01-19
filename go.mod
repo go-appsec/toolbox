@@ -5,7 +5,6 @@ go 1.24.0
 require (
 	github.com/agnivade/levenshtein v1.2.1
 	github.com/go-analyze/bulk v0.1.3
-	github.com/go-harden/interactsh-lite v0.0.1
 	github.com/go-harden/scout v0.0.1
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/mark3labs/mcp-go v0.43.2
@@ -33,7 +32,6 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/nlnwa/whatwg-url v0.6.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/rs/xid v1.6.0 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/temoto/robotstxt v1.1.2 // indirect
