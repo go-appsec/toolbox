@@ -1048,7 +1048,7 @@ func matchesFlowFilters(flow *CrawlFlow, opts CrawlListOptions) bool {
 		}
 	}
 
-	if len(opts.StatusCodes) > 0 && !slices.Contains(opts.StatusCodes, flow.StatusCode) {
+	if !opts.StatusCodes.Empty() && !opts.StatusCodes.Matches(flow.StatusCode) {
 		return false
 	}
 

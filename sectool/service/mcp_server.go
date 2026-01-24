@@ -312,7 +312,7 @@ method/status are comma-separated. contains searches URL+headers; contains_body 
 		mcp.WithString("host", mcp.Description("Filter by host (glob pattern, e.g., '*.example.com')")),
 		mcp.WithString("path", mcp.Description("Filter by path (glob pattern, e.g., '/api/*')")),
 		mcp.WithString("method", mcp.Description("Filter by HTTP method(s), comma-separated (e.g., 'GET,POST')")),
-		mcp.WithString("status", mcp.Description("Filter by status code(s), comma-separated (e.g., '200,302')")),
+		mcp.WithString("status", mcp.Description("Filter by status code(s) or ranges (e.g., '200,302' or '2XX,4XX')")),
 		mcp.WithString("contains", mcp.Description("Filter by text in URL or headers (does not search body)")),
 		mcp.WithString("contains_body", mcp.Description("Filter by text in request or response body")),
 		mcp.WithString("exclude_host", mcp.Description("Exclude hosts matching glob pattern")),
@@ -327,14 +327,14 @@ func (m *mcpServer) proxyListTool() mcp.Tool {
 Returns individual flows with flow_id for use with proxy_get or replay_send.
 At least one filter or limit is REQUIRED. Use proxy_summary first to understand available traffic.
 
-Filters: host/path/exclude_host/exclude_path use glob (*, ?). method/status are comma-separated.
+Filters: host/path/exclude_host/exclude_path use glob (*, ?). method/status are comma-separated (status supports ranges like 2XX).
 Search: contains searches URL+headers; contains_body searches bodies.
 Incremental: since=flow_id or "last" for new entries only.
 Pagination: use limit and offset after filtering.`),
 		mcp.WithString("host", mcp.Description("Filter by host (glob pattern, e.g., '*.example.com')")),
 		mcp.WithString("path", mcp.Description("Filter by path (glob pattern, e.g., '/api/*')")),
 		mcp.WithString("method", mcp.Description("Filter by HTTP method(s), comma-separated (e.g., 'GET,POST')")),
-		mcp.WithString("status", mcp.Description("Filter by status code(s), comma-separated (e.g., '200,302')")),
+		mcp.WithString("status", mcp.Description("Filter by status code(s) or ranges (e.g., '200,302' or '2XX,4XX')")),
 		mcp.WithString("contains", mcp.Description("Filter by text in URL or headers (does not search body)")),
 		mcp.WithString("contains_body", mcp.Description("Filter by text in request or response body")),
 		mcp.WithString("since", mcp.Description("Only entries after this flow_id (exclusive), or 'last' to get entries added since your last proxy_list call (per-session cursor)")),
@@ -1637,7 +1637,7 @@ Incremental: since=flow_id, timestamp (RFC3339 or date), or "last" for new entri
 		mcp.WithString("host", mcp.Description("Filter by host glob pattern (e.g., '*.example.com')")),
 		mcp.WithString("path", mcp.Description("Filter by path glob pattern (e.g., '/api/*')")),
 		mcp.WithString("method", mcp.Description("Filter by HTTP method (comma-separated)")),
-		mcp.WithString("status", mcp.Description("Filter by status codes (comma-separated, e.g., '200,404')")),
+		mcp.WithString("status", mcp.Description("Filter by status codes or ranges (e.g., '200,404' or '2XX,4XX')")),
 		mcp.WithString("contains", mcp.Description("Search in URL and headers")),
 		mcp.WithString("contains_body", mcp.Description("Search in request/response body")),
 		mcp.WithString("exclude_host", mcp.Description("Exclude hosts matching glob pattern")),
@@ -1698,7 +1698,7 @@ func (m *mcpServer) handleCrawlList(ctx context.Context, req mcp.CallToolRequest
 		opts := CrawlListOptions{
 			Host:         req.GetString("host", ""),
 			PathPattern:  req.GetString("path", ""),
-			StatusCodes:  parseStatusCodes(req.GetString("status", "")),
+			StatusCodes:  parseStatusFilter(req.GetString("status", "")),
 			Methods:      parseCommaSeparated(req.GetString("method", "")),
 			Contains:     req.GetString("contains", ""),
 			ContainsBody: req.GetString("contains_body", ""),
@@ -1947,7 +1947,7 @@ func applyProxyFilters(entries []flowEntry, req *ProxyListRequest, flowStore *st
 	}
 
 	methods := parseCommaSeparated(req.Method)
-	statuses := parseStatusCodes(req.Status)
+	statuses := parseStatusFilter(req.Status)
 
 	var sinceOffset uint32
 	var hasSince bool
@@ -1966,7 +1966,7 @@ func applyProxyFilters(entries []flowEntry, req *ProxyListRequest, flowStore *st
 			return false // Since filter (exclusive - only entries after)
 		} else if len(methods) > 0 && !slices.Contains(methods, e.method) {
 			return false // Method filter
-		} else if len(statuses) > 0 && !slices.Contains(statuses, e.status) {
+		} else if !statuses.Empty() && !statuses.Matches(e.status) {
 			return false // Status filter
 		} else if req.Host != "" && !matchesGlob(e.host, req.Host) {
 			return false // Host filter (if using client-side filtering)

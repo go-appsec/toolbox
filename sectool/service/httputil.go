@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -485,19 +486,56 @@ func parseCommaSeparated(s string) []string {
 	return result
 }
 
-// parseStatusCodes parses comma-separated status codes into integers.
-func parseStatusCodes(s string) []int {
+// StatusCodeFilter matches status codes by exact value or range (e.g., 2XX).
+type StatusCodeFilter struct {
+	codes  []int // Exact codes
+	ranges []int // Range prefixes (2 for 2xx, 4 for 4xx, etc.)
+}
+
+// Matches returns true if the code matches the filter.
+func (f *StatusCodeFilter) Matches(code int) bool {
+	if f == nil {
+		return true
+	}
+	if slices.Contains(f.codes, code) {
+		return true
+	}
+	for _, r := range f.ranges {
+		if code >= r*100 && code < (r+1)*100 {
+			return true
+		}
+	}
+	return false
+}
+
+// Empty returns true if the filter has no conditions.
+func (f *StatusCodeFilter) Empty() bool {
+	return f == nil || (len(f.codes) == 0 && len(f.ranges) == 0)
+}
+
+// parseStatusFilter parses comma-separated status codes/ranges.
+// Supports exact codes (200, 404) and ranges (2XX, 2xx, 4XX, 4xx).
+func parseStatusFilter(s string) *StatusCodeFilter {
 	parts := parseCommaSeparated(s)
 	if parts == nil {
 		return nil
 	}
-	result := make([]int, 0, len(parts))
+	filter := &StatusCodeFilter{}
 	for _, p := range parts {
+		upper := strings.ToUpper(p)
+		// Check for range pattern like "2XX" or "4XX"
+		if len(upper) == 3 && upper[1] == 'X' && upper[2] == 'X' {
+			if digit, err := strconv.Atoi(string(upper[0])); err == nil && digit >= 1 && digit <= 5 {
+				filter.ranges = append(filter.ranges, digit)
+				continue
+			}
+		}
+		// Try exact code
 		if code, err := strconv.Atoi(p); err == nil {
-			result = append(result, code)
+			filter.codes = append(filter.codes, code)
 		}
 	}
-	return result
+	return filter
 }
 
 // updateContentLength updates or adds Content-Length header.

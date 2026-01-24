@@ -223,17 +223,17 @@ type CrawlSeed struct {
 // CrawlListOptions contains filters for listing crawl flows.
 // Mirrors ProxyListRequest filters for consistency.
 type CrawlListOptions struct {
-	Host         string   // Glob pattern for host
-	PathPattern  string   // Glob pattern for path
-	StatusCodes  []int    // Filter by status codes
-	Methods      []string // Filter by HTTP methods
-	Contains     string   // Search URL and headers
-	ContainsBody string   // Search request/response body
-	ExcludeHost  string   // Exclude hosts matching glob
-	ExcludePath  string   // Exclude paths matching glob
-	Since        string   // Only flows after this flow_id, or "last" for new flows
-	Limit        int      // Max results (0 = no limit)
-	Offset       int      // Skip first N results
+	Host         string            // Glob pattern for host
+	PathPattern  string            // Glob pattern for path
+	StatusCodes  *StatusCodeFilter // Filter by status codes (supports ranges like 2XX)
+	Methods      []string          // Filter by HTTP methods
+	Contains     string            // Search URL and headers
+	ContainsBody string            // Search request/response body
+	ExcludeHost  string            // Exclude hosts matching glob
+	ExcludePath  string            // Exclude paths matching glob
+	Since        string            // Only flows after this flow_id, or "last" for new flows
+	Limit        int               // Max results (0 = no limit)
+	Offset       int               // Skip first N results
 }
 
 // CrawlSessionInfo represents metadata about a crawl session.

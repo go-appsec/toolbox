@@ -63,9 +63,16 @@ func TestMatchesFlowFilters(t *testing.T) {
 	})
 
 	t.Run("status_code_matches", func(t *testing.T) {
-		assert.True(t, matchesFlowFilters(flow, CrawlListOptions{StatusCodes: []int{200}}))
-		assert.True(t, matchesFlowFilters(flow, CrawlListOptions{StatusCodes: []int{200, 201, 404}}))
-		assert.False(t, matchesFlowFilters(flow, CrawlListOptions{StatusCodes: []int{404, 500}}))
+		assert.True(t, matchesFlowFilters(flow, CrawlListOptions{StatusCodes: parseStatusFilter("200")}))
+		assert.True(t, matchesFlowFilters(flow, CrawlListOptions{StatusCodes: parseStatusFilter("200,201,404")}))
+		assert.False(t, matchesFlowFilters(flow, CrawlListOptions{StatusCodes: parseStatusFilter("404,500")}))
+	})
+
+	t.Run("status_code_range_matches", func(t *testing.T) {
+		assert.True(t, matchesFlowFilters(flow, CrawlListOptions{StatusCodes: parseStatusFilter("2XX")}))
+		assert.True(t, matchesFlowFilters(flow, CrawlListOptions{StatusCodes: parseStatusFilter("2xx")}))
+		assert.False(t, matchesFlowFilters(flow, CrawlListOptions{StatusCodes: parseStatusFilter("4XX")}))
+		assert.True(t, matchesFlowFilters(flow, CrawlListOptions{StatusCodes: parseStatusFilter("2XX,4XX")}))
 	})
 
 	t.Run("method_matches", func(t *testing.T) {
@@ -78,12 +85,12 @@ func TestMatchesFlowFilters(t *testing.T) {
 	t.Run("combined_filters", func(t *testing.T) {
 		assert.True(t, matchesFlowFilters(flow, CrawlListOptions{
 			PathPattern: "/api/*",
-			StatusCodes: []int{200},
+			StatusCodes: parseStatusFilter("200"),
 			Methods:     []string{"GET"},
 		}))
 		assert.False(t, matchesFlowFilters(flow, CrawlListOptions{
 			PathPattern: "/api/*",
-			StatusCodes: []int{404},
+			StatusCodes: parseStatusFilter("404"),
 			Methods:     []string{"GET"},
 		}))
 	})

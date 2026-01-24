@@ -113,7 +113,7 @@ crawl list <session_id> [options]
     --host <pattern>       filter by host pattern (glob: *, ?)
     --path <pattern>       filter by path pattern (glob: *, ?)
     --method <list>        filter by HTTP method (comma-separated)
-    --status <list>        filter by status codes (comma-separated)
+    --status <list>        filter by status codes (comma-separated, e.g., 200,4XX)
     --contains <text>      search URL and headers
     --contains-body <text> search request/response body
     --exclude-host <pat>   exclude hosts matching pattern
@@ -325,7 +325,7 @@ func parseList(args []string, mcpURL string) error {
 	fs.StringVar(&host, "host", "", "filter by host pattern (glob: *, ?)")
 	fs.StringVar(&path, "path", "", "filter by path pattern (glob: *, ?)")
 	fs.StringVar(&method, "method", "", "filter by HTTP method (comma-separated)")
-	fs.StringVar(&status, "status", "", "filter by status codes (comma-separated)")
+	fs.StringVar(&status, "status", "", "filter by status codes (e.g., 200,4XX)")
 	fs.StringVar(&contains, "contains", "", "search in URL and headers")
 	fs.StringVar(&containsBody, "contains-body", "", "search in request/response body")
 	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")

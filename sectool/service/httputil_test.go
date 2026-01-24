@@ -1019,25 +1019,73 @@ func TestParseCommaSeparated(t *testing.T) {
 	}
 }
 
-func TestParseStatusCodes(t *testing.T) {
+func TestParseStatusFilter(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		input    string
-		expected []int
-	}{
-		{"200,302,404", []int{200, 302, 404}},
-		{"200, 404", []int{200, 404}},
-		{"500", []int{500}},
-		{"", nil},
-		{"invalid", []int{}},
-	}
+	t.Run("exact_codes", func(t *testing.T) {
+		f := parseStatusFilter("200,302,404")
+		assert.True(t, f.Matches(200))
+		assert.True(t, f.Matches(302))
+		assert.True(t, f.Matches(404))
+		assert.False(t, f.Matches(500))
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			assert.Equal(t, tt.expected, parseStatusCodes(tt.input))
-		})
-	}
+	t.Run("range_uppercase", func(t *testing.T) {
+		f := parseStatusFilter("2XX")
+		assert.True(t, f.Matches(200))
+		assert.True(t, f.Matches(201))
+		assert.True(t, f.Matches(299))
+		assert.False(t, f.Matches(300))
+		assert.False(t, f.Matches(199))
+	})
+
+	t.Run("range_lowercase", func(t *testing.T) {
+		f := parseStatusFilter("4xx")
+		assert.True(t, f.Matches(400))
+		assert.True(t, f.Matches(404))
+		assert.True(t, f.Matches(499))
+		assert.False(t, f.Matches(500))
+		assert.False(t, f.Matches(399))
+	})
+
+	t.Run("mixed_codes_and_ranges", func(t *testing.T) {
+		f := parseStatusFilter("2XX,404,5xx")
+		assert.True(t, f.Matches(200))
+		assert.True(t, f.Matches(201))
+		assert.True(t, f.Matches(404))
+		assert.True(t, f.Matches(500))
+		assert.True(t, f.Matches(503))
+		assert.False(t, f.Matches(400))
+		assert.False(t, f.Matches(302))
+	})
+
+	t.Run("empty_input", func(t *testing.T) {
+		f := parseStatusFilter("")
+		assert.Nil(t, f)
+		assert.True(t, f.Empty())
+		assert.True(t, f.Matches(200)) // nil filter matches all
+	})
+
+	t.Run("invalid_input", func(t *testing.T) {
+		f := parseStatusFilter("invalid")
+		assert.True(t, f.Empty())
+	})
+
+	t.Run("whitespace_handling", func(t *testing.T) {
+		f := parseStatusFilter("200, 2xx, 404")
+		assert.True(t, f.Matches(200))
+		assert.True(t, f.Matches(201))
+		assert.True(t, f.Matches(404))
+	})
+
+	t.Run("all_ranges", func(t *testing.T) {
+		f := parseStatusFilter("1XX,2XX,3XX,4XX,5XX")
+		assert.True(t, f.Matches(100))
+		assert.True(t, f.Matches(200))
+		assert.True(t, f.Matches(301))
+		assert.True(t, f.Matches(404))
+		assert.True(t, f.Matches(503))
+	})
 }
 
 func TestPathWithoutQuery(t *testing.T) {
