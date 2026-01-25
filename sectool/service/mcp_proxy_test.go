@@ -32,7 +32,7 @@ func TestMCP_ProxySummaryWithMock(t *testing.T) {
 	)
 
 	t.Run("basic", func(t *testing.T) {
-		resp := CallMCPToolJSONOK[protocol.ProxySummaryResponse](t, mcpClient, "proxy_summary", nil)
+		resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", nil)
 		assert.GreaterOrEqual(t, len(resp.Aggregates), 2)
 	})
 
@@ -91,7 +91,7 @@ func TestMCP_ProxySummaryWithMock(t *testing.T) {
 	}
 	for _, tc := range summaryCases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := CallMCPToolJSONOK[protocol.ProxySummaryResponse](t, mcpClient, "proxy_summary", tc.args)
+			resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", tc.args)
 			if tc.wantNonEmpty {
 				require.NotEmpty(t, resp.Aggregates)
 			}
@@ -136,8 +136,9 @@ func TestMCP_ProxyListWithMock(t *testing.T) {
 	)
 
 	t.Run("basic_filter", func(t *testing.T) {
-		resp := CallMCPToolJSONOK[protocol.ProxyListResponse](t, mcpClient, "proxy_list", map[string]interface{}{
-			"method": "GET",
+		resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"method":      "GET",
 		})
 		require.NotEmpty(t, resp.Flows)
 		assert.Equal(t, "GET", resp.Flows[0].Method)
@@ -155,23 +156,23 @@ func TestMCP_ProxyListWithMock(t *testing.T) {
 	}{
 		{
 			name:         "with_contains_header",
-			args:         map[string]interface{}{"contains": "searchme"},
+			args:         map[string]interface{}{"output_mode": "flows", "contains": "searchme"},
 			wantNonEmpty: true,
 		},
 		{
 			name:         "with_contains_body",
-			args:         map[string]interface{}{"contains_body": "bodysearch"},
+			args:         map[string]interface{}{"output_mode": "flows", "contains_body": "bodysearch"},
 			wantNonEmpty: true,
 		},
 		{
 			name:         "with_status_filter",
-			args:         map[string]interface{}{"status": "201"},
+			args:         map[string]interface{}{"output_mode": "flows", "status": "201"},
 			wantNonEmpty: true,
 			statusEq:     201,
 		},
 		{
 			name:         "with_status_range",
-			args:         map[string]interface{}{"status": "2XX"},
+			args:         map[string]interface{}{"output_mode": "flows", "status": "2XX"},
 			wantNonEmpty: true,
 			statusMin:    200,
 			statusMax:    300,
@@ -179,7 +180,7 @@ func TestMCP_ProxyListWithMock(t *testing.T) {
 	}
 	for _, tc := range listCases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := CallMCPToolJSONOK[protocol.ProxyListResponse](t, mcpClient, "proxy_list", tc.args)
+			resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", tc.args)
 			if tc.wantNonEmpty {
 				require.NotEmpty(t, resp.Flows)
 			}
@@ -210,41 +211,46 @@ func TestMCP_ProxyListWithLimit(t *testing.T) {
 	}
 
 	t.Run("limit_only", func(t *testing.T) {
-		resp := CallMCPToolJSONOK[protocol.ProxyListResponse](t, mcpClient, "proxy_list", map[string]interface{}{
-			"host":  "limit-test.com",
-			"limit": 2,
+		resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"host":        "limit-test.com",
+			"limit":       2,
 		})
 		assert.LessOrEqual(t, len(resp.Flows), 2)
 	})
 
 	t.Run("with_offset", func(t *testing.T) {
 		// First get all flows to know what we have
-		allResp := CallMCPToolJSONOK[protocol.ProxyListResponse](t, mcpClient, "proxy_list", map[string]interface{}{
-			"host": "limit-test.com",
+		allResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"host":        "limit-test.com",
 		})
 		totalFlows := len(allResp.Flows)
 
 		// Now get with offset
-		resp := CallMCPToolJSONOK[protocol.ProxyListResponse](t, mcpClient, "proxy_list", map[string]interface{}{
-			"host":   "limit-test.com",
-			"offset": 2,
+		resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"host":        "limit-test.com",
+			"offset":      2,
 		})
 		assert.Len(t, resp.Flows, totalFlows-2)
 	})
 
 	t.Run("with_since_flow_id", func(t *testing.T) {
 		// Get flows to find a flow_id to use as since
-		listResp := CallMCPToolJSONOK[protocol.ProxyListResponse](t, mcpClient, "proxy_list", map[string]interface{}{
-			"host":  "limit-test.com",
-			"limit": 1,
+		listResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"host":        "limit-test.com",
+			"limit":       1,
 		})
 		require.NotEmpty(t, listResp.Flows)
 		sinceID := listResp.Flows[0].FlowID
 
 		// Query with since
-		resp := CallMCPToolJSONOK[protocol.ProxyListResponse](t, mcpClient, "proxy_list", map[string]interface{}{
-			"host":  "limit-test.com",
-			"since": sinceID,
+		resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"host":        "limit-test.com",
+			"since":       sinceID,
 		})
 		// Should not include the flow we used as since
 		for _, flow := range resp.Flows {
@@ -254,14 +260,16 @@ func TestMCP_ProxyListWithLimit(t *testing.T) {
 
 	t.Run("with_since_last", func(t *testing.T) {
 		// First call to establish "last" cursor
-		_ = CallMCPToolJSONOK[protocol.ProxyListResponse](t, mcpClient, "proxy_list", map[string]interface{}{
-			"host": "limit-test.com",
+		_ = CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"host":        "limit-test.com",
 		})
 
 		// Second call with since=last should return no new entries
-		resp := CallMCPToolJSONOK[protocol.ProxyListResponse](t, mcpClient, "proxy_list", map[string]interface{}{
-			"host":  "limit-test.com",
-			"since": "last",
+		resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"host":        "limit-test.com",
+			"since":       "last",
 		})
 		// No new entries since last call
 		assert.Empty(t, resp.Flows)
@@ -279,13 +287,14 @@ func TestMCP_ProxyGetWithMock(t *testing.T) {
 		"",
 	)
 
-	listResult := CallMCPTool(t, mcpClient, "proxy_list", map[string]interface{}{
-		"method": "GET",
+	listResult := CallMCPTool(t, mcpClient, "proxy_poll", map[string]interface{}{
+		"output_mode": "flows",
+		"method":      "GET",
 	})
 	require.False(t, listResult.IsError,
-		"proxy_list failed: %s", ExtractMCPText(t, listResult))
+		"proxy_poll failed: %s", ExtractMCPText(t, listResult))
 
-	var listResp protocol.ProxyListResponse
+	var listResp protocol.ProxyPollResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, listResult)), &listResp))
 	require.NotEmpty(t, listResp.Flows)
 
@@ -403,7 +412,10 @@ func TestMCP_ProxyListRequiresFilters(t *testing.T) {
 
 	_, mcpClient, _, _, _ := setupMCPServerWithMock(t)
 
-	result := CallMCPTool(t, mcpClient, "proxy_list", nil)
+	// List mode requires at least one filter
+	result := CallMCPTool(t, mcpClient, "proxy_poll", map[string]interface{}{
+		"output_mode": "flows",
+	})
 	assert.True(t, result.IsError)
 }
 

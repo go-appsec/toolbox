@@ -650,27 +650,6 @@ func (b *CollyBackend) GetStatus(ctx context.Context, sessionID string) (*CrawlS
 	}, nil
 }
 
-func (b *CollyBackend) GetSummary(ctx context.Context, sessionID string) (*CrawlSummary, error) {
-	sess, err := b.resolveSession(sessionID)
-	if err != nil {
-		return nil, err
-	}
-
-	sess.mu.RLock()
-	defer sess.mu.RUnlock()
-
-	aggregates := aggregateByTuple(sess.flowsOrdered, func(f *CrawlFlow) (string, string, string, int) {
-		return f.Host, f.Path, f.Method, f.StatusCode
-	})
-
-	return &CrawlSummary{
-		SessionID:  sess.info.ID,
-		State:      sess.info.State,
-		Duration:   time.Since(sess.startedAt),
-		Aggregates: aggregates,
-	}, nil
-}
-
 func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts CrawlListOptions) ([]CrawlFlow, error) {
 	sess, err := b.resolveSession(sessionID)
 	if err != nil {
@@ -1218,27 +1197,4 @@ func extractFormData(e *colly.HTMLElement) map[string]string {
 		data[name] = value
 	})
 	return data
-}
-
-// parseSinceTimestamp attempts to parse a string as a timestamp in multiple formats.
-// Returns the parsed time and true if successful, or zero time and false if not a timestamp.
-// Supported formats:
-//   - RFC3339 with timezone: 2006-01-02T15:04:05Z07:00
-//   - RFC3339 without timezone (assumes local): 2006-01-02T15:04:05
-//   - Date only (assumes midnight local): 2006-01-02
-func parseSinceTimestamp(s string) (time.Time, bool) {
-	loc := time.Now().Location()
-	// Try RFC3339 with timezone
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, true
-	}
-	// Try RFC3339 without timezone (assume local)
-	if t, err := time.ParseInLocation("2006-01-02T15:04:05", s, loc); err == nil {
-		return t, true
-	}
-	// Try date only (midnight local)
-	if t, err := time.ParseInLocation("2006-01-02", s, loc); err == nil {
-		return t, true
-	}
-	return time.Time{}, false
 }

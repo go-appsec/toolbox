@@ -151,8 +151,7 @@ func (m *mcpServer) registerTools() {
 }
 
 func (m *mcpServer) addProxyTools() {
-	m.server.AddTool(m.proxySummaryTool(), m.handleProxySummary)
-	m.server.AddTool(m.proxyListTool(), m.handleProxyList)
+	m.server.AddTool(m.proxyPollTool(), m.handleProxyPoll)
 	m.server.AddTool(m.proxyGetTool(), m.handleProxyGet)
 	m.server.AddTool(m.proxyRuleListTool(), m.handleProxyRuleList)
 	m.server.AddTool(m.proxyRuleAddTool(), m.handleProxyRuleAdd)
@@ -184,8 +183,7 @@ func (m *mcpServer) addCrawlTools() {
 	m.server.AddTool(m.crawlCreateTool(), m.handleCrawlCreate)
 	m.server.AddTool(m.crawlSeedTool(), m.handleCrawlSeed)
 	m.server.AddTool(m.crawlStatusTool(), m.handleCrawlStatus)
-	m.server.AddTool(m.crawlSummaryTool(), m.handleCrawlSummary)
-	m.server.AddTool(m.crawlListTool(), m.handleCrawlList)
+	m.server.AddTool(m.crawlPollTool(), m.handleCrawlPoll)
 	m.server.AddTool(m.crawlSessionsTool(), m.handleCrawlSessions)
 	m.server.AddTool(m.crawlStopTool(), m.handleCrawlStop)
 	m.server.AddTool(m.crawlGetTool(), m.handleCrawlGet)
@@ -252,7 +250,7 @@ Collaborate with the user to probe and discover security vulnerabilities.
 ## Common Workflow
 
 1. User provides testing context/scope - ask for clarification if needed
-2. User generates traffic via browser; you monitor with proxy_summary then proxy_list
+2. User generates traffic via browser; you monitor with proxy_poll
 3. Identify interesting endpoints and potential vulnerabilities
 4. Test hypotheses using sectool (often replay_send with modifications)
 5. Report findings, discuss next steps, explore multiple angles in parallel
@@ -262,9 +260,9 @@ Collaborate with the user to probe and discover security vulnerabilities.
 Crawling can discover hidden endpoints, forms, and linked resources beyond manual exploration. Confirm with the user before starting a crawl.
 
 When approved:
-- crawl_create with seed_flows from proxy_list to inherit authentication
-- crawl_status to monitor progress; crawl_summary for aggregated results
-- crawl_list with type="forms" to find input vectors for testing
+- crawl_create with seed_flows from proxy_poll to inherit authentication
+- crawl_status to monitor progress; crawl_poll for aggregated results
+- crawl_poll with output_mode="forms" to find input vectors for testing
 - Crawler flows work with replay_send and crawl_get just like proxy flows with proxy_get
 `
 

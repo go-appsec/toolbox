@@ -16,48 +16,29 @@ import (
 	"github.com/go-harden/llm-security-toolbox/sectool/service/store"
 )
 
-func (m *mcpServer) proxySummaryTool() mcp.Tool {
-	return mcp.NewTool("proxy_summary",
-		mcp.WithDescription(`Get aggregated summary of proxy history.
+func (m *mcpServer) proxyPollTool() mcp.Tool {
+	return mcp.NewTool("proxy_poll",
+		mcp.WithDescription(`Query proxy history: summary (default) or flows mode.
 
-Returns traffic grouped by (host, path, method, status), sorted by count descending.
-Use this first to understand available traffic before using proxy_list with specific filters.
-
-Filters narrow the summary scope: host/path/exclude_host/exclude_path use glob (*, ?).
-method/status are comma-separated. contains searches URL+headers; contains_body searches bodies.`),
-		mcp.WithString("host", mcp.Description("Filter by host (glob pattern, e.g., '*.example.com')")),
-		mcp.WithString("path", mcp.Description("Filter by path (glob pattern, e.g., '/api/*')")),
-		mcp.WithString("method", mcp.Description("Filter by HTTP method(s), comma-separated (e.g., 'GET,POST')")),
-		mcp.WithString("status", mcp.Description("Filter by status code(s) or ranges (e.g., '200,302' or '2XX,4XX')")),
-		mcp.WithString("contains", mcp.Description("Filter by text in URL or headers (does not search body)")),
-		mcp.WithString("contains_body", mcp.Description("Filter by text in request or response body")),
-		mcp.WithString("exclude_host", mcp.Description("Exclude hosts matching glob pattern")),
-		mcp.WithString("exclude_path", mcp.Description("Exclude paths matching glob pattern")),
-	)
-}
-
-func (m *mcpServer) proxyListTool() mcp.Tool {
-	return mcp.NewTool("proxy_list",
-		mcp.WithDescription(`Query proxy history for individual flows.
-
-Returns individual flows with flow_id for use with proxy_get or replay_send.
-At least one filter or limit is REQUIRED. Use proxy_summary first to understand available traffic.
+Output modes:
+- "summary" (default): Returns traffic grouped by (host, path, method, status). Use first to understand available traffic.
+- "flows": Returns individual flows with flow_id for use with proxy_get or replay_send. Requires at least one filter or limit.
 
 Filters: host/path/exclude_host/exclude_path use glob (*, ?). method/status are comma-separated (status supports ranges like 2XX).
 Search: contains searches URL+headers; contains_body searches bodies.
-Incremental: since=flow_id or "last" for new entries only.
-Pagination: use limit and offset after filtering.`),
+Incremental: since accepts flow_id or "last" (no timestamps). Flows mode only: pagination with limit/offset.`),
+		mcp.WithString("output_mode", mcp.Description("Output mode: 'summary' (default) or 'flows'")),
 		mcp.WithString("host", mcp.Description("Filter by host (glob pattern, e.g., '*.example.com')")),
 		mcp.WithString("path", mcp.Description("Filter by path (glob pattern, e.g., '/api/*')")),
 		mcp.WithString("method", mcp.Description("Filter by HTTP method(s), comma-separated (e.g., 'GET,POST')")),
 		mcp.WithString("status", mcp.Description("Filter by status code(s) or ranges (e.g., '200,302' or '2XX,4XX')")),
 		mcp.WithString("contains", mcp.Description("Filter by text in URL or headers (does not search body)")),
 		mcp.WithString("contains_body", mcp.Description("Filter by text in request or response body")),
-		mcp.WithString("since", mcp.Description("Only entries after this flow_id (exclusive), or 'last' to get entries added since your last proxy_list call (per-session cursor)")),
+		mcp.WithString("since", mcp.Description("Entries after flow_id, or 'last' (cursor). No timestamp support.")),
 		mcp.WithString("exclude_host", mcp.Description("Exclude hosts matching glob pattern")),
 		mcp.WithString("exclude_path", mcp.Description("Exclude paths matching glob pattern")),
-		mcp.WithNumber("limit", mcp.Description("Max results to return")),
-		mcp.WithNumber("offset", mcp.Description("Skip first N results (applied after filtering)")),
+		mcp.WithNumber("limit", mcp.Description("List mode: max results to return")),
+		mcp.WithNumber("offset", mcp.Description("List mode: skip first N results (applied after filtering)")),
 	)
 }
 
@@ -66,8 +47,8 @@ func (m *mcpServer) proxyGetTool() mcp.Tool {
 		mcp.WithDescription(`Get full request and response data for a proxy history entry.
 
 Returns headers and body for both request and response. Binary bodies are returned as "<BINARY:N Bytes>" placeholder.
-Use flow_id from proxy_list to identify the entry.`),
-		mcp.WithString("flow_id", mcp.Required(), mcp.Description("Flow ID from proxy_list")),
+Use flow_id from proxy_poll (output_mode=list) to identify the entry.`),
+		mcp.WithString("flow_id", mcp.Required(), mcp.Description("Flow ID from proxy_poll")),
 	)
 }
 
@@ -116,43 +97,12 @@ func (m *mcpServer) proxyRuleDeleteTool() mcp.Tool {
 		mcp.WithString("rule_id", mcp.Required(), mcp.Description("Rule ID or label to delete")),
 	)
 }
-func (m *mcpServer) handleProxySummary(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if err := m.requireWorkflow(); err != nil {
 		return err, nil
 	}
 
-	log.Printf("proxy/summary: fetching aggregated summary")
-
-	listReq := &ProxyListRequest{
-		Host:         req.GetString("host", ""),
-		Path:         req.GetString("path", ""),
-		Method:       req.GetString("method", ""),
-		Status:       req.GetString("status", ""),
-		Contains:     req.GetString("contains", ""),
-		ContainsBody: req.GetString("contains_body", ""),
-		ExcludeHost:  req.GetString("exclude_host", ""),
-		ExcludePath:  req.GetString("exclude_path", ""),
-	}
-
-	allEntries, err := m.service.fetchAllProxyEntries(ctx)
-	if err != nil {
-		return errorResult("failed to fetch proxy summary: " + err.Error()), nil
-	}
-
-	filtered := applyProxyFilters(allEntries, listReq, m.service.flowStore, m.service.proxyLastOffset.Load())
-
-	agg := aggregateByTuple(filtered, func(e flowEntry) (string, string, string, int) {
-		return e.host, e.path, e.method, e.status
-	})
-	log.Printf("proxy/summary: returning %d aggregates from %d entries", len(agg), len(filtered))
-
-	return jsonResult(&protocol.ProxySummaryResponse{Aggregates: agg})
-}
-
-func (m *mcpServer) handleProxyList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := m.requireWorkflow(); err != nil {
-		return err, nil
-	}
+	outputMode := req.GetString("output_mode", "summary")
 
 	listReq := &ProxyListRequest{
 		Host:         req.GetString("host", ""),
@@ -168,12 +118,12 @@ func (m *mcpServer) handleProxyList(ctx context.Context, req mcp.CallToolRequest
 		Offset:       req.GetInt("offset", 0),
 	}
 
-	if !listReq.HasFilters() {
-		return errorResult("at least one filter or limit is required; use proxy_summary first to see available traffic"), nil
+	// Flows mode requires at least one filter
+	if outputMode == "flows" && !listReq.HasFilters() {
+		return errorResult("flows mode requires at least one filter or limit; use output_mode=summary first to see available traffic"), nil
 	}
 
-	log.Printf("proxy/list: fetching with filters (host=%q path=%q method=%q status=%q since=%q offset=%d)",
-		listReq.Host, listReq.Path, listReq.Method, listReq.Status, listReq.Since, listReq.Offset)
+	log.Printf("proxy/poll: mode=%s host=%q path=%q method=%q status=%q", outputMode, listReq.Host, listReq.Path, listReq.Method, listReq.Status)
 
 	allEntries, err := m.service.fetchAllProxyEntries(ctx)
 	if err != nil {
@@ -183,52 +133,63 @@ func (m *mcpServer) handleProxyList(ctx context.Context, req mcp.CallToolRequest
 	lastOffset := m.service.proxyLastOffset.Load()
 	filtered := applyProxyFilters(allEntries, listReq, m.service.flowStore, lastOffset)
 
-	// Apply offset after filtering
-	if listReq.Offset > 0 && listReq.Offset < len(filtered) {
-		filtered = filtered[listReq.Offset:]
-	} else if listReq.Offset >= len(filtered) {
-		filtered = nil
-	}
-
-	// Apply limit after offset
-	if listReq.Limit > 0 && len(filtered) > listReq.Limit {
-		filtered = filtered[:listReq.Limit]
-	}
-
-	var maxOffset uint32
-	for _, e := range filtered {
-		if e.offset > maxOffset {
-			maxOffset = e.offset
+	switch outputMode {
+	case "flows":
+		// Apply offset after filtering
+		if listReq.Offset > 0 && listReq.Offset < len(filtered) {
+			filtered = filtered[listReq.Offset:]
+		} else if listReq.Offset >= len(filtered) {
+			filtered = nil
 		}
-	}
 
-	flows := make([]protocol.FlowEntry, 0, len(filtered))
-	for _, entry := range filtered {
-		headerLines := extractHeaderLines(entry.request)
-		_, reqBody := splitHeadersBody([]byte(entry.request))
-		hash := store.ComputeFlowHashSimple(entry.method, entry.host, entry.path, headerLines, reqBody)
-		flowID := m.service.flowStore.Register(entry.offset, hash)
+		// Apply limit after offset
+		if listReq.Limit > 0 && len(filtered) > listReq.Limit {
+			filtered = filtered[:listReq.Limit]
+		}
 
-		scheme, port, _ := inferSchemeAndPort(entry.host)
+		var maxOffset uint32
+		for _, e := range filtered {
+			if e.offset > maxOffset {
+				maxOffset = e.offset
+			}
+		}
 
-		flows = append(flows, protocol.FlowEntry{
-			FlowID:         flowID,
-			Method:         entry.method,
-			Scheme:         scheme,
-			Host:           entry.host,
-			Port:           port,
-			Path:           truncateString(entry.path, maxPathLength),
-			Status:         entry.status,
-			ResponseLength: entry.respLen,
+		flows := make([]protocol.FlowEntry, 0, len(filtered))
+		for _, entry := range filtered {
+			headerLines := extractHeaderLines(entry.request)
+			_, reqBody := splitHeadersBody([]byte(entry.request))
+			hash := store.ComputeFlowHashSimple(entry.method, entry.host, entry.path, headerLines, reqBody)
+			flowID := m.service.flowStore.Register(entry.offset, hash)
+
+			scheme, port, _ := inferSchemeAndPort(entry.host)
+
+			flows = append(flows, protocol.FlowEntry{
+				FlowID:         flowID,
+				Method:         entry.method,
+				Scheme:         scheme,
+				Host:           entry.host,
+				Port:           port,
+				Path:           truncateString(entry.path, maxPathLength),
+				Status:         entry.status,
+				ResponseLength: entry.respLen,
+			})
+		}
+		log.Printf("proxy/poll: returning %d flows", len(flows))
+
+		if maxOffset > lastOffset {
+			m.service.proxyLastOffset.Store(maxOffset)
+		}
+
+		return jsonResult(&protocol.ProxyPollResponse{Flows: flows})
+
+	default: // summary
+		agg := aggregateByTuple(filtered, func(e flowEntry) (string, string, string, int) {
+			return e.host, e.path, e.method, e.status
 		})
-	}
-	log.Printf("proxy/list: returning %d flows (fetched %d, filtered %d)", len(flows), len(allEntries), len(allEntries)-len(filtered))
+		log.Printf("proxy/poll: returning %d aggregates from %d entries", len(agg), len(filtered))
 
-	if maxOffset > lastOffset {
-		m.service.proxyLastOffset.Store(maxOffset)
+		return jsonResult(&protocol.ProxyPollResponse{Aggregates: agg})
 	}
-
-	return jsonResult(&protocol.ProxyListResponse{Flows: flows})
 }
 
 func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -246,7 +207,7 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 
 	entry, ok := m.service.flowStore.Lookup(flowID)
 	if !ok {
-		return errorResult("flow_id not found: run proxy_list to see available flows"), nil
+		return errorResult("flow_id not found: run proxy_poll to see available flows"), nil
 	}
 
 	proxyEntries, err := m.service.httpBackend.GetProxyHistory(ctx, 1, entry.Offset)

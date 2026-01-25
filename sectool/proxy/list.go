@@ -20,7 +20,8 @@ func summary(mcpURL string, timeout time.Duration, host, path, method, status, c
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.ProxySummary(ctx, mcpclient.ProxySummaryOpts{
+	resp, err := client.ProxyPoll(ctx, mcpclient.ProxyPollOpts{
+		OutputMode:   "summary",
 		Host:         host,
 		Path:         path,
 		Method:       method,
@@ -53,7 +54,8 @@ func list(mcpURL string, timeout time.Duration, host, path, method, status, cont
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.ProxyList(ctx, mcpclient.ProxyListOpts{
+	resp, err := client.ProxyPoll(ctx, mcpclient.ProxyPollOpts{
+		OutputMode:   "flows",
 		Host:         host,
 		Path:         path,
 		Method:       method,

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -12,8 +11,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
 )
 
 // Unit tests for MCP server functionality using mock backends.
@@ -81,8 +78,7 @@ func TestMCP_ListTools(t *testing.T) {
 	require.NoError(t, err)
 
 	expectedTools := []string{
-		"proxy_summary",
-		"proxy_list",
+		"proxy_poll",
 		"proxy_get",
 		"proxy_rule_list",
 		"proxy_rule_add",
@@ -102,8 +98,7 @@ func TestMCP_ListTools(t *testing.T) {
 		"crawl_create",
 		"crawl_seed",
 		"crawl_status",
-		"crawl_summary",
-		"crawl_list",
+		"crawl_poll",
 		"crawl_get",
 		"crawl_sessions",
 		"crawl_stop",
@@ -327,39 +322,6 @@ func (b *mockCrawlerBackend) GetStatus(ctx context.Context, sessionID string) (*
 	copy := *status
 	copy.Duration = time.Since(sess.CreatedAt)
 	return &copy, nil
-}
-
-func (b *mockCrawlerBackend) GetSummary(ctx context.Context, sessionID string) (*CrawlSummary, error) {
-	sess, err := b.resolveSession(sessionID)
-	if err != nil {
-		return nil, err
-	}
-
-	agg := make(map[string]protocol.SummaryEntry)
-	for _, flow := range b.flows {
-		if flow.SessionID != sess.ID {
-			continue
-		}
-		key := flow.Host + "|" + flow.Path + "|" + flow.Method + "|" + strconv.Itoa(flow.StatusCode)
-		entry := agg[key]
-		entry.Host = flow.Host
-		entry.Path = flow.Path
-		entry.Method = flow.Method
-		entry.Status = flow.StatusCode
-		entry.Count++
-		agg[key] = entry
-	}
-	aggregates := make([]protocol.SummaryEntry, 0, len(agg))
-	for _, entry := range agg {
-		aggregates = append(aggregates, entry)
-	}
-
-	return &CrawlSummary{
-		SessionID:  sess.ID,
-		State:      sess.State,
-		Duration:   time.Since(sess.CreatedAt),
-		Aggregates: aggregates,
-	}, nil
 }
 
 func (b *mockCrawlerBackend) ListFlows(ctx context.Context, sessionID string, opts CrawlListOptions) ([]CrawlFlow, error) {

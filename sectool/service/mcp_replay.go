@@ -17,7 +17,7 @@ import (
 
 func (m *mcpServer) replaySendTool() mcp.Tool {
 	return mcp.NewTool("replay_send",
-		mcp.WithDescription(`Replay a proxied request (flow_id from proxy_list) with edits.
+		mcp.WithDescription(`Replay a proxied request (flow_id from proxy_poll) with edits.
 
 Returns: replay_id, status, headers, response_preview. Full body via replay_get.
 
@@ -29,12 +29,12 @@ Edits:
 - body: replace entire body
 - set_json/remove_json: selective JSON edits; requires body to be valid JSON
 
-JSON paths: dot notation (user.email, items[0].id).
-set_json is an object: {"user.email": "x", "items[0].id": 5}
+JSON paths: dot notation with array brackets (e.g., "user.email", "items[0].id", "data.users[0].name").
+set_json object: {"user.email": "x", "items[0].id": 5}
 Types auto-parsed: null/true/false/numbers/{}/[], else string.
 Processing: remove_* then set_*. Content-Length/Host auto-updated.
 Validation: fix issues or use force=true for protocol testing.`),
-		mcp.WithString("flow_id", mcp.Required(), mcp.Description("Flow ID from proxy_list to use as base request")),
+		mcp.WithString("flow_id", mcp.Required(), mcp.Description("Flow ID from proxy_poll or crawl_poll to use as base request")),
 		mcp.WithString("body", mcp.Description("Request body content (replaces existing body)")),
 		mcp.WithString("target", mcp.Description("Override destination (scheme+host[:port]); keeps original path/query")),
 		mcp.WithArray("add_headers", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("Headers to add/replace (format: 'Name: Value')")),
@@ -99,7 +99,7 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 	} else if flow, err := m.service.crawlerBackend.GetFlow(ctx, flowID); err == nil && flow != nil {
 		rawRequest = flow.Request
 	} else {
-		return errorResult("flow_id not found: run proxy_list or crawl_list to see available flows"), nil
+		return errorResult("flow_id not found: run proxy_poll or crawl_poll to see available flows"), nil
 	}
 
 	rawRequest = modifyRequestLine(rawRequest, &PathQueryOpts{

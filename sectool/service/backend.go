@@ -166,10 +166,6 @@ type CrawlerBackend interface {
 	// sessionID can be the ID or label. Returns ErrNotFound if session doesn't exist.
 	GetStatus(ctx context.Context, sessionID string) (*CrawlStatus, error)
 
-	// GetSummary returns aggregated results grouped by path pattern.
-	// sessionID can be the ID or label.
-	GetSummary(ctx context.Context, sessionID string) (*CrawlSummary, error)
-
 	// ListFlows returns flows matching filters.
 	// sessionID can be the ID or label.
 	ListFlows(ctx context.Context, sessionID string, opts CrawlListOptions) ([]CrawlFlow, error)
@@ -259,15 +255,6 @@ type CrawlStatus struct {
 	ErrorMessage    string        // Error details if State is "error"
 }
 
-// CrawlSummary contains aggregated crawl results.
-// Uses same SummaryEntry format as proxy for consistency.
-type CrawlSummary struct {
-	SessionID  string                  // Session identifier
-	State      string                  // Current session state
-	Duration   time.Duration           // Total crawl duration
-	Aggregates []protocol.SummaryEntry // Traffic grouped by (host, path, method, status)
-}
-
 // CrawlFlow represents a single captured request/response from crawling.
 type CrawlFlow struct {
 	ID             string        // Short sectool ID
@@ -322,4 +309,32 @@ type ExportResult struct {
 	BundleID   string   // Bundle identifier (equals flow_id)
 	BundlePath string   // Full path to bundle directory
 	Files      []string // List of created files
+}
+
+// parseSinceTimestamp attempts to parse a string as a timestamp in multiple formats.
+// Returns the parsed time and true if successful, or zero time and false if not a timestamp.
+func parseSinceTimestamp(s string) (time.Time, bool) {
+	now := time.Now()
+	loc := now.Location()
+	// Try formats with timezones
+	for _, format := range []string{time.RFC3339} {
+		if t, err := time.Parse(format, s); err == nil {
+			return t, true
+		}
+	}
+	// Try RFC3339 without timezone (assume local)
+	if t, err := time.ParseInLocation("2006-01-02T15:04:05", s, loc); err == nil {
+		return t, true
+	}
+	// Try other formats without timezone
+	for _, format := range []string{time.DateTime, time.Stamp} {
+		if t, err := time.ParseInLocation(format, s, loc); err == nil {
+			return t, true
+		}
+	}
+	// Time only - assume today's date
+	if t, err := time.ParseInLocation(time.TimeOnly, s, loc); err == nil {
+		return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc), true
+	}
+	return time.Time{}, false
 }

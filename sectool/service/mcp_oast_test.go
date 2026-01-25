@@ -75,16 +75,18 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 			SourceIP: "1.2.3.4",
 		})
 
-		// First poll to get the event
+		// First poll to get the event (use list mode to get Events)
 		firstResp := CallMCPToolJSONOK[protocol.OastPollResponse](t, mcpClient, "oast_poll", map[string]interface{}{
-			"oast_id": oastID,
+			"output_mode": "events",
+			"oast_id":     oastID,
 		})
 		require.NotEmpty(t, firstResp.Events)
 
 		// Poll with since should exclude already seen events
 		resp := CallMCPToolJSONOK[protocol.OastPollResponse](t, mcpClient, "oast_poll", map[string]interface{}{
-			"oast_id": oastID,
-			"since":   firstResp.Events[0].EventID,
+			"output_mode": "events",
+			"oast_id":     oastID,
+			"since":       firstResp.Events[0].EventID,
 		})
 		// No events after the one we specified
 		assert.Empty(t, resp.Events)

@@ -44,9 +44,9 @@ MCP Agent  → MCP Server → Backends (Burp MCP, OAST, Crawler)
 
 - `sectool/service/server.go` - MCP server lifecycle and backend coordination
 - `sectool/service/mcp_server.go` - MCP server setup, tool registration, workflow handling
-- `sectool/service/mcp_proxy.go` - Proxy tool handlers (summary, list, get, rules)
+- `sectool/service/mcp_proxy.go` - Proxy tool handlers (poll, get, rules)
 - `sectool/service/mcp_replay.go` - Replay tool handlers (send, get, request_send)
-- `sectool/service/mcp_crawl.go` - Crawl tool handlers (create, status, list, get, etc.)
+- `sectool/service/mcp_crawl.go` - Crawl tool handlers (create, seed, status, poll, get, sessions, stop)
 - `sectool/service/mcp_oast.go` - OAST tool handlers (create, poll, get, list, delete)
 - `sectool/service/mcp_encode.go` - Encode tool handlers (url, base64, html)
 - `sectool/service/flags.go` - MCP server flag parsing (`--port`, `--workflow`, `--config`)
@@ -176,6 +176,7 @@ sectool replay send          # Send request (from flow, bundle, or file)
 sectool replay get           # Retrieve replay result by ID
 
 sectool oast create          # Create OAST session, returns domain
+sectool oast summary         # Aggregated OAST events by subdomain/source_ip/type
 sectool oast poll            # Poll for out-of-band interactions
 sectool oast list            # List active OAST sessions
 sectool oast delete          # Delete OAST session
@@ -194,8 +195,7 @@ When running in MCP mode, the following tools are exposed:
 | Tool | Description |
 |------|-------------|
 | `workflow` | Select workflow mode (explore/test-report) to receive task-specific instructions |
-| `proxy_summary` | Aggregated traffic summary grouped by host/path/method/status |
-| `proxy_list` | Query individual flows with filters (requires at least one filter) |
+| `proxy_poll` | Query proxy history: summary (default) or list mode with filters |
 | `proxy_get` | Get full request/response for a flow |
 | `proxy_rule_list` | List proxy match/replace rules |
 | `proxy_rule_add` | Add proxy match/replace rule |
@@ -204,8 +204,7 @@ When running in MCP mode, the following tools are exposed:
 | `crawl_create` | Start crawl session from URLs or proxy flow seeds |
 | `crawl_seed` | Add additional seed URLs or proxy flows to a running crawl session |
 | `crawl_status` | Get crawl session progress metrics |
-| `crawl_summary` | Get aggregated crawl results by host/path |
-| `crawl_list` | List crawled flows, forms, or errors |
+| `crawl_poll` | Query crawl results: summary (default), flows, forms, or errors |
 | `crawl_get` | Get full request/response for a crawled flow |
 | `crawl_sessions` | List all crawl sessions |
 | `crawl_stop` | Stop a running crawl session |
@@ -213,7 +212,7 @@ When running in MCP mode, the following tools are exposed:
 | `replay_get` | Retrieve full response from previous replay |
 | `request_send` | Send a new HTTP request from scratch |
 | `oast_create` | Create OAST session for out-of-band testing |
-| `oast_poll` | Poll for OAST interaction events |
+| `oast_poll` | Poll for OAST events: summary (default) or list mode |
 | `oast_get` | Get full details of specific OAST event |
 | `oast_list` | List active OAST sessions |
 | `oast_delete` | Delete OAST session |

@@ -46,6 +46,52 @@ func create(mcpURL string, timeout time.Duration, label string) error {
 	return nil
 }
 
+func summary(mcpURL string, timeout time.Duration, oastID, since, eventType string, wait time.Duration, limit int) error {
+	totalTimeout := timeout + wait
+	ctx, cancel := context.WithTimeout(context.Background(), totalTimeout)
+	defer cancel()
+
+	client, err := mcpclient.Connect(ctx, mcpURL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.OastPoll(ctx, oastID, mcpclient.OastPollOpts{
+		OutputMode: "summary",
+		Since:      since,
+		EventType:  eventType,
+		Wait:       wait.String(),
+		Limit:      limit,
+	})
+	if err != nil {
+		return fmt.Errorf("oast summary failed: %w", err)
+	}
+
+	if len(resp.Aggregates) == 0 {
+		fmt.Println("No events received.")
+		if resp.DroppedCount > 0 {
+			fmt.Printf("\n*Note: %d events were dropped due to buffer limit*\n", resp.DroppedCount)
+		}
+		return nil
+	}
+
+	fmt.Println("| subdomain | source_ip | type | count |")
+	fmt.Println("|-----------|-----------|------|-------|")
+	for _, agg := range resp.Aggregates {
+		fmt.Printf("| %s | %s | %s | %d |\n",
+			cliutil.EscapeMarkdown(agg.Subdomain), agg.SourceIP,
+			strings.ToUpper(agg.Type), agg.Count)
+	}
+	fmt.Printf("\n*%d unique interaction patterns*\n", len(resp.Aggregates))
+
+	if resp.DroppedCount > 0 {
+		fmt.Printf("\n*Note: %d events were dropped due to buffer limit*\n", resp.DroppedCount)
+	}
+
+	return nil
+}
+
 func poll(mcpURL string, timeout time.Duration, oastID, since, eventType string, wait time.Duration, limit int) error {
 	totalTimeout := timeout + wait
 	ctx, cancel := context.WithTimeout(context.Background(), totalTimeout)
@@ -57,7 +103,13 @@ func poll(mcpURL string, timeout time.Duration, oastID, since, eventType string,
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.OastPoll(ctx, oastID, since, eventType, wait, limit)
+	resp, err := client.OastPoll(ctx, oastID, mcpclient.OastPollOpts{
+		OutputMode: "events",
+		Since:      since,
+		EventType:  eventType,
+		Wait:       wait.String(),
+		Limit:      limit,
+	})
 	if err != nil {
 		return fmt.Errorf("oast poll failed: %w", err)
 	}

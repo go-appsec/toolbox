@@ -31,14 +31,10 @@ type RequestLine struct {
 	Version string `json:"version"`
 }
 
-// ProxySummaryResponse is the response for proxy_summary.
-type ProxySummaryResponse struct {
-	Aggregates []SummaryEntry `json:"aggregates"`
-}
-
-// ProxyListResponse is the response for proxy_list.
-type ProxyListResponse struct {
-	Flows []FlowEntry `json:"flows"`
+// ProxyPollResponse is the unified response for proxy_poll.
+type ProxyPollResponse struct {
+	Aggregates []SummaryEntry `json:"aggregates,omitempty"` // summary mode
+	Flows      []FlowEntry    `json:"flows,omitempty"`      // list mode
 }
 
 // ProxyGetResponse is the response for proxy_get.
@@ -106,10 +102,19 @@ type OastCreateResponse struct {
 	Label  string `json:"label,omitempty"`
 }
 
+// OastSummaryEntry represents aggregated OAST events by (subdomain, source_ip, type).
+type OastSummaryEntry struct {
+	Subdomain string `json:"subdomain"`
+	SourceIP  string `json:"source_ip"`
+	Type      string `json:"type"`
+	Count     int    `json:"count"`
+}
+
 // OastPollResponse is the response for oast_poll.
 type OastPollResponse struct {
-	Events       []OastEvent `json:"events"`
-	DroppedCount int         `json:"dropped_count,omitempty"`
+	Aggregates   []OastSummaryEntry `json:"aggregates,omitempty"` // summary mode
+	Events       []OastEvent        `json:"events,omitempty"`     // list mode
+	DroppedCount int                `json:"dropped_count,omitempty"`
 }
 
 // OastEvent represents a single OAST interaction event.
@@ -193,19 +198,15 @@ type CrawlStatusResponse struct {
 	ErrorMessage    string `json:"error_message,omitempty"`
 }
 
-// CrawlSummaryResponse is the response for crawl_summary.
-type CrawlSummaryResponse struct {
+// CrawlPollResponse is the unified response for crawl_poll.
+type CrawlPollResponse struct {
 	SessionID  string         `json:"session_id"`
-	State      string         `json:"state"`
-	Duration   string         `json:"duration"`
-	Aggregates []SummaryEntry `json:"aggregates"`
-}
-
-// CrawlListResponse is the response for crawl_list.
-type CrawlListResponse struct {
-	Flows  []CrawlFlow  `json:"flows,omitempty"`
-	Forms  []CrawlForm  `json:"forms,omitempty"`
-	Errors []CrawlError `json:"errors,omitempty"`
+	State      string         `json:"state,omitempty"`
+	Duration   string         `json:"duration,omitempty"`   // summary only
+	Aggregates []SummaryEntry `json:"aggregates,omitempty"` // summary mode
+	Flows      []CrawlFlow    `json:"flows,omitempty"`      // flows mode
+	Forms      []CrawlForm    `json:"forms,omitempty"`      // forms mode
+	Errors     []CrawlError   `json:"errors,omitempty"`     // errors mode
 }
 
 // CrawlFlow is a crawled request/response summary.

@@ -4,31 +4,20 @@ package mcpclient
 // Proxy Options
 // =============================================================================
 
-// ProxySummaryOpts are options for ProxySummary.
-type ProxySummaryOpts struct {
+// ProxyPollOpts are options for ProxyPoll.
+type ProxyPollOpts struct {
+	OutputMode   string // "summary" or "flows"
 	Host         string
 	Path         string
 	Method       string
 	Status       string
 	Contains     string
 	ContainsBody string
+	Since        string // list mode
 	ExcludeHost  string
 	ExcludePath  string
-}
-
-// ProxyListOpts are options for ProxyList.
-type ProxyListOpts struct {
-	Host         string
-	Path         string
-	Method       string
-	Status       string
-	Contains     string
-	ContainsBody string
-	Since        string
-	ExcludeHost  string
-	ExcludePath  string
-	Limit        int
-	Offset       int
+	Limit        int // list mode
+	Offset       int // list mode
 }
 
 // RuleAddOpts are options for ProxyRuleAdd.
@@ -101,9 +90,9 @@ type CrawlCreateOpts struct {
 	IgnoreRobots      bool
 }
 
-// CrawlListOpts are options for CrawlList.
-type CrawlListOpts struct {
-	Type         string // "urls", "forms", "errors"
+// CrawlPollOpts are options for CrawlPoll.
+type CrawlPollOpts struct {
+	OutputMode   string // "summary", "flows", "forms", "errors"
 	Host         string
 	Path         string
 	Method       string
@@ -112,7 +101,16 @@ type CrawlListOpts struct {
 	ContainsBody string
 	ExcludeHost  string
 	ExcludePath  string
-	Since        string
+	Since        string // flows mode
 	Limit        int
 	Offset       int
+}
+
+// OastPollOpts are options for OastPoll.
+type OastPollOpts struct {
+	OutputMode string // "summary" or "events"
+	Since      string
+	EventType  string
+	Wait       string
+	Limit      int
 }

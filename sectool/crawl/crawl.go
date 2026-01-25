@@ -134,7 +134,9 @@ func summary(mcpURL string, timeout time.Duration, sessionID string) error {
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.CrawlSummary(ctx, sessionID)
+	resp, err := client.CrawlPoll(ctx, sessionID, mcpclient.CrawlPollOpts{
+		OutputMode: "summary",
+	})
 	if err != nil {
 		return fmt.Errorf("crawl summary failed: %w", err)
 	}
@@ -170,8 +172,17 @@ func list(mcpURL string, timeout time.Duration, sessionID, listType, host, path,
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.CrawlList(ctx, sessionID, mcpclient.CrawlListOpts{
-		Type:         listType,
+	// Map CLI listType to output_mode
+	outputMode := "flows"
+	switch listType {
+	case "forms":
+		outputMode = "forms"
+	case "errors":
+		outputMode = "errors"
+	}
+
+	resp, err := client.CrawlPoll(ctx, sessionID, mcpclient.CrawlPollOpts{
+		OutputMode:   outputMode,
 		Host:         host,
 		Path:         path,
 		Method:       method,
@@ -188,7 +199,7 @@ func list(mcpURL string, timeout time.Duration, sessionID, listType, host, path,
 		return fmt.Errorf("crawl list failed: %w", err)
 	}
 
-	switch listType {
+	switch outputMode {
 	case "forms":
 		if len(resp.Forms) == 0 {
 			fmt.Println("No forms discovered.")
@@ -237,7 +248,7 @@ func list(mcpURL string, timeout time.Duration, sessionID, listType, host, path,
 		}
 		fmt.Printf("\n*%d error(s)*\n", len(resp.Errors))
 
-	default: // urls
+	default: // flows
 		if len(resp.Flows) == 0 {
 			fmt.Println("No flows found.")
 			return nil

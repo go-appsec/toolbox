@@ -84,10 +84,10 @@ func findAvailablePort(t *testing.T) int {
 func TestIntegration_ProxySummary(t *testing.T) {
 	client := setupIntegrationEnv(t)
 
-	resp, err := client.ProxySummary(t.Context(), mcpclient.ProxySummaryOpts{})
+	resp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{})
 	require.NoError(t, err)
 
-	t.Logf("proxy_summary: %d aggregates", len(resp.Aggregates))
+	t.Logf("proxy_poll summary: %d aggregates", len(resp.Aggregates))
 	for i, agg := range resp.Aggregates {
 		if i >= 5 {
 			t.Logf("  ... and %d more", len(resp.Aggregates)-5)
@@ -101,7 +101,7 @@ func TestIntegration_ProxySummaryWithFilters(t *testing.T) {
 	client := setupIntegrationEnv(t)
 
 	t.Run("filter_by_method", func(t *testing.T) {
-		resp, err := client.ProxySummary(t.Context(), mcpclient.ProxySummaryOpts{Method: "GET"})
+		resp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "summary", Method: "GET"})
 		require.NoError(t, err)
 
 		for _, agg := range resp.Aggregates {
@@ -111,8 +111,7 @@ func TestIntegration_ProxySummaryWithFilters(t *testing.T) {
 	})
 
 	t.Run("filter_by_status", func(t *testing.T) {
-		// Status filter expects exact codes like "200,302", not ranges like "2xx"
-		resp, err := client.ProxySummary(t.Context(), mcpclient.ProxySummaryOpts{Status: "200"})
+		resp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "summary", Status: "200"})
 		require.NoError(t, err)
 
 		for _, agg := range resp.Aggregates {
@@ -120,18 +119,46 @@ func TestIntegration_ProxySummaryWithFilters(t *testing.T) {
 		}
 		t.Logf("status=200 summary: %d aggregates", len(resp.Aggregates))
 	})
+
+	t.Run("filter_by_host", func(t *testing.T) {
+		// First get any host from unfiltered summary
+		allResp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{})
+		require.NoError(t, err)
+
+		if len(allResp.Aggregates) == 0 {
+			t.Skip("no proxy history")
+		}
+
+		testHost := allResp.Aggregates[0].Host
+		resp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "summary", Host: testHost})
+		require.NoError(t, err)
+
+		for _, agg := range resp.Aggregates {
+			assert.Equal(t, testHost, agg.Host)
+		}
+		t.Logf("host=%s summary: %d aggregates", testHost, len(resp.Aggregates))
+	})
+
+	t.Run("summary_does_not_return_flows", func(t *testing.T) {
+		resp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "summary"})
+		require.NoError(t, err)
+
+		// Summary mode should not return flows (flows should be nil/empty)
+		assert.Empty(t, resp.Flows)
+		t.Logf("summary mode: %d aggregates, %d flows", len(resp.Aggregates), len(resp.Flows))
+	})
 }
 
 func TestIntegration_ProxyList(t *testing.T) {
 	client := setupIntegrationEnv(t)
 
-	t.Run("requires_filters", func(t *testing.T) {
-		_, err := client.ProxyList(t.Context(), mcpclient.ProxyListOpts{})
+	t.Run("list_requires_filters", func(t *testing.T) {
+		_, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows"})
 		require.Error(t, err)
 	})
 
 	t.Run("with_method_filter", func(t *testing.T) {
-		resp, err := client.ProxyList(t.Context(), mcpclient.ProxyListOpts{Method: "GET", Limit: 10})
+		resp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows", Method: "GET", Limit: 10})
 		require.NoError(t, err)
 
 		for _, flow := range resp.Flows {
@@ -141,14 +168,14 @@ func TestIntegration_ProxyList(t *testing.T) {
 	})
 
 	t.Run("with_limit", func(t *testing.T) {
-		resp, err := client.ProxyList(t.Context(), mcpclient.ProxyListOpts{Method: "GET", Limit: 3})
+		resp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows", Method: "GET", Limit: 3})
 		require.NoError(t, err)
 		assert.LessOrEqual(t, len(resp.Flows), 3)
 	})
 
 	t.Run("with_host_filter", func(t *testing.T) {
 		// First get a host from the summary
-		summary, err := client.ProxySummary(t.Context(), mcpclient.ProxySummaryOpts{})
+		summary, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{})
 		require.NoError(t, err)
 
 		if len(summary.Aggregates) == 0 {
@@ -156,7 +183,7 @@ func TestIntegration_ProxyList(t *testing.T) {
 		}
 
 		testHost := summary.Aggregates[0].Host
-		resp, err := client.ProxyList(t.Context(), mcpclient.ProxyListOpts{Host: testHost, Limit: 5})
+		resp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows", Host: testHost, Limit: 5})
 		require.NoError(t, err)
 
 		for _, flow := range resp.Flows {
@@ -164,13 +191,22 @@ func TestIntegration_ProxyList(t *testing.T) {
 		}
 		t.Logf("host=%s: %d flows", testHost, len(resp.Flows))
 	})
+
+	t.Run("list_does_not_return_aggregates", func(t *testing.T) {
+		resp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows", Method: "GET", Limit: 5})
+		require.NoError(t, err)
+
+		// List mode should not return aggregates (aggregates should be nil/empty)
+		assert.Empty(t, resp.Aggregates)
+		t.Logf("list mode: %d flows, %d aggregates", len(resp.Flows), len(resp.Aggregates))
+	})
 }
 
 func TestIntegration_ProxyGet(t *testing.T) {
 	client := setupIntegrationEnv(t)
 
 	// Get a flow ID first
-	listResp, err := client.ProxyList(t.Context(), mcpclient.ProxyListOpts{Method: "GET", Limit: 1})
+	listResp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows", Method: "GET", Limit: 1})
 	require.NoError(t, err)
 
 	if len(listResp.Flows) == 0 {
@@ -322,7 +358,7 @@ func TestIntegration_Replay(t *testing.T) {
 	client := setupIntegrationEnv(t)
 
 	// Get a flow to replay
-	listResp, err := client.ProxyList(t.Context(), mcpclient.ProxyListOpts{Method: "GET", Limit: 1})
+	listResp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows", Method: "GET", Limit: 1})
 	require.NoError(t, err)
 
 	if len(listResp.Flows) == 0 {
@@ -392,7 +428,7 @@ func TestIntegration_ReplayWithQueryMods(t *testing.T) {
 	client := setupIntegrationEnv(t)
 
 	// Find a flow with query params or just use any GET
-	listResp, err := client.ProxyList(t.Context(), mcpclient.ProxyListOpts{Method: "GET", Limit: 1})
+	listResp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows", Method: "GET", Limit: 1})
 	require.NoError(t, err)
 
 	if len(listResp.Flows) == 0 {
@@ -517,7 +553,7 @@ func TestIntegration_OAST(t *testing.T) {
 			t.Skip("no OAST session created")
 		}
 
-		resp, err := client.OastPoll(t.Context(), oastID, "", "", 0, 0)
+		resp, err := client.OastPoll(t.Context(), oastID, mcpclient.OastPollOpts{OutputMode: "events"})
 		require.NoError(t, err)
 
 		// May or may not have events depending on timing
@@ -530,13 +566,13 @@ func TestIntegration_OAST(t *testing.T) {
 		}
 
 		// Short wait - should return quickly with no events
-		resp, err := client.OastPoll(t.Context(), oastID, "", "", 200*time.Millisecond, 0)
+		resp, err := client.OastPoll(t.Context(), oastID, mcpclient.OastPollOpts{OutputMode: "events", Wait: "200ms"})
 		require.NoError(t, err)
 		t.Logf("oast_poll: %d events", len(resp.Events))
 	})
 
 	t.Run("poll_invalid_session", func(t *testing.T) {
-		_, err := client.OastPoll(t.Context(), "nonexistent", "", "", 0, 0)
+		_, err := client.OastPoll(t.Context(), "nonexistent", mcpclient.OastPollOpts{OutputMode: "events"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
@@ -607,7 +643,7 @@ func TestIntegration_ConcurrentOperations(t *testing.T) {
 	client := setupIntegrationEnv(t)
 
 	// Get a flow for concurrent replays
-	listResp, err := client.ProxyList(t.Context(), mcpclient.ProxyListOpts{Method: "GET", Limit: 1})
+	listResp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows", Method: "GET", Limit: 1})
 	require.NoError(t, err)
 
 	if len(listResp.Flows) == 0 {

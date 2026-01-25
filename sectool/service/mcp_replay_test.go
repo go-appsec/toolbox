@@ -24,13 +24,14 @@ func TestMCP_ReplayWithMock(t *testing.T) {
 		"HttpRequestResponse{httpRequest=GET /replay-test HTTP/1.1, httpResponse=HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nreplayed response}",
 	)
 
-	listResult := CallMCPTool(t, mcpClient, "proxy_list", map[string]interface{}{
-		"method": "GET",
+	listResult := CallMCPTool(t, mcpClient, "proxy_poll", map[string]interface{}{
+		"output_mode": "flows",
+		"method":      "GET",
 	})
 	require.False(t, listResult.IsError,
-		"proxy_list failed: %s", ExtractMCPText(t, listResult))
+		"proxy_poll failed: %s", ExtractMCPText(t, listResult))
 
-	var listResp protocol.ProxyListResponse
+	var listResp protocol.ProxyPollResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, listResult)), &listResp))
 	require.NotEmpty(t, listResp.Flows)
 
@@ -186,11 +187,12 @@ func TestMCP_ReplayValidation(t *testing.T) {
 			"HTTP/1.1 200 OK\r\n\r\nok",
 			"",
 		)
-		listResult := CallMCPTool(t, mcpClient, "proxy_list", map[string]interface{}{
-			"host": "test.com",
+		listResult := CallMCPTool(t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"host":        "test.com",
 		})
 		require.False(t, listResult.IsError)
-		var listResp protocol.ProxyListResponse
+		var listResp protocol.ProxyPollResponse
 		require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, listResult)), &listResp))
 		require.NotEmpty(t, listResp.Flows)
 
@@ -246,11 +248,12 @@ func TestMCP_ReplaySendModifications(t *testing.T) {
 		"HttpRequestResponse{httpRequest=POST /api/users HTTP/1.1, httpResponse=HTTP/1.1 200 OK\r\n\r\nmodified}",
 	)
 
-	listResult := CallMCPTool(t, mcpClient, "proxy_list", map[string]interface{}{
-		"method": "POST",
+	listResult := CallMCPTool(t, mcpClient, "proxy_poll", map[string]interface{}{
+		"output_mode": "flows",
+		"method":      "POST",
 	})
 	require.False(t, listResult.IsError)
-	var listResp protocol.ProxyListResponse
+	var listResp protocol.ProxyPollResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, listResult)), &listResp))
 	require.NotEmpty(t, listResp.Flows)
 	flowID := listResp.Flows[0].FlowID

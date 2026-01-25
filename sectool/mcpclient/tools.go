@@ -2,49 +2,16 @@ package mcpclient
 
 import (
 	"context"
-	"time"
 
 	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
 )
 
-// ProxySummary calls proxy_summary and returns aggregated traffic summary.
-func (c *Client) ProxySummary(ctx context.Context, opts ProxySummaryOpts) (*protocol.ProxySummaryResponse, error) {
+// ProxyPoll calls proxy_poll and returns summary or list of flows.
+func (c *Client) ProxyPoll(ctx context.Context, opts ProxyPollOpts) (*protocol.ProxyPollResponse, error) {
 	args := make(map[string]interface{})
-	if opts.Host != "" {
-		args["host"] = opts.Host
+	if opts.OutputMode != "" {
+		args["output_mode"] = opts.OutputMode
 	}
-	if opts.Path != "" {
-		args["path"] = opts.Path
-	}
-	if opts.Method != "" {
-		args["method"] = opts.Method
-	}
-	if opts.Status != "" {
-		args["status"] = opts.Status
-	}
-	if opts.Contains != "" {
-		args["contains"] = opts.Contains
-	}
-	if opts.ContainsBody != "" {
-		args["contains_body"] = opts.ContainsBody
-	}
-	if opts.ExcludeHost != "" {
-		args["exclude_host"] = opts.ExcludeHost
-	}
-	if opts.ExcludePath != "" {
-		args["exclude_path"] = opts.ExcludePath
-	}
-
-	var resp protocol.ProxySummaryResponse
-	if err := c.CallToolJSON(ctx, "proxy_summary", args, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// ProxyList calls proxy_list and returns individual flows.
-func (c *Client) ProxyList(ctx context.Context, opts ProxyListOpts) (*protocol.ProxyListResponse, error) {
-	args := make(map[string]interface{})
 	if opts.Host != "" {
 		args["host"] = opts.Host
 	}
@@ -79,8 +46,8 @@ func (c *Client) ProxyList(ctx context.Context, opts ProxyListOpts) (*protocol.P
 		args["offset"] = opts.Offset
 	}
 
-	var resp protocol.ProxyListResponse
-	if err := c.CallToolJSON(ctx, "proxy_list", args, &resp); err != nil {
+	var resp protocol.ProxyPollResponse
+	if err := c.CallToolJSON(ctx, "proxy_poll", args, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -274,26 +241,25 @@ func (c *Client) OastCreate(ctx context.Context, label string) (*protocol.OastCr
 	return &resp, nil
 }
 
-// OastPoll calls oast_poll and returns events.
-// since: empty returns all, "last" returns since last poll, or an event ID
-// eventType: filter by type (dns, http, smtp, ftp, ldap, smb, responder), empty returns all
-// wait: how long to block waiting for events (0 = return immediately)
-// limit: max events to return (0 = no limit)
-func (c *Client) OastPoll(ctx context.Context, oastID, since, eventType string, wait time.Duration, limit int) (*protocol.OastPollResponse, error) {
+// OastPoll calls oast_poll and returns summary or list of events.
+func (c *Client) OastPoll(ctx context.Context, oastID string, opts OastPollOpts) (*protocol.OastPollResponse, error) {
 	args := map[string]interface{}{
 		"oast_id": oastID,
 	}
-	if since != "" {
-		args["since"] = since
+	if opts.OutputMode != "" {
+		args["output_mode"] = opts.OutputMode
 	}
-	if eventType != "" {
-		args["type"] = eventType
+	if opts.Since != "" {
+		args["since"] = opts.Since
 	}
-	if wait != 0 {
-		args["wait"] = wait.String()
+	if opts.EventType != "" {
+		args["type"] = opts.EventType
 	}
-	if limit > 0 {
-		args["limit"] = limit
+	if opts.Wait != "" {
+		args["wait"] = opts.Wait
+	}
+	if opts.Limit > 0 {
+		args["limit"] = opts.Limit
 	}
 
 	var resp protocol.OastPollResponse
@@ -412,22 +378,13 @@ func (c *Client) CrawlStatus(ctx context.Context, sessionID string) (*protocol.C
 	return &resp, nil
 }
 
-// CrawlSummary calls crawl_summary and returns aggregated results.
-func (c *Client) CrawlSummary(ctx context.Context, sessionID string) (*protocol.CrawlSummaryResponse, error) {
-	var resp protocol.CrawlSummaryResponse
-	if err := c.CallToolJSON(ctx, "crawl_summary", map[string]interface{}{"session_id": sessionID}, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// CrawlList calls crawl_list and returns flows, forms, or errors.
-func (c *Client) CrawlList(ctx context.Context, sessionID string, opts CrawlListOpts) (*protocol.CrawlListResponse, error) {
+// CrawlPoll calls crawl_poll and returns summary, flows, forms, or errors.
+func (c *Client) CrawlPoll(ctx context.Context, sessionID string, opts CrawlPollOpts) (*protocol.CrawlPollResponse, error) {
 	args := map[string]interface{}{
 		"session_id": sessionID,
 	}
-	if opts.Type != "" {
-		args["type"] = opts.Type
+	if opts.OutputMode != "" {
+		args["output_mode"] = opts.OutputMode
 	}
 	if opts.Host != "" {
 		args["host"] = opts.Host
@@ -463,8 +420,8 @@ func (c *Client) CrawlList(ctx context.Context, sessionID string, opts CrawlList
 		args["offset"] = opts.Offset
 	}
 
-	var resp protocol.CrawlListResponse
-	if err := c.CallToolJSON(ctx, "crawl_list", args, &resp); err != nil {
+	var resp protocol.CrawlPollResponse
+	if err := c.CallToolJSON(ctx, "crawl_poll", args, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

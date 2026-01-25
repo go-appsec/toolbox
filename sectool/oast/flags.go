@@ -11,7 +11,7 @@ import (
 	"github.com/go-harden/llm-security-toolbox/sectool/cli"
 )
 
-var oastSubcommands = []string{"create", "poll", "get", "list", "delete", "help"}
+var oastSubcommands = []string{"create", "summary", "poll", "get", "list", "delete", "help"}
 
 func Parse(args []string, mcpURL string) error {
 	if len(args) < 1 {
@@ -22,6 +22,8 @@ func Parse(args []string, mcpURL string) error {
 	switch args[0] {
 	case "create":
 		return parseCreate(args[1:], mcpURL)
+	case "summary":
+		return parseSummary(args[1:], mcpURL)
 	case "poll":
 		return parsePoll(args[1:], mcpURL)
 	case "get":
@@ -54,6 +56,20 @@ oast create [options]
     --label <str>      optional unique label for easier reference
 
   Output: oast_id and domain (e.g., xyz123.oast.fun)
+
+---
+
+oast summary <oast_id|label|domain> [options]
+
+  Get aggregated summary of OAST interactions.
+
+  Options:
+    --since <id|time>  events after event_id or RFC3339 timestamp
+    --type <type>      filter by type (dns, http, smtp, ftp, ldap, smb, responder)
+    --wait <dur>       max wait time for events (default: 2m, max: 2m)
+    --limit <n>        maximum number of events to aggregate
+
+  Output: Markdown table with subdomain, source_ip, type, count
 
 ---
 
@@ -138,6 +154,44 @@ Options:
 	return create(mcpURL, timeout, label)
 }
 
+func parseSummary(args []string, mcpURL string) error {
+	fs := pflag.NewFlagSet("oast summary", pflag.ContinueOnError)
+	fs.SetInterspersed(true)
+	var timeout, wait time.Duration
+	var since, eventType string
+	var limit int
+
+	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
+	fs.StringVar(&since, "since", "", "filter events since event_id or timestamp")
+	fs.StringVar(&eventType, "type", "", "filter by event type (dns, http, smtp, ftp, ldap, smb, responder)")
+	fs.DurationVar(&wait, "wait", 120*time.Second, "max wait time for events (max 120s)")
+	fs.IntVar(&limit, "limit", 0, "maximum number of events to aggregate")
+
+	fs.Usage = func() {
+		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool oast summary <oast_id> [options]
+
+Get aggregated summary of OAST interactions, grouped by (subdomain, source_ip, type).
+Use 'sectool oast poll' to see individual events.
+
+Get oast_id from 'sectool oast create' or 'sectool oast list'.
+
+Options:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if len(fs.Args()) < 1 {
+		fs.Usage()
+		return errors.New("oast_id required (get from 'sectool oast create' or 'sectool oast list')")
+	}
+
+	return summary(mcpURL, timeout, fs.Args()[0], since, eventType, wait, limit)
+}
+
 func parsePoll(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("oast poll", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
@@ -156,7 +210,7 @@ func parsePoll(args []string, mcpURL string) error {
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool oast poll <oast_id> [options]
 
-Poll for OAST interactions. Returns a summary table of events. Use
+Poll for OAST interactions. Returns individual events with event_id. Use
 'sectool oast get' to view full details for a specific event.
 
 Get oast_id from 'sectool oast create' or 'sectool oast list'.

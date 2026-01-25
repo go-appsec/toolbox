@@ -11,7 +11,12 @@ import (
 	"github.com/go-harden/llm-security-toolbox/sectool/cli"
 )
 
-var crawlSubcommands = []string{"create", "seed", "status", "summary", "list", "forms", "errors", "sessions", "stop", "export", "help"}
+const (
+	subcmdForms  = "forms"
+	subcmdErrors = "errors"
+)
+
+var crawlSubcommands = []string{"create", "seed", "status", "summary", "list", subcmdForms, subcmdErrors, "sessions", "stop", "export", "help"}
 
 func Parse(args []string, mcpURL string) error {
 	if len(args) < 1 {
@@ -30,9 +35,9 @@ func Parse(args []string, mcpURL string) error {
 		return parseSummary(args[1:], mcpURL)
 	case "list":
 		return parseList(args[1:], mcpURL)
-	case "forms":
+	case subcmdForms:
 		return parseForms(args[1:], mcpURL)
-	case "errors":
+	case subcmdErrors:
 		return parseErrors(args[1:], mcpURL)
 	case "sessions":
 		return parseSessions(args[1:], mcpURL)

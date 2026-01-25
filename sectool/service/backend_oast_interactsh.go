@@ -253,22 +253,28 @@ func (s *oastSession) filterEvents(since, eventType string) []OastEventInfo {
 			events = s.events[s.lastPollIdx:]
 		}
 	default:
-		// Find event by ID and return everything after it
-		var found bool
-		for i, e := range s.events {
-			if e.ID == since {
-				if i+1 >= len(s.events) {
-					events = nil
-				} else {
-					events = s.events[i+1:]
+		// Try parsing as timestamp first
+		if sinceTime, ok := parseSinceTimestamp(since); ok {
+			events = bulk.SliceFilter(func(e OastEventInfo) bool {
+				return e.Time.After(sinceTime)
+			}, s.events)
+		} else {
+			// Find event by ID and return everything after it
+			var found bool
+			for i, e := range s.events {
+				if e.ID == since {
+					if i+1 >= len(s.events) {
+						events = nil
+					} else {
+						events = s.events[i+1:]
+					}
+					found = true
+					break
 				}
-				found = true
-				break
 			}
-		}
-		if !found {
-			// Event ID not found - return all events
-			events = s.events
+			if !found {
+				events = s.events
+			}
 		}
 	}
 

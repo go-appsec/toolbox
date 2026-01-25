@@ -76,12 +76,12 @@ func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, statusResult)), &statusResp))
 	assert.Equal(t, "running", statusResp.State)
 
-	summaryResult := CallMCPTool(t, mcpClient, "crawl_summary", map[string]interface{}{
+	summaryResult := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
 		"session_id": createResp.SessionID,
 	})
 	require.False(t, summaryResult.IsError,
-		"crawl_summary failed: %s", ExtractMCPText(t, summaryResult))
-	var summaryResp protocol.CrawlSummaryResponse
+		"crawl_poll failed: %s", ExtractMCPText(t, summaryResult))
+	var summaryResp protocol.CrawlPollResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, summaryResult)), &summaryResp))
 	require.NotEmpty(t, summaryResp.Aggregates)
 	assert.Equal(t, "example.com", summaryResp.Aggregates[0].Host)
@@ -89,13 +89,13 @@ func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
 	assert.Equal(t, "GET", summaryResp.Aggregates[0].Method)
 	assert.Equal(t, 200, summaryResp.Aggregates[0].Status)
 
-	listResult := CallMCPTool(t, mcpClient, "crawl_list", map[string]interface{}{
-		"session_id": createResp.SessionID,
-		"type":       "urls",
+	listResult := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
+		"session_id":  createResp.SessionID,
+		"output_mode": "flows",
 	})
 	require.False(t, listResult.IsError,
-		"crawl_list failed: %s", ExtractMCPText(t, listResult))
-	var listResp protocol.CrawlListResponse
+		"crawl_poll failed: %s", ExtractMCPText(t, listResult))
+	var listResp protocol.CrawlPollResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, listResult)), &listResp))
 	require.NotEmpty(t, listResp.Flows)
 	assert.Equal(t, flowID, listResp.Flows[0].FlowID)
@@ -110,23 +110,23 @@ func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
 	assert.Equal(t, flowID, getResp.FlowID)
 	assert.Equal(t, 200, getResp.Status)
 
-	formsResult := CallMCPTool(t, mcpClient, "crawl_list", map[string]interface{}{
-		"session_id": createResp.SessionID,
-		"type":       "forms",
+	formsResult := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
+		"session_id":  createResp.SessionID,
+		"output_mode": "forms",
 	})
 	require.False(t, formsResult.IsError,
-		"crawl_list failed: %s", ExtractMCPText(t, formsResult))
-	var formsResp protocol.CrawlListResponse
+		"crawl_poll failed: %s", ExtractMCPText(t, formsResult))
+	var formsResp protocol.CrawlPollResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, formsResult)), &formsResp))
 	require.NotEmpty(t, formsResp.Forms)
 
-	errorsResult := CallMCPTool(t, mcpClient, "crawl_list", map[string]interface{}{
-		"session_id": createResp.SessionID,
-		"type":       "errors",
+	errorsResult := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
+		"session_id":  createResp.SessionID,
+		"output_mode": "errors",
 	})
 	require.False(t, errorsResult.IsError,
-		"crawl_list failed: %s", ExtractMCPText(t, errorsResult))
-	var errorsResp protocol.CrawlListResponse
+		"crawl_poll failed: %s", ExtractMCPText(t, errorsResult))
+	var errorsResp protocol.CrawlPollResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, errorsResult)), &errorsResp))
 	require.NotEmpty(t, errorsResp.Errors)
 
@@ -137,62 +137,62 @@ func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, sessionsResult)), &sessionsResp))
 	require.NotEmpty(t, sessionsResp.Sessions)
 
-	// Test crawl_list with filters
-	listWithHostResult := CallMCPTool(t, mcpClient, "crawl_list", map[string]interface{}{
-		"session_id": createResp.SessionID,
-		"type":       "urls",
-		"host":       "example.com",
+	// Test crawl_poll with filters
+	listWithHostResult := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
+		"session_id":  createResp.SessionID,
+		"output_mode": "flows",
+		"host":        "example.com",
 	})
 	require.False(t, listWithHostResult.IsError,
-		"crawl_list failed: %s", ExtractMCPText(t, listWithHostResult))
-	var hostResp protocol.CrawlListResponse
+		"crawl_poll failed: %s", ExtractMCPText(t, listWithHostResult))
+	var hostResp protocol.CrawlPollResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, listWithHostResult)), &hostResp))
 	for _, flow := range hostResp.Flows {
 		assert.Equal(t, "example.com", flow.Host)
 	}
 
-	listWithPathResult := CallMCPTool(t, mcpClient, "crawl_list", map[string]interface{}{
-		"session_id": createResp.SessionID,
-		"type":       "urls",
-		"path":       "/*",
+	listWithPathResult := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
+		"session_id":  createResp.SessionID,
+		"output_mode": "flows",
+		"path":        "/*",
 	})
 	require.False(t, listWithPathResult.IsError,
-		"crawl_list failed: %s", ExtractMCPText(t, listWithPathResult))
+		"crawl_poll failed: %s", ExtractMCPText(t, listWithPathResult))
 
-	listWithMethodResult := CallMCPTool(t, mcpClient, "crawl_list", map[string]interface{}{
-		"session_id": createResp.SessionID,
-		"type":       "urls",
-		"method":     "GET",
+	listWithMethodResult := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
+		"session_id":  createResp.SessionID,
+		"output_mode": "flows",
+		"method":      "GET",
 	})
 	require.False(t, listWithMethodResult.IsError,
-		"crawl_list failed: %s", ExtractMCPText(t, listWithMethodResult))
-	var methodResp protocol.CrawlListResponse
+		"crawl_poll failed: %s", ExtractMCPText(t, listWithMethodResult))
+	var methodResp protocol.CrawlPollResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, listWithMethodResult)), &methodResp))
 	for _, flow := range methodResp.Flows {
 		assert.Equal(t, "GET", flow.Method)
 	}
 
-	listWithStatusResult := CallMCPTool(t, mcpClient, "crawl_list", map[string]interface{}{
-		"session_id": createResp.SessionID,
-		"type":       "urls",
-		"status":     "200",
+	listWithStatusResult := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
+		"session_id":  createResp.SessionID,
+		"output_mode": "flows",
+		"status":      "200",
 	})
 	require.False(t, listWithStatusResult.IsError,
-		"crawl_list failed: %s", ExtractMCPText(t, listWithStatusResult))
-	var statusFilterResp protocol.CrawlListResponse
+		"crawl_poll failed: %s", ExtractMCPText(t, listWithStatusResult))
+	var statusFilterResp protocol.CrawlPollResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, listWithStatusResult)), &statusFilterResp))
 	for _, flow := range statusFilterResp.Flows {
 		assert.Equal(t, 200, flow.Status)
 	}
 
-	listWithExcludeResult := CallMCPTool(t, mcpClient, "crawl_list", map[string]interface{}{
+	listWithExcludeResult := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
 		"session_id":   createResp.SessionID,
-		"type":         "urls",
+		"output_mode":  "flows",
 		"exclude_host": "other.com",
 	})
 	require.False(t, listWithExcludeResult.IsError,
-		"crawl_list failed: %s", ExtractMCPText(t, listWithExcludeResult))
-	var excludeResp protocol.CrawlListResponse
+		"crawl_poll failed: %s", ExtractMCPText(t, listWithExcludeResult))
+	var excludeResp protocol.CrawlPollResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, listWithExcludeResult)), &excludeResp))
 	for _, flow := range excludeResp.Flows {
 		assert.NotEqual(t, "other.com", flow.Host)
@@ -280,20 +280,20 @@ func TestMCP_CrawlValidation(t *testing.T) {
 	})
 
 	t.Run("summary_missing_session_id", func(t *testing.T) {
-		result := CallMCPTool(t, mcpClient, "crawl_summary", map[string]interface{}{})
+		result := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{})
 		assert.True(t, result.IsError)
 		assert.Contains(t, ExtractMCPText(t, result), "session_id is required")
 	})
 
 	t.Run("list_missing_session_id", func(t *testing.T) {
-		result := CallMCPTool(t, mcpClient, "crawl_list", map[string]interface{}{
-			"type": "urls",
+		result := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
+			"output_mode": "flows",
 		})
 		assert.True(t, result.IsError)
 		assert.Contains(t, ExtractMCPText(t, result), "session_id is required")
 	})
 
-	t.Run("list_defaults_to_urls", func(t *testing.T) {
+	t.Run("defaults_to_summary", func(t *testing.T) {
 		createResult := CallMCPTool(t, mcpClient, "crawl_create", map[string]interface{}{
 			"seed_urls": "https://example.com",
 		})
@@ -302,21 +302,22 @@ func TestMCP_CrawlValidation(t *testing.T) {
 		var createResp protocol.CrawlCreateResponse
 		require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, createResult)), &createResp))
 
-		result := CallMCPTool(t, mcpClient, "crawl_list", map[string]interface{}{
+		result := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
 			"session_id": createResp.SessionID,
 		})
 		require.False(t, result.IsError,
-			"crawl_list failed: %s", ExtractMCPText(t, result))
+			"crawl_poll failed: %s", ExtractMCPText(t, result))
 
-		var listResp protocol.CrawlListResponse
-		require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, result)), &listResp))
-		// Should return flows (urls) by default, even if empty
-		assert.Nil(t, listResp.Forms)
-		assert.Nil(t, listResp.Errors)
+		var pollResp protocol.CrawlPollResponse
+		require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, result)), &pollResp))
+		// Default mode is summary - should have state/duration, not forms/errors
+		assert.NotEmpty(t, pollResp.State)
+		assert.Nil(t, pollResp.Forms)
+		assert.Nil(t, pollResp.Errors)
 	})
 
 	t.Run("summary_invalid_session_id", func(t *testing.T) {
-		result := CallMCPTool(t, mcpClient, "crawl_summary", map[string]interface{}{
+		result := CallMCPTool(t, mcpClient, "crawl_poll", map[string]interface{}{
 			"session_id": "nonexistent",
 		})
 		assert.True(t, result.IsError)

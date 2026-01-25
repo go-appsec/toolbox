@@ -26,17 +26,22 @@ Use cases: blind SSRF, blind XXE, DNS exfiltration, email verification bypass.`)
 
 func (m *mcpServer) oastPollTool() mcp.Tool {
 	return mcp.NewTool("oast_poll",
-		mcp.WithDescription(`Poll for OAST interaction events.
+		mcp.WithDescription(`Poll for OAST interaction events: summary (default) or events mode.
+
+Output modes:
+- "summary" (default): Returns events aggregated by (subdomain, source_ip, type), sorted by count descending.
+- "events": Returns individual events with event_id for use with oast_get.
 
 Options:
 - Immediate: omit wait
 - Long-poll: set wait (e.g., '30s', max 120s)
-- Incremental: since=event_id or "last" for only new events
+- Incremental: use since parameter, accepts event_id, timestamp, or "last"
 - Filter by type: dns, http, smtp, ftp, ldap, smb, responder
 
-Response includes events (event_id) and optional dropped_count; use oast_get for full event details.`),
+Response includes events/aggregates and optional dropped_count; use oast_get for full event details.`),
 		mcp.WithString("oast_id", mcp.Required(), mcp.Description("OAST session ID, label, or domain")),
-		mcp.WithString("since", mcp.Description("Return events after this event_id, or 'last' to get events received since your last oast_poll call (per-session cursor)")),
+		mcp.WithString("output_mode", mcp.Description("Output mode: 'summary' (default) or 'events'")),
+		mcp.WithString("since", mcp.Description("event_id, timestamp (e.g., RFC3339, '2006-01-02 15:04:05', '15:04:05'), or 'last' (per-session cursor)")),
 		mcp.WithString("type", mcp.Description("Filter by event type: dns, http, smtp, ftp, ldap, smb, responder")),
 		mcp.WithString("wait", mcp.Description("Long-poll duration (e.g., '30s', max 120s)")),
 		mcp.WithNumber("limit", mcp.Description("Maximum number of events to return")),
@@ -94,6 +99,8 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 		return errorResult("oast_id is required"), nil
 	}
 
+	outputMode := req.GetString("output_mode", "summary")
+
 	var wait time.Duration
 	if waitStr := req.GetString("wait", ""); waitStr != "" {
 		parsed, err := time.ParseDuration(waitStr)
@@ -110,7 +117,7 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 	eventType := strings.ToLower(req.GetString("type", ""))
 	limit := req.GetInt("limit", 0)
 
-	log.Printf("mcp/oast_poll: polling session %s (wait=%v since=%q type=%q limit=%d)", oastID, wait, since, eventType, limit)
+	log.Printf("mcp/oast_poll: mode=%s session=%s (wait=%v since=%q type=%q limit=%d)", outputMode, oastID, wait, since, eventType, limit)
 
 	result, err := m.service.oastBackend.PollSession(ctx, oastID, since, eventType, wait, limit)
 	if err != nil {
@@ -120,23 +127,66 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 		return errorResult("failed to poll session: " + err.Error()), nil
 	}
 
-	events := make([]protocol.OastEvent, len(result.Events))
-	for i, e := range result.Events {
-		events[i] = protocol.OastEvent{
-			EventID:   e.ID,
-			Time:      e.Time.UTC().Format(time.RFC3339),
-			Type:      e.Type,
-			SourceIP:  e.SourceIP,
-			Subdomain: e.Subdomain,
-			Details:   e.Details,
+	switch outputMode {
+	case "events":
+		events := make([]protocol.OastEvent, len(result.Events))
+		for i, e := range result.Events {
+			events[i] = protocol.OastEvent{
+				EventID:   e.ID,
+				Time:      e.Time.UTC().Format(time.RFC3339),
+				Type:      e.Type,
+				SourceIP:  e.SourceIP,
+				Subdomain: e.Subdomain,
+				Details:   e.Details,
+			}
 		}
+
+		log.Printf("mcp/oast_poll: session %s returned %d events", oastID, len(events))
+		return jsonResult(protocol.OastPollResponse{
+			Events:       events,
+			DroppedCount: result.DroppedCount,
+		})
+
+	default: // summary
+		agg := aggregateOastEvents(result.Events)
+		log.Printf("mcp/oast_poll: session %s returned %d aggregates from %d events", oastID, len(agg), len(result.Events))
+		return jsonResult(protocol.OastPollResponse{
+			Aggregates:   agg,
+			DroppedCount: result.DroppedCount,
+		})
+	}
+}
+
+// aggregateOastEvents aggregates OAST events by (subdomain, source_ip, type).
+func aggregateOastEvents(events []OastEventInfo) []protocol.OastSummaryEntry {
+	type key struct {
+		subdomain string
+		sourceIP  string
+		eventType string
+	}
+	counts := make(map[key]int)
+
+	for _, e := range events {
+		k := key{subdomain: e.Subdomain, sourceIP: e.SourceIP, eventType: e.Type}
+		counts[k]++
 	}
 
-	log.Printf("mcp/oast_poll: session %s returned %d events", oastID, len(events))
-	return jsonResult(protocol.OastPollResponse{
-		Events:       events,
-		DroppedCount: result.DroppedCount,
+	result := make([]protocol.OastSummaryEntry, 0, len(counts))
+	for k, count := range counts {
+		result = append(result, protocol.OastSummaryEntry{
+			Subdomain: k.subdomain,
+			SourceIP:  k.sourceIP,
+			Type:      k.eventType,
+			Count:     count,
+		})
+	}
+
+	// Sort by count descending
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Count > result[j].Count
 	})
+
+	return result
 }
 
 func (m *mcpServer) handleOastGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
