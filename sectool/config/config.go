@@ -12,6 +12,7 @@ const (
 	Version           = "0.0.1"
 	DefaultBurpMCPURL = "http://127.0.0.1:9876/sse"
 	DefaultMCPPort    = 9119
+	DefaultProxyPort  = 8080
 )
 
 // RevNum is injected at build time via ldflags; defaults to "dev".
@@ -31,9 +32,11 @@ func DefaultPath() string {
 }
 
 type Config struct {
-	Version string        `json:"version"`
-	MCPPort int           `json:"mcp_port,omitempty"`
-	Crawler CrawlerConfig `json:"crawler,omitempty"`
+	Version      string        `json:"version"`
+	MCPPort      int           `json:"mcp_port,omitempty"`
+	ProxyPort    int           `json:"proxy_port,omitempty"`
+	BurpRequired *bool         `json:"burp_required,omitempty"`
+	Crawler      CrawlerConfig `json:"crawler,omitempty"`
 }
 
 type CrawlerConfig struct {
@@ -54,8 +57,10 @@ func DefaultConfig() *Config {
 	t := true
 	f := false
 	return &Config{
-		Version: Version,
-		MCPPort: DefaultMCPPort,
+		Version:      Version,
+		MCPPort:      DefaultMCPPort,
+		ProxyPort:    DefaultProxyPort,
+		BurpRequired: &f,
 		Crawler: CrawlerConfig{
 			MaxResponseBodyBytes: 1048576, // 1MB
 			IncludeSubdomains:    &t,
@@ -96,9 +101,15 @@ func Load(path string) (*Config, error) {
 	if cfg.MCPPort == 0 {
 		cfg.MCPPort = DefaultMCPPort
 	}
+	if cfg.ProxyPort == 0 {
+		cfg.ProxyPort = DefaultProxyPort
+	}
 
 	// Apply CrawlerConfig defaults for zero values
 	defaults := DefaultConfig()
+	if cfg.BurpRequired == nil {
+		cfg.BurpRequired = defaults.BurpRequired
+	}
 	if cfg.Crawler.MaxResponseBodyBytes == 0 {
 		cfg.Crawler.MaxResponseBodyBytes = defaults.Crawler.MaxResponseBodyBytes
 	}

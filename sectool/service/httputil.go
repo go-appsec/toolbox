@@ -3,15 +3,19 @@ package service
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-harden/llm-security-toolbox/sectool/config"
@@ -108,20 +112,36 @@ const (
 )
 
 // extractRequestMeta extracts method, host, path from raw HTTP request.
+// Handles both origin-form ("GET /path") and proxy-form ("GET http://host/path") requests.
 // Returns empty strings on parse failure.
 func extractRequestMeta(raw string) (method, host, path string) {
-	lines := strings.SplitN(raw, "\r\n", 2)
-	if len(lines) == 0 {
-		return "", "", ""
-	}
-
-	// Request line: "GET /path HTTP/1.1"
-	parts := strings.SplitN(lines[0], " ", 3)
+	// Request line: "GET /path HTTP/1.1" or "GET http://host/path HTTP/1.1"
+	firstLine, _, _ := strings.Cut(raw, "\r\n")
+	parts := strings.SplitN(firstLine, " ", 3)
 	if len(parts) >= 2 {
-		method, path = parts[0], parts[1]
+		method = parts[0]
+		requestURI := parts[1]
+
+		// Check for proxy-form (absolute URI): "http://host/path" or "https://host/path"
+		if strings.HasPrefix(requestURI, "http://") || strings.HasPrefix(requestURI, "https://") {
+			if u, err := url.Parse(requestURI); err == nil {
+				host = u.Host
+				path = u.Path
+				if u.RawQuery != "" {
+					path = path + "?" + u.RawQuery
+				}
+				if path == "" {
+					path = "/"
+				}
+				return method, host, path
+			}
+		}
+
+		// Origin-form: "/path"
+		path = requestURI
 	}
 
-	// Host header (case-insensitive search)
+	// Host header (case-insensitive search) for origin-form requests
 	for _, line := range strings.Split(raw, "\r\n") {
 		if strings.HasPrefix(strings.ToLower(line), "host:") {
 			host = strings.TrimSpace(line[5:])
@@ -170,7 +190,7 @@ func readResponseBytes(resp []byte) (*http.Response, error) {
 }
 
 // previewBody returns a UTF-8 safe preview of the body.
-// Returns "<BINARY:N Bytes>" for non-UTF-8 content, truncates at maxLen.
+// Returns "<BINARY:N Bytes>" for non-UTF-8 content, truncates at maxLen runes.
 func previewBody(body []byte, maxLen int) string {
 	if len(body) == 0 {
 		return ""
@@ -178,10 +198,13 @@ func previewBody(body []byte, maxLen int) string {
 	if !utf8.Valid(body) {
 		return "<BINARY:" + strconv.Itoa(len(body)) + " Bytes>"
 	}
-	if len(body) <= maxLen {
-		return string(body)
+	s := string(body)
+	if utf8.RuneCountInString(s) <= maxLen {
+		return s
 	}
-	return string(body[:maxLen]) + "..."
+	// Truncate at rune boundary
+	runes := []rune(s)
+	return string(runes[:maxLen]) + "..."
 }
 
 // transformRequestForValidation converts HTTP/2 request lines to HTTP/1.1 for Go's parser.
@@ -563,7 +586,7 @@ func updateContentLength(headers []byte, length int) []byte {
 
 // setHeader adds or replaces a header.
 func setHeader(headers []byte, name, value string) []byte {
-	re := regexp.MustCompile(`(?im)^` + regexp.QuoteMeta(name) + `:\s*.+\r?\n`)
+	re := regexp.MustCompile(`(?im)^` + regexp.QuoteMeta(name) + `:[ \t]*.*\r?\n`)
 	newHeader := []byte(name + ": " + value + "\r\n")
 
 	if re.Match(headers) {
@@ -585,7 +608,7 @@ func setHeaderIfMissing(headers []byte, name, value string) []byte {
 
 // removeHeader removes a header.
 func removeHeader(headers []byte, name string) []byte {
-	re := regexp.MustCompile(`(?im)^` + regexp.QuoteMeta(name) + `:\s*.+\r?\n`)
+	re := regexp.MustCompile(`(?im)^` + regexp.QuoteMeta(name) + `:[ \t]*.*\r?\n`)
 	return re.ReplaceAll(headers, nil)
 }
 
@@ -633,64 +656,32 @@ func checkLineEndings(headers []byte) string {
 
 // validationIssue represents a single validation problem.
 type validationIssue struct {
-	Check    string
-	Severity string
-	Detail   string
+	Check  string
+	Detail string
 }
-
-const (
-	severityError   = "error"
-	severityWarning = "warning"
-)
 
 // validateRequest checks request for common issues.
 func validateRequest(raw []byte) []validationIssue {
 	var issues []validationIssue
 
-	headers, body := splitHeadersBody(raw)
+	headers, _ := splitHeadersBody(raw)
 
 	// Check line endings FIRST - HTTP requires CRLF
 	if issue := checkLineEndings(headers); issue != "" {
 		issues = append(issues, validationIssue{
-			Check:    "crlf",
-			Severity: severityError,
-			Detail:   issue + "; HTTP requires CRLF (\\r\\n) line endings, use --force to send anyway",
+			Check:  "crlf",
+			Detail: issue + "; HTTP requires CRLF (\\r\\n) line endings, use --force to send anyway",
 		})
 		return issues
 	}
 
+	// Use Go's parser to check structure
 	// Transform for validation only (HTTP/2 -> HTTP/1.1 for Go's parser)
 	validationRaw := transformRequestForValidation(raw)
-
-	// Use Go's parser to check structure
-	_, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(validationRaw)))
-	if err != nil {
+	if _, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(validationRaw))); err != nil {
 		issues = append(issues, validationIssue{
-			Check:    "parse",
-			Severity: severityError,
-			Detail:   err.Error(),
-		})
-	}
-
-	// Check Content-Length matches body
-	clMatch := regexp.MustCompile(`(?im)^Content-Length:\s*(\d+)`).FindSubmatch(headers)
-	if clMatch != nil {
-		cl, _ := strconv.Atoi(string(clMatch[1]))
-		if cl != len(body) {
-			issues = append(issues, validationIssue{
-				Check:    "content_length",
-				Severity: severityError,
-				Detail:   fmt.Sprintf("header says %d, body is %d bytes", cl, len(body)),
-			})
-		}
-	}
-
-	// Check Host header (warning only)
-	if !regexp.MustCompile(`(?im)^Host:`).Match(headers) {
-		issues = append(issues, validationIssue{
-			Check:    "host",
-			Severity: severityWarning,
-			Detail:   "missing Host header",
+			Check:  "parse",
+			Detail: err.Error(),
 		})
 	}
 
@@ -700,10 +691,10 @@ func validateRequest(raw []byte) []validationIssue {
 // formatIssues formats validation issues as Markdown.
 func formatIssues(issues []validationIssue) string {
 	var sb strings.Builder
-	sb.WriteString("| Issue | Severity | Detail |\n")
-	sb.WriteString("|-------|----------|--------|\n")
+	sb.WriteString("| Issue | Detail |\n")
+	sb.WriteString("|-------|--------|\n")
 	for _, i := range issues {
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s |\n", i.Check, i.Severity, i.Detail))
+		sb.WriteString(fmt.Sprintf("| %s | %s |\n", i.Check, i.Detail))
 	}
 	return sb.String()
 }
@@ -725,8 +716,30 @@ func parseTarget(raw []byte, targetOverride string) (host string, port int, uses
 		}
 	}
 
-	// Extract from Host header
-	_, host, _ = extractRequestMeta(string(raw))
+	// Check for proxy-form URL in request line first (e.g., "GET http://host/path")
+	rawStr := string(raw)
+	firstLine, _, _ := strings.Cut(rawStr, "\r\n")
+	parts := strings.SplitN(firstLine, " ", 3)
+	if len(parts) >= 2 {
+		requestURI := parts[1]
+		if strings.HasPrefix(requestURI, "http://") || strings.HasPrefix(requestURI, "https://") {
+			if u, err := url.Parse(requestURI); err == nil {
+				host = u.Hostname()
+				usesHTTPS = u.Scheme == schemeHTTPS
+				if u.Port() != "" {
+					port, _ = strconv.Atoi(u.Port())
+				} else if usesHTTPS {
+					port = 443
+				} else {
+					port = 80
+				}
+				return
+			}
+		}
+	}
+
+	// Extract from Host header (for origin-form requests)
+	_, host, _ = extractRequestMeta(rawStr)
 
 	// Parse port from host
 	if idx := strings.LastIndex(host, ":"); idx > 0 {
@@ -742,4 +755,211 @@ func parseTarget(raw []byte, targetOverride string) (host string, port int, uses
 	port = 443
 	usesHTTPS = true
 	return
+}
+
+// extractMethod extracts the HTTP method from a raw request.
+func extractMethod(raw []byte) string {
+	lines := bytes.SplitN(raw, []byte("\r\n"), 2)
+	if len(lines) == 0 {
+		return "GET"
+	}
+	parts := bytes.SplitN(lines[0], []byte(" "), 2)
+	if len(parts) == 0 {
+		return "GET"
+	}
+	return string(parts[0])
+}
+
+// extractRequestPath extracts the path from a raw request's request line,
+// stripping any query parameters.
+func extractRequestPath(raw []byte) string {
+	lines := bytes.SplitN(raw, []byte("\r\n"), 2)
+	if len(lines) == 0 {
+		return "/"
+	}
+	parts := bytes.SplitN(lines[0], []byte(" "), 3)
+	if len(parts) < 2 {
+		return "/"
+	}
+	p := string(parts[1])
+	if idx := strings.Index(p, "?"); idx >= 0 {
+		p = p[:idx]
+	}
+	return p
+}
+
+// buildRedirectRequest builds a new request for following a redirect.
+// Implements browser-like behavior: preserves headers (including cookies),
+// drops Authorization on cross-origin, handles method/body per status code.
+func buildRedirectRequest(originalReq []byte, location string, currentTarget Target, currentPath string, status int) ([]byte, Target, string, error) {
+	var preserveMethod, preserveBody bool
+	switch status {
+	case 307, 308:
+		preserveMethod = true
+		preserveBody = true
+	}
+
+	newTarget, newPath, err := resolveRedirectLocation(location, currentTarget, currentPath)
+	if err != nil {
+		return nil, Target{}, "", err
+	}
+
+	isCrossOrigin := newTarget.Hostname != currentTarget.Hostname
+
+	method := extractMethod(originalReq)
+	if !preserveMethod {
+		method = "GET"
+	}
+
+	var body []byte
+	if preserveBody {
+		_, body = splitHeadersBody(originalReq)
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(fmt.Sprintf("%s %s HTTP/1.1\r\n", method, newPath))
+	copyHeadersForRedirect(originalReq, &buf, newTarget, isCrossOrigin, preserveBody)
+
+	if len(body) > 0 {
+		buf.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(body)))
+	}
+
+	buf.WriteString("\r\n")
+	buf.Write(body)
+
+	return buf.Bytes(), newTarget, newPath, nil
+}
+
+// resolveRedirectLocation resolves a Location header value to a target and path.
+func resolveRedirectLocation(location string, currentTarget Target, currentPath string) (Target, string, error) {
+	if strings.HasPrefix(location, "http://") || strings.HasPrefix(location, "https://") {
+		u, err := url.Parse(location)
+		if err != nil {
+			return Target{}, "", err
+		}
+		return targetFromURL(u), u.RequestURI(), nil
+	}
+
+	if strings.HasPrefix(location, "//") {
+		scheme := schemeHTTPS
+		if !currentTarget.UsesHTTPS {
+			scheme = schemeHTTP
+		}
+		u, err := url.Parse(scheme + ":" + location)
+		if err != nil {
+			return Target{}, "", err
+		}
+		return targetFromURL(u), u.RequestURI(), nil
+	}
+
+	if strings.HasPrefix(location, "/") {
+		return currentTarget, location, nil
+	}
+
+	baseDir := path.Dir(currentPath)
+	if baseDir == "." {
+		baseDir = "/"
+	}
+	resolved := path.Join(baseDir, location)
+	if !strings.HasPrefix(resolved, "/") {
+		resolved = "/" + resolved
+	}
+	return currentTarget, resolved, nil
+}
+
+// copyHeadersForRedirect copies headers from original request to buffer,
+// applying redirect-appropriate modifications.
+func copyHeadersForRedirect(originalReq []byte, buf *bytes.Buffer, newTarget Target, isCrossOrigin, preserveBody bool) {
+	headers, _ := splitHeadersBody(originalReq)
+
+	newHost := newTarget.Hostname
+	if (newTarget.UsesHTTPS && newTarget.Port != 443) || (!newTarget.UsesHTTPS && newTarget.Port != 80) {
+		newHost = fmt.Sprintf("%s:%d", newTarget.Hostname, newTarget.Port)
+	}
+
+	skipHeaders := map[string]bool{
+		"host":           true,
+		"content-length": true,
+	}
+	if !preserveBody {
+		skipHeaders["content-type"] = true
+		skipHeaders["content-encoding"] = true
+		skipHeaders["transfer-encoding"] = true
+	}
+
+	_, _ = fmt.Fprintf(buf, "Host: %s\r\n", newHost)
+
+	for _, line := range bytes.Split(headers, []byte("\r\n")) {
+		if len(line) == 0 {
+			continue
+		}
+
+		// Skip request line
+		if bytes.HasPrefix(line, []byte("GET ")) || bytes.HasPrefix(line, []byte("POST ")) ||
+			bytes.HasPrefix(line, []byte("PUT ")) || bytes.HasPrefix(line, []byte("DELETE ")) ||
+			bytes.HasPrefix(line, []byte("PATCH ")) || bytes.HasPrefix(line, []byte("HEAD ")) ||
+			bytes.HasPrefix(line, []byte("OPTIONS ")) || bytes.HasPrefix(line, []byte("TRACE ")) ||
+			bytes.HasPrefix(line, []byte("CONNECT ")) {
+			continue
+		}
+
+		if colonIdx := bytes.IndexByte(line, ':'); colonIdx < 0 {
+			continue
+		} else if name := strings.ToLower(string(bytes.TrimSpace(line[:colonIdx]))); skipHeaders[name] {
+			continue
+		} else if isCrossOrigin && name == "authorization" {
+			continue
+		}
+
+		buf.Write(line)
+		buf.WriteString("\r\n")
+	}
+}
+
+// RequestSender sends a single request and returns the result.
+type RequestSender func(ctx context.Context, req SendRequestInput, start time.Time) (*SendRequestResult, error)
+
+// FollowRedirects sends a request and follows redirects up to maxRedirects times.
+// Uses sender to perform individual requests, allowing different backend implementations.
+func FollowRedirects(ctx context.Context, req SendRequestInput, start time.Time, maxRedirects int, sender RequestSender) (*SendRequestResult, error) {
+	currentReq := req
+	currentPath := extractRequestPath(currentReq.RawRequest)
+
+	for i := 0; i < maxRedirects; i++ {
+		result, err := sender(ctx, currentReq, start)
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err := readResponseBytes(result.Headers)
+		if err != nil {
+			result.Duration = time.Since(start)
+			return result, nil
+		}
+		_ = resp.Body.Close()
+
+		if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+			result.Duration = time.Since(start)
+			return result, nil
+		}
+
+		location := resp.Header.Get("Location")
+		if location == "" {
+			result.Duration = time.Since(start)
+			return result, nil
+		}
+
+		newReq, newTarget, newPath, err :=
+			buildRedirectRequest(currentReq.RawRequest, location, currentReq.Target, currentPath, resp.StatusCode)
+		if err != nil {
+			result.Duration = time.Since(start)
+			return result, nil
+		}
+
+		currentReq.RawRequest = newReq
+		currentReq.Target = newTarget
+		currentPath = newPath
+	}
+
+	return nil, errors.New("too many redirects")
 }

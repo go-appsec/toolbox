@@ -44,7 +44,7 @@ func setupMCPServerWithMock(t *testing.T) (*Server, *mcpclient.Client, *TestMCPS
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 
 	_, err = mcpClient.Initialize(ctx, mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
@@ -72,7 +72,7 @@ func TestMCP_ListTools(t *testing.T) {
 	_, mcpClient, _, _, _ := setupMCPServerWithMock(t)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 
 	result, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
 	require.NoError(t, err)

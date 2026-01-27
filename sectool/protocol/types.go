@@ -202,11 +202,11 @@ type CrawlStatusResponse struct {
 type CrawlPollResponse struct {
 	SessionID  string         `json:"session_id"`
 	State      string         `json:"state,omitempty"`
-	Duration   string         `json:"duration,omitempty"`   // summary only
-	Aggregates []SummaryEntry `json:"aggregates,omitempty"` // summary mode
-	Flows      []CrawlFlow    `json:"flows,omitempty"`      // flows mode
-	Forms      []CrawlForm    `json:"forms,omitempty"`      // forms mode
-	Errors     []CrawlError   `json:"errors,omitempty"`     // errors mode
+	Duration   string         `json:"duration,omitempty"` // summary only
+	Aggregates []SummaryEntry `json:"aggregates,omitempty"`
+	Flows      []CrawlFlow    `json:"flows,omitempty"`
+	Forms      []CrawlForm    `json:"forms,omitempty"`
+	Errors     []CrawlError   `json:"errors,omitempty"`
 }
 
 // CrawlFlow is a crawled request/response summary.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"log"
-	"slices"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -148,8 +147,7 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 	rawRequest = append(headers, reqBody...)
 
 	if !req.GetBool("force", false) {
-		issues := validateRequest(rawRequest)
-		if slices.ContainsFunc(issues, func(i validationIssue) bool { return i.Severity == severityError }) {
+		if issues := validateRequest(rawRequest); len(issues) > 0 {
 			return errorResult("validation failed:\n" + formatIssues(issues)), nil
 		}
 	}

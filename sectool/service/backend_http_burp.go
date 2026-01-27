@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/url"
-	"path"
 	"slices"
 	"strings"
 	"time"
@@ -119,11 +117,9 @@ func (b *BurpBackend) doSendRequest(ctx context.Context, name string, req SendRe
 
 	start := time.Now()
 
-	// Handle redirects client-side if requested
 	if req.FollowRedirects {
-		return b.sendWithRedirects(ctx, req, start, 10) // max 10 redirects
+		return FollowRedirects(ctx, req, start, 10, b.sendSingle)
 	}
-
 	return b.sendSingle(ctx, req, start)
 }
 
@@ -154,245 +150,6 @@ func (b *BurpBackend) sendSingle(ctx context.Context, req SendRequestInput, star
 		Body:     body,
 		Duration: time.Since(start),
 	}, nil
-}
-
-// sendWithRedirects follows redirects up to maxRedirects times.
-// Implements browser-like redirect behavior per RFC 7231.
-func (b *BurpBackend) sendWithRedirects(ctx context.Context, req SendRequestInput, start time.Time, maxRedirects int) (*SendRequestResult, error) {
-	currentReq := req
-	currentPath := extractRequestPath(currentReq.RawRequest)
-
-	for i := 0; i < maxRedirects; i++ {
-		result, err := b.sendSingle(ctx, currentReq, start)
-		if err != nil {
-			return nil, err
-		}
-
-		resp, err := readResponseBytes(result.Headers)
-		if err != nil {
-			result.Duration = time.Since(start)
-			return result, nil
-		}
-		_ = resp.Body.Close()
-
-		if resp.StatusCode < 300 || resp.StatusCode >= 400 {
-			result.Duration = time.Since(start)
-			return result, nil
-		}
-
-		location := resp.Header.Get("Location")
-		if location == "" {
-			result.Duration = time.Since(start)
-			return result, nil
-		}
-
-		// Build redirect request with proper browser behavior
-		newReq, newTarget, newPath, err := buildRedirectRequest(
-			currentReq.RawRequest, location, currentReq.Target, currentPath, resp.StatusCode)
-		if err != nil {
-			result.Duration = time.Since(start)
-			return result, nil
-		}
-
-		currentReq.RawRequest = newReq
-		currentReq.Target = newTarget
-		currentPath = newPath
-	}
-
-	return nil, errors.New("too many redirects")
-}
-
-// buildRedirectRequest builds a new request for following a redirect.
-// Implements browser-like behavior: preserves headers (including cookies),
-// drops Authorization on cross-origin, handles method/body per status code.
-func buildRedirectRequest(originalReq []byte, location string, currentTarget Target, currentPath string, status int) ([]byte, Target, string, error) {
-	var preserveMethod, preserveBody bool
-	switch status {
-	case 307, 308:
-		preserveMethod = true
-		preserveBody = true
-	default: // 301, 302, 303
-		// leave default of false
-	}
-
-	// Resolve location to new target and path
-	newTarget, newPath, err := resolveRedirectLocation(location, currentTarget, currentPath)
-	if err != nil {
-		return nil, Target{}, "", err
-	}
-
-	// Determine if cross-origin (different hostname)
-	isCrossOrigin := newTarget.Hostname != currentTarget.Hostname
-
-	// Extract original method
-	method := extractMethod(originalReq)
-	if !preserveMethod {
-		method = "GET"
-	}
-
-	// Extract original body (only keep for 307/308)
-	var body []byte
-	if preserveBody {
-		_, body = splitHeadersBody(originalReq)
-	}
-
-	// Build new request
-	var buf bytes.Buffer
-
-	// Request line
-	buf.WriteString(fmt.Sprintf("%s %s HTTP/1.1\r\n", method, newPath))
-
-	// Copy headers with appropriate modifications
-	copyHeadersForRedirect(originalReq, &buf, newTarget, isCrossOrigin, preserveBody)
-
-	// Update Content-Length if we have a body
-	if len(body) > 0 {
-		buf.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(body)))
-	}
-
-	buf.WriteString("\r\n")
-	buf.Write(body)
-
-	return buf.Bytes(), newTarget, newPath, nil
-}
-
-// resolveRedirectLocation resolves a Location header value to a target and path.
-// Handles absolute URLs, protocol-relative URLs, absolute paths, and relative paths.
-func resolveRedirectLocation(location string, currentTarget Target, currentPath string) (Target, string, error) {
-	// Absolute URL (http:// or https://)
-	if strings.HasPrefix(location, "http://") || strings.HasPrefix(location, "https://") {
-		u, err := url.Parse(location)
-		if err != nil {
-			return Target{}, "", err
-		}
-		return targetFromURL(u), u.RequestURI(), nil
-	}
-
-	// Protocol-relative URL (//host/path)
-	if strings.HasPrefix(location, "//") {
-		scheme := "https"
-		if !currentTarget.UsesHTTPS {
-			scheme = "http"
-		}
-		u, err := url.Parse(scheme + ":" + location)
-		if err != nil {
-			return Target{}, "", err
-		}
-		return targetFromURL(u), u.RequestURI(), nil
-	}
-
-	// Absolute path (/path)
-	if strings.HasPrefix(location, "/") {
-		return currentTarget, location, nil
-	}
-
-	// Relative path - resolve against current path directory
-	baseDir := path.Dir(currentPath)
-	if baseDir == "." {
-		baseDir = "/"
-	}
-	resolved := path.Join(baseDir, location)
-	if !strings.HasPrefix(resolved, "/") {
-		resolved = "/" + resolved
-	}
-	return currentTarget, resolved, nil
-}
-
-// copyHeadersForRedirect copies headers from original request to buffer,
-// applying redirect-appropriate modifications.
-func copyHeadersForRedirect(originalReq []byte, buf *bytes.Buffer, newTarget Target, isCrossOrigin, preserveBody bool) {
-	headers, _ := splitHeadersBody(originalReq)
-
-	// Format new Host header value
-	newHost := newTarget.Hostname
-	if (newTarget.UsesHTTPS && newTarget.Port != 443) || (!newTarget.UsesHTTPS && newTarget.Port != 80) {
-		newHost = fmt.Sprintf("%s:%d", newTarget.Hostname, newTarget.Port)
-	}
-
-	// Headers to skip (we handle these specially)
-	skipHeaders := map[string]bool{
-		"host":           true, // We set this ourselves
-		"content-length": true, // Recalculated based on body
-	}
-
-	// Skip content-related headers if not preserving body
-	if !preserveBody {
-		skipHeaders["content-type"] = true
-		skipHeaders["content-encoding"] = true
-		skipHeaders["transfer-encoding"] = true
-	}
-
-	// Write new Host header first
-	_, _ = fmt.Fprintf(buf, "Host: %s\r\n", newHost)
-
-	// Process each header line
-	for _, line := range bytes.Split(headers, []byte("\r\n")) {
-		if len(line) == 0 {
-			continue
-		}
-
-		// Skip request line
-		if bytes.HasPrefix(line, []byte("GET ")) || bytes.HasPrefix(line, []byte("POST ")) ||
-			bytes.HasPrefix(line, []byte("PUT ")) || bytes.HasPrefix(line, []byte("DELETE ")) ||
-			bytes.HasPrefix(line, []byte("PATCH ")) || bytes.HasPrefix(line, []byte("HEAD ")) ||
-			bytes.HasPrefix(line, []byte("OPTIONS ")) || bytes.HasPrefix(line, []byte("TRACE ")) ||
-			bytes.HasPrefix(line, []byte("CONNECT ")) {
-			continue
-		}
-
-		// Parse header name
-		colonIdx := bytes.IndexByte(line, ':')
-		if colonIdx < 0 {
-			continue
-		}
-		name := strings.ToLower(string(bytes.TrimSpace(line[:colonIdx])))
-
-		// Skip headers we handle specially
-		if skipHeaders[name] {
-			continue
-		}
-
-		// Drop Authorization on cross-origin (browser security behavior)
-		if isCrossOrigin && name == "authorization" {
-			continue
-		}
-
-		// Preserve all other headers (including Cookie for session continuity)
-		buf.Write(line)
-		buf.WriteString("\r\n")
-	}
-}
-
-// extractMethod extracts the HTTP method from a raw request.
-func extractMethod(raw []byte) string {
-	lines := bytes.SplitN(raw, []byte("\r\n"), 2)
-	if len(lines) == 0 {
-		return "GET"
-	}
-	parts := bytes.SplitN(lines[0], []byte(" "), 2)
-	if len(parts) == 0 {
-		return "GET"
-	}
-	return string(parts[0])
-}
-
-// extractRequestPath extracts the path from a raw request's request line,
-// stripping any query parameters.
-func extractRequestPath(raw []byte) string {
-	lines := bytes.SplitN(raw, []byte("\r\n"), 2)
-	if len(lines) == 0 {
-		return "/"
-	}
-	parts := bytes.SplitN(lines[0], []byte(" "), 3)
-	if len(parts) < 2 {
-		return "/"
-	}
-	path := string(parts[1])
-	// Strip query parameters
-	if idx := strings.Index(path, "?"); idx >= 0 {
-		path = path[:idx]
-	}
-	return path
 }
 
 // parseBurpResponse extracts HTTP response from Burp's toString format.
@@ -661,11 +418,6 @@ func (b *BurpBackend) findRuleIndex(rules []mcp.MatchReplaceRule, idOrLabel stri
 		id, label, ok := parseSectoolComment(r.Comment)
 		return ok && (id == idOrLabel || label == idOrLabel)
 	})
-}
-
-// isWSType returns true if the type is a WebSocket type (ws: prefix).
-func isWSType(t string) bool {
-	return strings.HasPrefix(t, "ws:")
 }
 
 // wsToBurpType converts ws: prefixed types to Burp's WebSocket rule_type values.

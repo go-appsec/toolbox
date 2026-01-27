@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
@@ -21,6 +22,11 @@ const (
 	RuleTypeResponseHeader = "response_header"
 	RuleTypeResponseBody   = "response_body"
 )
+
+// isWSType returns true if the type is a WebSocket type (ws: prefix).
+func isWSType(t string) bool {
+	return strings.HasPrefix(t, "ws:")
+}
 
 // HttpBackend defines the interface for proxy history and request sending.
 // This abstraction allows switching between Burp MCP and future built-in proxies.
@@ -65,9 +71,9 @@ type ProxyRuleInput struct {
 
 // ProxyEntry represents a single proxy history entry in HttpBackend-agnostic form.
 type ProxyEntry struct {
-	Request  string // Raw HTTP request
-	Response string // Raw HTTP response
-	Notes    string // User annotations
+	Request  string `json:"request"`  // Raw HTTP request
+	Response string `json:"response"` // Raw HTTP response
+	Notes    string `json:"notes"`    // User annotations
 }
 
 // Target specifies the destination for a request.

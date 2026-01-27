@@ -100,6 +100,34 @@ func TestExtractRequestMeta(t *testing.T) {
 			path:   "/",
 		},
 		{
+			name:   "proxy_form_http",
+			raw:    "GET http://127.0.0.1:8080/path?q=1 HTTP/1.1\r\nUser-Agent: test\r\n\r\n",
+			method: "GET",
+			host:   "127.0.0.1:8080",
+			path:   "/path?q=1",
+		},
+		{
+			name:   "proxy_form_https",
+			raw:    "GET https://example.com/api/v1 HTTP/1.1\r\n\r\n",
+			method: "GET",
+			host:   "example.com",
+			path:   "/api/v1",
+		},
+		{
+			name:   "proxy_form_root",
+			raw:    "GET http://localhost:3000/ HTTP/1.1\r\n\r\n",
+			method: "GET",
+			host:   "localhost:3000",
+			path:   "/",
+		},
+		{
+			name:   "proxy_form_no_path",
+			raw:    "GET http://example.com HTTP/1.1\r\n\r\n",
+			method: "GET",
+			host:   "example.com",
+			path:   "/",
+		},
+		{
 			name:   "malformed - no crash",
 			raw:    "garbage",
 			method: "",
@@ -488,6 +516,46 @@ func TestModifyRequestLine(t *testing.T) {
 			opts:     &PathQueryOpts{Method: "PUT"},
 			expected: "PUT /api/data HTTP/1.1\r\nHost: example.com\r\nContent-Length: 4\r\n\r\ntest",
 		},
+		// Proxy-form URL tests (what goproxy captures when client uses HTTP proxy)
+		{
+			name:     "proxy_form_remove_query",
+			input:    []byte("GET http://127.0.0.1:8080/path?foo=bar&remove=this HTTP/1.1\r\nHost: 127.0.0.1:8080\r\n\r\n"),
+			opts:     &PathQueryOpts{RemoveQuery: []string{"remove"}},
+			expected: "GET http://127.0.0.1:8080/path?foo=bar HTTP/1.1\r\nHost: 127.0.0.1:8080\r\n\r\n",
+		},
+		{
+			name:     "proxy_form_remove_all_query_params",
+			input:    []byte("GET http://example.com/path?only=param HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			opts:     &PathQueryOpts{RemoveQuery: []string{"only"}},
+			expected: "GET http://example.com/path HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		},
+		{
+			name:     "proxy_form_set_query",
+			input:    []byte("GET http://example.com/path?existing=value HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			opts:     &PathQueryOpts{SetQuery: []string{"new=added"}},
+			expected: "GET http://example.com/path?existing=value&new=added HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		},
+		// Edge case: remove non-existent param (should be no-op)
+		{
+			name:     "remove_nonexistent_param",
+			input:    []byte("GET /api?keep=value HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			opts:     &PathQueryOpts{RemoveQuery: []string{"nonexistent"}},
+			expected: "GET /api?keep=value HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		},
+		// Edge case: remove from request with no query string
+		{
+			name:     "remove_from_no_query",
+			input:    []byte("GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			opts:     &PathQueryOpts{RemoveQuery: []string{"anything"}},
+			expected: "GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		},
+		// Edge case: remove multiple params at once
+		{
+			name:     "remove_multiple_params",
+			input:    []byte("GET /api?a=1&b=2&c=3&d=4 HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			opts:     &PathQueryOpts{RemoveQuery: []string{"b", "d"}},
+			expected: "GET /api?a=1&c=3 HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -701,6 +769,9 @@ func TestPreviewBody(t *testing.T) {
 		{"binary_small", []byte{0x80, 0x81, 0xff}, 100, "<BINARY:3 Bytes>"},
 		{"binary_large", binaryLarge, 100, "<BINARY:1024 Bytes>"},
 		{"utf8_exact_limit", []byte("hello"), 5, "hello"},
+		{"multibyte_truncate", []byte("hello\u4e16\u754c"), 6, "hello\u4e16..."},
+		{"emoji_truncate", []byte("test\U0001F389\U0001F38A\U0001F381"), 5, "test\U0001F389..."},
+		{"cjk_only", []byte("\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8"), 3, "\u65e5\u672c\u8a9e..."},
 	}
 
 	for _, tt := range tests {
@@ -724,42 +795,42 @@ func TestParseURLWithDefaultHTTPS(t *testing.T) {
 		{
 			name:       "full_https_url",
 			input:      "https://example.com/api/users",
-			wantScheme: "https",
+			wantScheme: schemeHTTPS,
 			wantHost:   "example.com",
 			wantPath:   "/api/users",
 		},
 		{
 			name:       "full_http_url",
 			input:      "http://example.com/api/users",
-			wantScheme: "http",
+			wantScheme: schemeHTTP,
 			wantHost:   "example.com",
 			wantPath:   "/api/users",
 		},
 		{
 			name:       "no_scheme_defaults_https",
 			input:      "example.com/api/users",
-			wantScheme: "https",
+			wantScheme: schemeHTTPS,
 			wantHost:   "example.com",
 			wantPath:   "/api/users",
 		},
 		{
 			name:       "no_scheme_with_port",
 			input:      "example.com:8443/api",
-			wantScheme: "https",
+			wantScheme: schemeHTTPS,
 			wantHost:   "example.com:8443",
 			wantPath:   "/api",
 		},
 		{
 			name:       "no_scheme_root_path",
 			input:      "example.com",
-			wantScheme: "https",
+			wantScheme: schemeHTTPS,
 			wantHost:   "example.com",
 			wantPath:   "",
 		},
 		{
 			name:       "with_query_string",
 			input:      "example.com/search?q=test",
-			wantScheme: "https",
+			wantScheme: schemeHTTPS,
 			wantHost:   "example.com",
 			wantPath:   "/search",
 		},
@@ -1227,11 +1298,73 @@ func TestSetHeader(t *testing.T) {
 			hValue:  "application/json",
 			want:    "GET / HTTP/1.1\r\nHost: x\r\nCookie: abc\r\nAccept: application/json\r\n\r\n",
 		},
+		{
+			name:    "replace_empty_value",
+			headers: "GET / HTTP/1.1\r\nHost: x\r\nX-Empty:\r\n\r\n",
+			hName:   "X-Empty",
+			hValue:  "now-has-value",
+			want:    "GET / HTTP/1.1\r\nHost: x\r\nX-Empty: now-has-value\r\n\r\n",
+		},
+		{
+			name:    "replace_whitespace_only",
+			headers: "GET / HTTP/1.1\r\nHost: x\r\nX-Blank:   \r\n\r\n",
+			hName:   "X-Blank",
+			hValue:  "filled",
+			want:    "GET / HTTP/1.1\r\nHost: x\r\nX-Blank: filled\r\n\r\n",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, string(setHeader([]byte(tt.headers), tt.hName, tt.hValue)))
+		})
+	}
+}
+
+func TestRemoveHeader(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		headers string
+		hName   string
+		want    string
+	}{
+		{
+			name:    "remove_existing",
+			headers: "GET / HTTP/1.1\r\nHost: x\r\nX-Remove: value\r\n\r\n",
+			hName:   "X-Remove",
+			want:    "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+		},
+		{
+			name:    "remove_nonexistent",
+			headers: "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+			hName:   "X-NotThere",
+			want:    "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+		},
+		{
+			name:    "remove_empty_value",
+			headers: "GET / HTTP/1.1\r\nHost: x\r\nX-Empty:\r\n\r\n",
+			hName:   "X-Empty",
+			want:    "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+		},
+		{
+			name:    "remove_whitespace_only",
+			headers: "GET / HTTP/1.1\r\nHost: x\r\nX-Blank:   \r\n\r\n",
+			hName:   "X-Blank",
+			want:    "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+		},
+		{
+			name:    "case_insensitive",
+			headers: "GET / HTTP/1.1\r\nHost: x\r\nx-lower: val\r\n\r\n",
+			hName:   "X-Lower",
+			want:    "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, string(removeHeader([]byte(tt.headers), tt.hName)))
 		})
 	}
 }

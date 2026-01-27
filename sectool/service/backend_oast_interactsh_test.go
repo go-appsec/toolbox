@@ -83,14 +83,6 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 
 	t.Run("since_last", func(t *testing.T) {
 		backend := NewInteractshBackend()
-		defer func() {
-			backend.mu.Lock()
-			backend.sessions = make(map[string]*oastSession)
-			backend.byID = make(map[string]string)
-			backend.byLabel = make(map[string]string)
-			backend.mu.Unlock()
-		}()
-
 		sess := &oastSession{
 			info: OastSessionInfo{
 				ID:        "test123",
@@ -129,14 +121,6 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 
 	t.Run("since_id", func(t *testing.T) {
 		backend := NewInteractshBackend()
-		defer func() {
-			backend.mu.Lock()
-			backend.sessions = make(map[string]*oastSession)
-			backend.byID = make(map[string]string)
-			backend.byLabel = make(map[string]string)
-			backend.mu.Unlock()
-		}()
-
 		sess := &oastSession{
 			info: OastSessionInfo{
 				ID:        "test456",
@@ -175,14 +159,6 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 
 	t.Run("buffer_limit", func(t *testing.T) {
 		backend := NewInteractshBackend()
-		defer func() {
-			backend.mu.Lock()
-			backend.sessions = make(map[string]*oastSession)
-			backend.byID = make(map[string]string)
-			backend.byLabel = make(map[string]string)
-			backend.mu.Unlock()
-		}()
-
 		sess := &oastSession{
 			info: OastSessionInfo{
 				ID:        "testlimit",

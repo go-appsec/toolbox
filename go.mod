@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/agnivade/levenshtein v1.2.1
+	github.com/elazarl/goproxy v1.8.0
 	github.com/go-analyze/bulk v0.1.3
 	github.com/go-harden/interactsh-lite v0.1.0
 	github.com/go-harden/scout v0.0.1

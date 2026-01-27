@@ -24,6 +24,8 @@ type MCPServerFlags struct {
 	ConfigPath   string
 	BurpMCPURL   string
 	MCPPort      int
+	ProxyPort    int    // 0 = not set via CLI
+	RequireBurp  bool   // --burp flag: require Burp, error if unavailable
 	WorkflowMode string // "", "none", "explore", "test-report"
 }
 
@@ -38,6 +40,8 @@ func ParseMCPServerFlags(args []string) (MCPServerFlags, error) {
 	fs.StringVar(&flags.ConfigPath, "config", "", "config file path (default: ~/.sectool/config.json)")
 	fs.StringVar(&flags.BurpMCPURL, "burp-mcp-url", flags.BurpMCPURL, "Burp MCP SSE endpoint URL")
 	fs.IntVar(&flags.MCPPort, "port", 0, "MCP server port (default: from config or 9119)")
+	fs.IntVar(&flags.ProxyPort, "proxy-port", 0, "built-in proxy port (skips Burp, default: from config or 8080)")
+	fs.BoolVar(&flags.RequireBurp, "burp", false, "require Burp MCP (error if unavailable)")
 	fs.StringVar(&flags.WorkflowMode, "workflow", "", "MCP workflow mode: none, explore, test-report")
 
 	if err := fs.Parse(args); err != nil {

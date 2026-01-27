@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -20,14 +21,19 @@ const shutdownTimeout = 10 * time.Second
 
 // Server is the sectool MCP server.
 type Server struct {
-	cfg            *config.Config
-	flagBurpMCPURL string
-	flagConfigPath string
-	flagMCPPort    int // CLI override, 0 means use config
+	cfg             *config.Config
+	configPath      string // resolved config file path (respects --config flag)
+	flagBurpMCPURL  string
+	flagConfigPath  string
+	flagMCPPort     int  // CLI override, 0 means use config
+	flagProxyPort   int  // CLI override for built-in proxy, 0 means use config
+	flagRequireBurp bool // --burp flag: require Burp MCP
 
 	// MCP server settings
-	mcpPort         int
-	mcpWorkflowMode string
+	mcpPort           int
+	mcpWorkflowMode   string
+	proxyPort         int  // resolved port for built-in proxy
+	usingBuiltinProxy bool // true if using goproxy instead of Burp
 
 	// Runtime state
 	mcpServer *mcpServer
@@ -66,6 +72,8 @@ func NewServer(flags MCPServerFlags, hb HttpBackend, ob OastBackend, cb CrawlerB
 		flagBurpMCPURL:  flags.BurpMCPURL,
 		flagConfigPath:  flags.ConfigPath,
 		flagMCPPort:     flags.MCPPort,
+		flagProxyPort:   flags.ProxyPort,
+		flagRequireBurp: flags.RequireBurp,
 		mcpWorkflowMode: flags.WorkflowMode,
 		metricProvider:  make(map[string]HealthMetricProvider),
 		started:         make(chan struct{}),
@@ -110,10 +118,10 @@ func (s *Server) Run(ctx context.Context) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Connect to Burp MCP
+	// Setup HTTP backend (Burp or built-in proxy)
 	if s.httpBackend == nil {
-		if err := s.connectBurpMCP(ctx); err != nil {
-			return fmt.Errorf("failed to connect to Burp MCP: %w", err)
+		if err := s.setupHttpBackend(ctx); err != nil {
+			return fmt.Errorf("failed to setup HTTP backend: %w", err)
 		}
 	}
 
@@ -207,13 +215,13 @@ func (s *Server) RequestShutdown() {
 // loadOrCreateConfig loads config and applies CLI flag overrides.
 // Precedence: CLI flags > config file > defaults
 func (s *Server) loadOrCreateConfig() error {
-	// Determine config path
-	configPath := s.flagConfigPath
-	if configPath == "" {
-		configPath = config.DefaultPath()
+	// Determine config path (respects --config flag)
+	s.configPath = s.flagConfigPath
+	if s.configPath == "" {
+		s.configPath = config.DefaultPath()
 	}
 
-	cfg, err := config.LoadOrCreatePath(configPath)
+	cfg, err := config.LoadOrCreatePath(s.configPath)
 	if err != nil {
 		return err
 	}
@@ -225,7 +233,51 @@ func (s *Server) loadOrCreateConfig() error {
 		s.mcpPort = cfg.MCPPort
 	}
 
+	// Resolve proxy port
+	if s.flagProxyPort != 0 {
+		s.proxyPort = s.flagProxyPort
+	} else {
+		s.proxyPort = cfg.ProxyPort
+	}
+
 	s.cfg = cfg
+	return nil
+}
+
+// setupHttpBackend sets up the HTTP backend based on flags and config.
+// Priority:
+// 1. If --proxy-port is specified, use built-in proxy (skip Burp)
+// 2. If --burp flag is set, require Burp (error if unavailable)
+// 3. If config burp_required is true, require Burp
+// 4. Otherwise, try Burp first, fall back to built-in proxy
+func (s *Server) setupHttpBackend(ctx context.Context) error {
+	// Case 1: --proxy-port specified, use built-in proxy directly
+	if s.flagProxyPort != 0 {
+		log.Printf("--proxy-port specified, using built-in proxy")
+		return s.startBuiltinProxy()
+	}
+
+	// Case 2: --burp flag requires Burp
+	if s.flagRequireBurp {
+		if err := s.connectBurpMCP(ctx); err != nil {
+			return fmt.Errorf("--burp flag requires Burp MCP: %w", err)
+		}
+		return nil
+	}
+
+	// Case 3: config burp_required is true
+	if s.cfg.BurpRequired != nil && *s.cfg.BurpRequired {
+		if err := s.connectBurpMCP(ctx); err != nil {
+			return fmt.Errorf("config burp_required is true: %w", err)
+		}
+		return nil
+	}
+
+	// Case 4: Try Burp, fall back to built-in proxy
+	if err := s.connectBurpMCP(ctx); err != nil {
+		log.Printf("Burp MCP not available (%v), falling back to built-in proxy", err)
+		return s.startBuiltinProxy()
+	}
 	return nil
 }
 
@@ -244,6 +296,20 @@ func (s *Server) connectBurpMCP(ctx context.Context) error {
 	return nil
 }
 
+// startBuiltinProxy starts the goproxy-based built-in proxy.
+func (s *Server) startBuiltinProxy() error {
+	configDir := filepath.Dir(s.configPath)
+
+	backend, err := NewGoProxyBackend(s.proxyPort, configDir)
+	if err != nil {
+		return fmt.Errorf("start built-in proxy: %w", err)
+	}
+
+	s.httpBackend = backend
+	s.usingBuiltinProxy = true
+	return nil
+}
+
 // printMCPConfig outputs MCP configuration instructions to stderr.
 func (s *Server) printMCPConfig() {
 	addr := s.mcpServer.Addr()
@@ -252,18 +318,33 @@ func (s *Server) printMCPConfig() {
 
 	_, _ = fmt.Fprintln(os.Stderr, "")
 	_, _ = fmt.Fprintln(os.Stderr, "================================================================================")
+	if s.usingBuiltinProxy {
+		if goproxyBackend, ok := s.httpBackend.(*GoProxyBackend); ok {
+			s.printBuiltinProxyConfig(goproxyBackend)
+			_, _ = fmt.Fprintln(os.Stderr, "")
+			_, _ = fmt.Fprintln(os.Stderr, "----------------------------------------------------------------")
+			_, _ = fmt.Fprintln(os.Stderr, "")
+		}
+	}
 	_, _ = fmt.Fprintf(os.Stderr, "MCP Endpoint: %s\n", mcpURL)
 	_, _ = fmt.Fprintf(os.Stderr, "SSE Endpoint: %s (legacy)\n", sseURL)
 	_, _ = fmt.Fprintln(os.Stderr, "")
 	_, _ = fmt.Fprintln(os.Stderr, "Claude Code:")
-	_, _ = fmt.Fprintln(os.Stderr, "")
 	_, _ = fmt.Fprintf(os.Stderr, "  claude mcp add --transport http sectool %s\n", mcpURL)
 	_, _ = fmt.Fprintln(os.Stderr, "")
 	_, _ = fmt.Fprintln(os.Stderr, "Codex (~/.codex/config.toml):")
-	_, _ = fmt.Fprintln(os.Stderr, "")
 	_, _ = fmt.Fprintln(os.Stderr, "  [mcp_servers.sectool]")
 	_, _ = fmt.Fprintf(os.Stderr, "  url = \"%s\"\n", mcpURL)
-	_, _ = fmt.Fprintln(os.Stderr, "")
 	_, _ = fmt.Fprintln(os.Stderr, "================================================================================")
 	_, _ = fmt.Fprintln(os.Stderr, "")
+}
+
+// printBuiltinProxyConfig outputs browser proxy configuration instructions.
+func (s *Server) printBuiltinProxyConfig(backend *GoProxyBackend) {
+	configDir := filepath.Dir(s.configPath)
+	caCertPath := filepath.Join(configDir, caCertFile)
+
+	_, _ = fmt.Fprintln(os.Stderr, "Built-in Proxy Configuration:")
+	_, _ = fmt.Fprintf(os.Stderr, "Proxy Address: %s\n", backend.Addr())
+	_, _ = fmt.Fprintf(os.Stderr, "CA Certificate: %s\n", caCertPath)
 }
