@@ -12,6 +12,21 @@ import (
 // jsonPathRe matches path segments: key names or [index]
 var jsonPathRe = regexp.MustCompile(`([^.\[\]]+)|\[(\d+)\]`)
 
+// tryDecodeJSONString attempts to decode a string as JSON.
+// Returns the decoded value and true if successful, or the original string and false.
+func tryDecodeJSONString(s string) (interface{}, bool) {
+	if len(s) < 2 {
+		return s, false
+	}
+	if (s[0] == '{' && s[len(s)-1] == '}') || (s[0] == '[' && s[len(s)-1] == ']') {
+		var parsed interface{}
+		if err := json.Unmarshal([]byte(s), &parsed); err == nil {
+			return parsed, true
+		}
+	}
+	return s, false
+}
+
 // modifyJSONBody applies JSON modifications to the body using string slice format.
 // This is the format used by CLI: ["key=value", "nested.key=value"]
 // Returns error if body is not valid JSON.
@@ -185,6 +200,21 @@ func setValueAtPath(data interface{}, segments []pathSegment, value interface{})
 			// Create new array if data is nil or not an array
 			if data == nil {
 				arr = make([]interface{}, 0)
+			} else if str, isString := data.(string); isString {
+				// Try to decode string as JSON
+				decoded, wasJSON := tryDecodeJSONString(str)
+				if wasJSON {
+					modified, err := setValueAtPath(decoded, segments, value)
+					if err != nil {
+						return nil, err
+					}
+					encoded, err := json.Marshal(modified)
+					if err != nil {
+						return nil, fmt.Errorf("failed to re-encode JSON string: %w", err)
+					}
+					return string(encoded), nil
+				}
+				return nil, fmt.Errorf("expected array at index [%d], got string", seg.Index)
 			} else {
 				return nil, fmt.Errorf("expected array at index [%d], got %T", seg.Index, data)
 			}
@@ -213,6 +243,21 @@ func setValueAtPath(data interface{}, segments []pathSegment, value interface{})
 		// Create new object if data is nil or not an object
 		if data == nil {
 			obj = make(map[string]interface{})
+		} else if str, isString := data.(string); isString {
+			// Try to decode string as JSON
+			decoded, wasJSON := tryDecodeJSONString(str)
+			if wasJSON {
+				modified, err := setValueAtPath(decoded, segments, value)
+				if err != nil {
+					return nil, err
+				}
+				encoded, err := json.Marshal(modified)
+				if err != nil {
+					return nil, fmt.Errorf("failed to re-encode JSON string: %w", err)
+				}
+				return string(encoded), nil
+			}
+			return nil, fmt.Errorf("expected object at key %q, got string", seg.Key)
 		} else {
 			return nil, fmt.Errorf("expected object at key %q, got %T", seg.Key, data)
 		}
@@ -242,8 +287,26 @@ func removeKeyAtPath(data interface{}, segments []pathSegment) (interface{}, err
 	if seg.Index >= 0 {
 		// Array access
 		arr, ok := data.([]interface{})
-		if !ok || seg.Index >= len(arr) {
+		if !ok {
+			// Try to decode string as JSON array
+			if str, isString := data.(string); isString {
+				decoded, wasJSON := tryDecodeJSONString(str)
+				if wasJSON {
+					modified, err := removeKeyAtPath(decoded, segments)
+					if err != nil {
+						return nil, err
+					}
+					encoded, err := json.Marshal(modified)
+					if err != nil {
+						return nil, fmt.Errorf("failed to re-encode JSON string: %w", err)
+					}
+					return string(encoded), nil
+				}
+			}
 			// Key doesn't exist, nothing to remove
+			return data, nil
+		}
+		if seg.Index >= len(arr) {
 			return data, nil
 		}
 
@@ -263,6 +326,21 @@ func removeKeyAtPath(data interface{}, segments []pathSegment) (interface{}, err
 	// Object access
 	obj, ok := data.(map[string]interface{})
 	if !ok {
+		// Try to decode string as JSON object
+		if str, isString := data.(string); isString {
+			decoded, wasJSON := tryDecodeJSONString(str)
+			if wasJSON {
+				modified, err := removeKeyAtPath(decoded, segments)
+				if err != nil {
+					return nil, err
+				}
+				encoded, err := json.Marshal(modified)
+				if err != nil {
+					return nil, fmt.Errorf("failed to re-encode JSON string: %w", err)
+				}
+				return string(encoded), nil
+			}
+		}
 		// Key doesn't exist, nothing to remove
 		return data, nil
 	}

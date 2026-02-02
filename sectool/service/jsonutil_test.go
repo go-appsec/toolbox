@@ -419,6 +419,112 @@ func TestModifyJSONBody(t *testing.T) {
 	}
 }
 
+func TestSetEncodedJSONString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		path     string
+		value    string
+		expected string
+		wantErr  bool
+	}{
+		{
+			name:     "set_in_encoded_object",
+			input:    `{"user": "{\"email\": \"old@test.com\"}"}`,
+			path:     "user.email",
+			value:    "new@test.com",
+			expected: `{"user":"{\"email\":\"new@test.com\"}"}`,
+		},
+		{
+			name:     "add_to_encoded_object",
+			input:    `{"user": "{\"email\": \"a@test.com\"}"}`,
+			path:     "user.name",
+			value:    "Bob",
+			expected: `{"user":"{\"email\":\"a@test.com\",\"name\":\"Bob\"}"}`,
+		},
+		{
+			name:     "set_in_encoded_array",
+			input:    `{"items": "[1,2,3]"}`,
+			path:     "items[1]",
+			value:    "99",
+			expected: `{"items":"[1,99,3]"}`,
+		},
+		{
+			name:     "double_encoded",
+			input:    `{"outer": "{\"inner\": \"{\\\"deep\\\": \\\"old\\\"}\"}"}`,
+			path:     "outer.inner.deep",
+			value:    "new",
+			expected: `{"outer":"{\"inner\":\"{\\\"deep\\\":\\\"new\\\"}\"}"}`,
+		},
+		{
+			name:    "invalid_json_string",
+			input:   `{"data": "{not valid}"}`,
+			path:    "data.field",
+			value:   "x",
+			wantErr: true,
+		},
+		{
+			name:    "plain_string_error",
+			input:   `{"data": "just text"}`,
+			path:    "data.field",
+			value:   "x",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := modifyJSONBody([]byte(tc.input), []string{tc.path + "=" + tc.value}, nil)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.expected, string(result))
+		})
+	}
+}
+
+func TestRemoveEncodedJSONString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		path     string
+		expected string
+	}{
+		{
+			name:     "remove_from_encoded_object",
+			input:    `{"user": "{\"a\":1,\"b\":2}"}`,
+			path:     "user.b",
+			expected: `{"user":"{\"a\":1}"}`,
+		},
+		{
+			name:     "remove_from_encoded_array",
+			input:    `{"items": "[1,2,3]"}`,
+			path:     "items[1]",
+			expected: `{"items":"[1,3]"}`,
+		},
+		{
+			name:     "remove_double_encoded",
+			input:    `{"outer": "{\"inner\": \"{\\\"a\\\": 1, \\\"b\\\": 2}\"}"}`,
+			path:     "outer.inner.b",
+			expected: `{"outer":"{\"inner\":\"{\\\"a\\\":1}\"}"}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := modifyJSONBody([]byte(tc.input), nil, []string{tc.path})
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.expected, string(result))
+		})
+	}
+}
+
 func mustMarshal(t *testing.T, v interface{}) []byte {
 	t.Helper()
 
