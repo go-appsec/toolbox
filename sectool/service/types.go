@@ -6,7 +6,7 @@ import (
 	"net"
 	"os"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
 )
 
 // HealthMetricProvider is a function that returns a metric value for a given key.

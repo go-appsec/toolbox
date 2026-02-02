@@ -6,9 +6,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/cliutil"
-	"github.com/go-harden/llm-security-toolbox/sectool/mcpclient"
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
+	"github.com/go-appsec/llm-security-toolbox/sectool/mcpclient"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
 )
 
 func ruleList(mcpURL string, timeout time.Duration, websocket bool, limit int) error {

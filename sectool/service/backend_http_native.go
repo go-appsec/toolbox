@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
-	"github.com/go-harden/llm-security-toolbox/sectool/service/ids"
-	"github.com/go-harden/llm-security-toolbox/sectool/service/proxy"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/ids"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/proxy"
 )
 
 // NativeProxyBackend implements HttpBackend using the native proxy.

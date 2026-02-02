@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/service/store"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/store"
 )
 
 func TestStreamTracker(t *testing.T) {

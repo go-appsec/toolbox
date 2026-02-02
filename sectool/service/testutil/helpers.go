@@ -9,7 +9,7 @@ import (
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/config"
+	"github.com/go-appsec/llm-security-toolbox/sectool/config"
 )
 
 // ConnectBurpSSEOrSkip connects to Burp MCP using SSE client and skips if unavailable.

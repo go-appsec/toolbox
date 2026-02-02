@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/bundle"
-	"github.com/go-harden/llm-security-toolbox/sectool/mcpclient"
+	"github.com/go-appsec/llm-security-toolbox/sectool/bundle"
+	"github.com/go-appsec/llm-security-toolbox/sectool/mcpclient"
 )
 
 func export(mcpURL string, timeout time.Duration, flowID string) error {

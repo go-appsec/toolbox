@@ -17,12 +17,12 @@ import (
 	"time"
 
 	"github.com/go-analyze/bulk"
-	"github.com/go-harden/scout"
+	"github.com/go-appsec/scout"
 	"github.com/gocolly/colly/v2"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/config"
-	"github.com/go-harden/llm-security-toolbox/sectool/service/ids"
-	"github.com/go-harden/llm-security-toolbox/sectool/service/store"
+	"github.com/go-appsec/llm-security-toolbox/sectool/config"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/ids"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/store"
 )
 
 const (

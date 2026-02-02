@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/cliutil"
-	"github.com/go-harden/llm-security-toolbox/sectool/mcpclient"
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
+	"github.com/go-appsec/llm-security-toolbox/sectool/mcpclient"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
 )
 
 func create(mcpURL string, timeout time.Duration, label string) error {

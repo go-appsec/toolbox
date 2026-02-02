@@ -14,8 +14,8 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/config"
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/config"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
 )
 
 const (

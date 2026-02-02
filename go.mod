@@ -1,12 +1,12 @@
-module github.com/go-harden/llm-security-toolbox
+module github.com/go-appsec/llm-security-toolbox
 
 go 1.24.0
 
 require (
 	github.com/agnivade/levenshtein v1.2.1
 	github.com/go-analyze/bulk v0.1.3
-	github.com/go-harden/interactsh-lite v0.1.0
-	github.com/go-harden/scout v0.0.1
+	github.com/go-appsec/interactsh-lite v0.1.1
+	github.com/go-appsec/scout v0.1.0
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/mark3labs/mcp-go v0.43.2
 	github.com/spf13/pflag v1.0.10

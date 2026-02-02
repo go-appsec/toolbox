@@ -12,9 +12,9 @@ import (
 	"github.com/go-analyze/bulk"
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
-	"github.com/go-harden/llm-security-toolbox/sectool/service/proxy"
-	"github.com/go-harden/llm-security-toolbox/sectool/service/store"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/proxy"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/store"
 )
 
 func (m *mcpServer) proxyPollTool() mcp.Tool {

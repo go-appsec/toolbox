@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/config"
-	"github.com/go-harden/llm-security-toolbox/sectool/service/testutil"
+	"github.com/go-appsec/llm-security-toolbox/sectool/config"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/testutil"
 )
 
 // Integration tests for Burp MCP client.

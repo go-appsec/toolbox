@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/cliutil"
-	"github.com/go-harden/llm-security-toolbox/sectool/mcpclient"
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
+	"github.com/go-appsec/llm-security-toolbox/sectool/mcpclient"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
 )
 
 func summary(mcpURL string, timeout time.Duration, host, path, method, status, contains, containsBody, excludeHost, excludePath string) error {

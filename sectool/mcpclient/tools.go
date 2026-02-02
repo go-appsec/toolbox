@@ -3,7 +3,7 @@ package mcpclient
 import (
 	"context"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
 )
 
 // ProxyPoll calls proxy_poll and returns summary or list of flows.

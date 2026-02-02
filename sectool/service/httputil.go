@@ -18,9 +18,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/config"
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
-	"github.com/go-harden/llm-security-toolbox/sectool/service/proxy"
+	"github.com/go-appsec/llm-security-toolbox/sectool/config"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/proxy"
 )
 
 const (

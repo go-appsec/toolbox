@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/config"
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/config"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
 )
 
 const DefaultMCPPort = 9119

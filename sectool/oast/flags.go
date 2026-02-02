@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/cli"
+	"github.com/go-appsec/llm-security-toolbox/sectool/cli"
 )
 
 var oastSubcommands = []string{"create", "summary", "poll", "get", "list", "delete", "help"}

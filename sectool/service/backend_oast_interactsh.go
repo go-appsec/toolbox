@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/go-analyze/bulk"
-	"github.com/go-harden/interactsh-lite/oobclient"
+	"github.com/go-appsec/interactsh-lite/oobclient"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/service/ids"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/ids"
 )
 
 const (

@@ -15,10 +15,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/bundle"
-	"github.com/go-harden/llm-security-toolbox/sectool/mcpclient"
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
-	"github.com/go-harden/llm-security-toolbox/sectool/service"
+	"github.com/go-appsec/llm-security-toolbox/sectool/bundle"
+	"github.com/go-appsec/llm-security-toolbox/sectool/mcpclient"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service"
 )
 
 func send(mcpURL string, timeout time.Duration, flow, bundleArg, file, body, target string, headers, removeHeaders []string,

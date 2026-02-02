@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/service/store"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/store"
 )
 
 // HistoryStore provides typed access to proxy history backed by store.Storage.

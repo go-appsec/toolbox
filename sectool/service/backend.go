@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-harden/llm-security-toolbox/sectool/protocol"
-	"github.com/go-harden/llm-security-toolbox/sectool/service/proxy"
+	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/proxy"
 )
 
 // ErrLabelExists is returned when label conflicts with an existing entry (rule or OAST).

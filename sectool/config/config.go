@@ -20,7 +20,7 @@ const (
 var RevNum = "dev"
 
 func UserAgent() string {
-	return "Mozilla/5.0 (compatible; go-harden/llm-security-toolbox sectool-v" + Version + "-" + RevNum + ")"
+	return "Mozilla/5.0 (compatible; go-appsec/llm-security-toolbox sectool-v" + Version + "-" + RevNum + ")"
 }
 
 // DefaultPath returns ~/.sectool/config.json.
