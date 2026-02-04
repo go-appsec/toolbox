@@ -183,6 +183,44 @@ func TestStore(t *testing.T) {
 		assert.Equal(t, 0, store.Count())
 	})
 
+	t.Run("clear_by_source", func(t *testing.T) {
+		store := NewFlowStore()
+
+		// Register mixed sources
+		proxyID1 := store.Register(0, "hash1", "proxy")
+		proxyID2 := store.Register(1, "hash2", "proxy")
+		store.RegisterKnown("replay1", "replay")
+		store.RegisterKnown("replay2", "replay")
+
+		assert.Equal(t, 4, store.Count())
+
+		// Clear only proxy entries
+		store.ClearBySource("proxy")
+
+		// Only replay entries should remain
+		assert.Equal(t, 2, store.Count())
+
+		_, ok := store.Lookup(proxyID1)
+		assert.False(t, ok)
+		_, ok = store.Lookup(proxyID2)
+		assert.False(t, ok)
+
+		_, ok = store.Lookup("replay1")
+		assert.True(t, ok)
+		_, ok = store.Lookup("replay2")
+		assert.True(t, ok)
+
+		// Offset index should be cleared for proxy entries
+		_, ok = store.LookupByOffset(0)
+		assert.False(t, ok)
+		_, ok = store.LookupByOffset(1)
+		assert.False(t, ok)
+
+		// Hash index should be cleared for proxy entries
+		ids := store.LookupByHash("hash1")
+		assert.Empty(t, ids)
+	})
+
 	t.Run("count", func(t *testing.T) {
 		store := NewFlowStore()
 

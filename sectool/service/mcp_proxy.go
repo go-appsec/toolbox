@@ -241,7 +241,7 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 			return errorResult("replay flow not found in history"), nil
 		}
 		rawReq = replayEntry.RawRequest
-		rawResp = append(replayEntry.RespHeaders, replayEntry.RespBody...)
+		rawResp = slices.Concat(replayEntry.RespHeaders, replayEntry.RespBody)
 	} else {
 		// Existing proxy fetch logic
 		proxyEntries, err := m.service.httpBackend.GetProxyHistory(ctx, 1, entry.Offset)
@@ -516,7 +516,7 @@ func (s *Server) fetchAllProxyEntries(ctx context.Context) ([]flowEntry, error) 
 				respLen:  len(respBody),
 				request:  entry.Request,
 				response: entry.Response,
-				source:   "proxy",
+				source:   SourceProxy,
 			})
 		}
 
@@ -527,7 +527,10 @@ func (s *Server) fetchAllProxyEntries(ctx context.Context) ([]flowEntry, error) 
 	}
 
 	// 2. Update replay store's reference tracking (detects history clear)
-	s.replayHistoryStore.UpdateReferenceOffset(maxProxyOffset)
+	if _, cleared := s.replayHistoryStore.UpdateReferenceOffset(maxProxyOffset); cleared {
+		// Proxy history was cleared - invalidate stale proxy flow IDs
+		s.flowStore.ClearBySource(SourceProxy)
+	}
 
 	// 3. Fetch replay entries and convert to flowEntry
 	replayEntries := s.replayHistoryStore.List()

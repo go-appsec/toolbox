@@ -139,6 +139,29 @@ func (s *FlowStore) Clear() {
 	s.byOffset = make(map[uint32]string)
 }
 
+// ClearBySource removes all entries with the given source (e.g., "proxy").
+// Used when proxy history is cleared to invalidate stale flow IDs while keeping replay entries.
+func (s *FlowStore) ClearBySource(source string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for flowID, entry := range s.byID {
+		if entry.Source != source {
+			continue
+		}
+		delete(s.byID, flowID)
+		delete(s.byOffset, entry.Offset)
+		if entry.Hash != "" {
+			s.byHash[entry.Hash] = slices.DeleteFunc(s.byHash[entry.Hash], func(id string) bool {
+				return id == flowID
+			})
+			if len(s.byHash[entry.Hash]) == 0 {
+				delete(s.byHash, entry.Hash)
+			}
+		}
+	}
+}
+
 func (s *FlowStore) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

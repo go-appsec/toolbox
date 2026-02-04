@@ -254,7 +254,7 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 
 	// Store in replay history for proxy_poll visibility
 	method, replayHost, replayPath := extractRequestMeta(string(rawRequest))
-	refOffset := m.service.replayHistoryStore.UpdateReferenceOffset(m.service.proxyLastOffset.Load())
+	refOffset, _ := m.service.replayHistoryStore.UpdateReferenceOffset(m.service.proxyLastOffset.Load())
 	m.service.replayHistoryStore.Store(&store.ReplayHistoryEntry{
 		FlowID:          replayID,
 		ReferenceOffset: refOffset,
@@ -418,7 +418,7 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 	})
 
 	// Store in replay history for proxy_poll visibility
-	refOffset := m.service.replayHistoryStore.UpdateReferenceOffset(m.service.proxyLastOffset.Load())
+	refOffset, _ := m.service.replayHistoryStore.UpdateReferenceOffset(m.service.proxyLastOffset.Load())
 	m.service.replayHistoryStore.Store(&store.ReplayHistoryEntry{
 		FlowID:          replayID,
 		ReferenceOffset: refOffset,

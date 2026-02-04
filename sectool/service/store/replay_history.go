@@ -74,21 +74,23 @@ func (s *ReplayHistoryStore) List() []*ReplayHistoryEntry {
 
 // UpdateReferenceOffset updates the max proxy offset and detects history clear.
 // If history was cleared (offset decreased), marks all existing entries with ref=0.
-// Returns the reference offset to use for new replay entries.
-func (s *ReplayHistoryStore) UpdateReferenceOffset(currentMaxOffset uint32) uint32 {
+// Returns the reference offset to use for new replay entries, and whether history was cleared.
+func (s *ReplayHistoryStore) UpdateReferenceOffset(currentMaxOffset uint32) (uint32, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Detect history clear: current max is less than what we've seen
+	var cleared bool
 	if currentMaxOffset < s.lastKnownOffset && s.lastKnownOffset > 0 {
 		// History was cleared - mark all existing entries to appear at top
 		for _, e := range s.entries {
 			e.ReferenceOffset = 0
 		}
+		cleared = true
 	}
 
 	s.lastKnownOffset = currentMaxOffset
-	return currentMaxOffset
+	return currentMaxOffset, cleared
 }
 
 // Count returns the number of stored replay entries.

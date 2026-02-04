@@ -89,25 +89,30 @@ func TestReplayHistoryStore(t *testing.T) {
 		store := NewReplayHistoryStore()
 
 		// Simulate increasing offsets
-		ref1 := store.UpdateReferenceOffset(10)
+		ref1, cleared1 := store.UpdateReferenceOffset(10)
 		assert.Equal(t, uint32(10), ref1)
+		assert.False(t, cleared1)
 
-		ref2 := store.UpdateReferenceOffset(20)
+		ref2, cleared2 := store.UpdateReferenceOffset(20)
 		assert.Equal(t, uint32(20), ref2)
+		assert.False(t, cleared2)
 
-		ref3 := store.UpdateReferenceOffset(30)
+		ref3, cleared3 := store.UpdateReferenceOffset(30)
 		assert.Equal(t, uint32(30), ref3)
+		assert.False(t, cleared3)
 	})
 
 	t.Run("history_clear_detection", func(t *testing.T) {
 		store := NewReplayHistoryStore()
 
 		// Simulate normal flow
-		store.UpdateReferenceOffset(100)
+		_, cleared1 := store.UpdateReferenceOffset(100)
+		assert.False(t, cleared1)
 		store.Store(&ReplayHistoryEntry{FlowID: "before_clear", ReferenceOffset: 100})
 
 		// Simulate history clear (offset decreases)
-		store.UpdateReferenceOffset(5)
+		_, cleared2 := store.UpdateReferenceOffset(5)
+		assert.True(t, cleared2)
 
 		// Existing entries should have ReferenceOffset=0
 		entry, ok := store.Get("before_clear")
@@ -119,14 +124,14 @@ func TestReplayHistoryStore(t *testing.T) {
 		store := NewReplayHistoryStore()
 
 		// Add entries at various reference points
-		store.UpdateReferenceOffset(50)
-		store.Store(&ReplayHistoryEntry{FlowID: "e1", ReferenceOffset: 50})
+		ref1, _ := store.UpdateReferenceOffset(50)
+		store.Store(&ReplayHistoryEntry{FlowID: "e1", ReferenceOffset: ref1})
 
-		store.UpdateReferenceOffset(100)
-		store.Store(&ReplayHistoryEntry{FlowID: "e2", ReferenceOffset: 100})
+		ref2, _ := store.UpdateReferenceOffset(100)
+		store.Store(&ReplayHistoryEntry{FlowID: "e2", ReferenceOffset: ref2})
 
-		store.UpdateReferenceOffset(150)
-		store.Store(&ReplayHistoryEntry{FlowID: "e3", ReferenceOffset: 150})
+		ref3, _ := store.UpdateReferenceOffset(150)
+		store.Store(&ReplayHistoryEntry{FlowID: "e3", ReferenceOffset: ref3})
 
 		// Verify entries have their offsets
 		e1, _ := store.Get("e1")
@@ -137,7 +142,8 @@ func TestReplayHistoryStore(t *testing.T) {
 		assert.Equal(t, uint32(150), e3.ReferenceOffset)
 
 		// Simulate history clear
-		store.UpdateReferenceOffset(10)
+		_, cleared := store.UpdateReferenceOffset(10)
+		assert.True(t, cleared)
 
 		// All entries should now have ReferenceOffset=0
 		e1, _ = store.Get("e1")
@@ -204,7 +210,7 @@ func TestReplayHistoryStoreConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(offset uint32) {
 			defer wg.Done()
-			store.UpdateReferenceOffset(offset)
+			_, _ = store.UpdateReferenceOffset(offset)
 		}(uint32(i * 10))
 	}
 
