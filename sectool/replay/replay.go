@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-appsec/llm-security-toolbox/sectool/bundle"
+	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
 	"github.com/go-appsec/llm-security-toolbox/sectool/mcpclient"
 	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
 	"github.com/go-appsec/llm-security-toolbox/sectool/service"
@@ -115,18 +116,18 @@ func send(mcpURL string, timeout time.Duration, flow, bundleArg, file, body, tar
 		return fmt.Errorf("replay send failed: %w", err)
 	}
 
-	fmt.Printf("## Replay Result\n\n")
-	fmt.Printf("Replay ID: `%s`\n", resp.ReplayID)
+	fmt.Printf("%s\n\n", cliutil.Bold("Replay Result"))
+	fmt.Printf("Replay ID: %s\n", cliutil.ID(resp.ReplayID))
 	fmt.Printf("Duration: %s\n\n", resp.Duration)
 
-	fmt.Printf("### Response\n\n")
-	fmt.Printf("Status: %d %s\n", resp.Status, resp.StatusLine)
+	fmt.Printf("%s\n\n", cliutil.Bold("Response"))
+	fmt.Printf("Status: %s %s\n", cliutil.FormatStatus(resp.Status), resp.StatusLine)
 	fmt.Printf("Size: %d bytes\n\n", resp.RespSize)
 	if resp.RespHeaders != "" {
-		fmt.Printf("Headers:\n```\n%s```\n\n", resp.RespHeaders)
+		fmt.Printf("Headers:\n%s\n", resp.RespHeaders)
 	}
 	if resp.RespPreview != "" {
-		fmt.Printf("Body Preview:\n```\n%s\n```\n", resp.RespPreview)
+		fmt.Printf("Body Preview:\n%s\n", resp.RespPreview)
 	}
 
 	return nil
@@ -147,21 +148,21 @@ func get(mcpURL string, timeout time.Duration, replayID string) error {
 		return fmt.Errorf("replay get failed: %w", err)
 	}
 
-	fmt.Printf("## Replay Details\n\n")
-	fmt.Printf("Replay ID: `%s`\n", resp.ReplayID)
+	fmt.Printf("%s\n\n", cliutil.Bold("Replay Details"))
+	fmt.Printf("Replay ID: %s\n", cliutil.ID(resp.ReplayID))
 	fmt.Printf("Duration: %s\n", resp.Duration)
-	fmt.Printf("Status: %d %s\n", resp.Status, resp.StatusLine)
+	fmt.Printf("Status: %s %s\n", cliutil.FormatStatus(resp.Status), resp.StatusLine)
 	fmt.Printf("Size: %d bytes\n\n", resp.RespSize)
 	if resp.RespHeaders != "" {
-		fmt.Printf("Headers:\n```\n%s```\n\n", resp.RespHeaders)
+		fmt.Printf("Headers:\n%s\n", resp.RespHeaders)
 	}
 
 	if resp.RespBody != "" {
 		body, err := base64.StdEncoding.DecodeString(resp.RespBody)
 		if err != nil {
-			fmt.Printf("Body: (failed to decode: %v)\n", err)
+			fmt.Printf("Body: %s\n", cliutil.Error(fmt.Sprintf("failed to decode: %v", err)))
 		} else {
-			fmt.Printf("Body:\n```\n%s\n```\n", string(body))
+			fmt.Printf("Body:\n%s\n", string(body))
 		}
 	}
 
@@ -229,14 +230,14 @@ func create(_ string, _ time.Duration, urlArg, method string, headers []string, 
 		return fmt.Errorf("write bundle: %w", err)
 	}
 
-	fmt.Printf("## Bundle Created\n\n")
-	fmt.Printf("Bundle ID: `%s`\n", bundleID)
-	fmt.Printf("Path: `%s`\n\n", bundlePath)
+	fmt.Printf("%s\n\n", cliutil.Bold("Bundle Created"))
+	fmt.Printf("Bundle ID: %s\n", cliutil.ID(bundleID))
+	fmt.Printf("Path: %s\n\n", cliutil.ID(bundlePath))
 	fmt.Printf("Files created:\n")
-	fmt.Printf("- `%s/request.http` - HTTP headers (edit this)\n", bundlePath)
-	fmt.Printf("- `%s/body` - Request body (edit this)\n", bundlePath)
-	fmt.Printf("- `%s/request.meta.json` - Metadata\n\n", bundlePath)
-	fmt.Printf("To send: `sectool replay send --bundle %s`\n", bundleID)
+	fmt.Printf("  %s/request.http - HTTP headers (edit this)\n", bundlePath)
+	fmt.Printf("  %s/body - Request body (edit this)\n", bundlePath)
+	fmt.Printf("  %s/request.meta.json - Metadata\n\n", bundlePath)
+	cliutil.HintCommand(os.Stdout, "To send", "sectool replay send --bundle "+bundleID)
 
 	return nil
 }
@@ -544,17 +545,17 @@ func parseHeaders(raw []byte) (map[string]string, error) {
 }
 
 func printReplayResult(resp *protocol.ReplaySendResponse) {
-	fmt.Printf("## Replay Result\n\n")
-	fmt.Printf("Replay ID: `%s`\n", resp.ReplayID)
+	fmt.Printf("%s\n\n", cliutil.Bold("Replay Result"))
+	fmt.Printf("Replay ID: %s\n", cliutil.ID(resp.ReplayID))
 	fmt.Printf("Duration: %s\n\n", resp.Duration)
 
-	fmt.Printf("### Response\n\n")
-	fmt.Printf("Status: %d %s\n", resp.Status, resp.StatusLine)
+	fmt.Printf("%s\n\n", cliutil.Bold("Response"))
+	fmt.Printf("Status: %s %s\n", cliutil.FormatStatus(resp.Status), resp.StatusLine)
 	fmt.Printf("Size: %d bytes\n\n", resp.RespSize)
 	if resp.RespHeaders != "" {
-		fmt.Printf("Headers:\n```\n%s```\n\n", resp.RespHeaders)
+		fmt.Printf("Headers:\n%s\n", resp.RespHeaders)
 	}
 	if resp.RespPreview != "" {
-		fmt.Printf("Body Preview:\n```\n%s\n```\n", resp.RespPreview)
+		fmt.Printf("Body Preview:\n%s\n", resp.RespPreview)
 	}
 }

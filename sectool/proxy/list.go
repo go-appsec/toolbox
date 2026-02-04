@@ -3,7 +3,10 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
+
+	"github.com/jedib0t/go-pretty/v6/table"
 
 	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
 	"github.com/go-appsec/llm-security-toolbox/sectool/mcpclient"
@@ -39,7 +42,7 @@ func summary(mcpURL string, timeout time.Duration, source, host, path, method, s
 	if len(resp.Aggregates) > 0 {
 		printAggregateTable(resp.Aggregates)
 	} else {
-		fmt.Println("No matching entries found.")
+		cliutil.NoResults(os.Stdout, "No matching entries found.")
 	}
 
 	return nil
@@ -77,37 +80,37 @@ func list(mcpURL string, timeout time.Duration, source, host, path, method, stat
 	if len(resp.Flows) > 0 {
 		printFlowTable(resp.Flows)
 	} else {
-		fmt.Println("No matching entries found.")
+		cliutil.NoResults(os.Stdout, "No matching entries found.")
 	}
 
 	return nil
 }
 
 func printAggregateTable(agg []protocol.SummaryEntry) {
-	fmt.Println("| host | path | method | status | count |")
-	fmt.Println("|------|------|--------|--------|-------|")
+	t := cliutil.NewTable(os.Stdout)
+	t.AppendHeader(table.Row{"Host", "Path", "Method", "Status", "Count"})
+	t.SetRowPainter(cliutil.StatusRowPainter(3)) // status is column index 3
+
 	for _, e := range agg {
-		fmt.Printf("| %s | %s | %s | %d | %d |\n",
-			cliutil.EscapeMarkdown(e.Host), cliutil.EscapeMarkdown(e.Path),
-			e.Method, e.Status, e.Count)
+		t.AppendRow(table.Row{e.Host, e.Path, e.Method, e.Status, e.Count})
 	}
-	fmt.Printf("\n*%d unique request patterns*\n", len(agg))
+	t.Render()
+	cliutil.Summary(os.Stdout, len(agg), "unique request pattern", "unique request patterns")
 }
 
 func printFlowTable(flows []protocol.FlowEntry) {
-	fmt.Println("| flow_id | method | host | path | status | size | source |")
-	fmt.Println("|---------|--------|------|------|--------|------|--------|")
+	t := cliutil.NewTable(os.Stdout)
+	t.AppendHeader(table.Row{"Flow ID", "Method", "Host", "Path", "Status", "Size", "Source"})
+	t.SetRowPainter(cliutil.StatusRowPainter(4)) // status is column index 4
+
 	for _, f := range flows {
-		fmt.Printf("| %s | %s | %s | %s | %d | %d | %s |\n",
-			f.FlowID, f.Method,
-			cliutil.EscapeMarkdown(f.Host),
-			cliutil.EscapeMarkdown(f.Path),
-			f.Status, f.ResponseLength, f.Source)
+		t.AppendRow(table.Row{f.FlowID, f.Method, f.Host, f.Path, f.Status, f.ResponseLength, f.Source})
 	}
-	fmt.Printf("\n*%d flows*\n", len(flows))
+	t.Render()
+	cliutil.Summary(os.Stdout, len(flows), "flow", "flows")
 
 	if len(flows) > 0 {
 		lastFlow := flows[len(flows)-1]
-		fmt.Printf("\nTo list flows after this: `sectool proxy list --since %s`\n", lastFlow.FlowID)
+		cliutil.HintCommand(os.Stdout, "To list flows after this", "sectool proxy list --since "+lastFlow.FlowID)
 	}
 }

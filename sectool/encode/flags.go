@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/go-appsec/llm-security-toolbox/sectool/cli"
+	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
 )
 
 var encodeSubcommands = []string{"url", "base64", "html", "help"}
@@ -31,7 +31,7 @@ func Parse(args []string) error {
 		printUsage()
 		return nil
 	default:
-		return cli.UnknownSubcommandError("encode", args[0], encodeSubcommands)
+		return cliutil.UnknownSubcommandError("encode", args[0], encodeSubcommands)
 	}
 }
 

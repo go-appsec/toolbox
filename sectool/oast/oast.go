@@ -3,9 +3,12 @@ package oast
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/jedib0t/go-pretty/v6/table"
 
 	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
 	"github.com/go-appsec/llm-security-toolbox/sectool/mcpclient"
@@ -27,21 +30,21 @@ func create(mcpURL string, timeout time.Duration, label string) error {
 		return fmt.Errorf("oast create failed: %w", err)
 	}
 
-	fmt.Println("## OAST Session Created")
+	fmt.Println(cliutil.Bold("OAST Session Created"))
 	fmt.Println()
-	fmt.Printf("ID: `%s`\n", resp.OastID)
-	fmt.Printf("Domain: `%s`\n", resp.Domain)
+	fmt.Printf("ID: %s\n", cliutil.ID(resp.OastID))
+	fmt.Printf("Domain: %s\n", cliutil.ID(resp.Domain))
 	if resp.Label != "" {
-		fmt.Printf("Label: `%s`\n", resp.Label)
+		fmt.Printf("Label: %s\n", cliutil.ID(resp.Label))
 	}
 	fmt.Println()
-	fmt.Println("Use any subdomain for tagging (e.g., `sqli-test." + resp.Domain + "`)")
+	cliutil.Hint(os.Stdout, "Use any subdomain for tagging (e.g., sqli-test."+resp.Domain+")")
 	fmt.Println()
 	pollRef := resp.OastID
 	if resp.Label != "" {
 		pollRef = resp.Label
 	}
-	fmt.Printf("To poll for events: `sectool oast poll %s`\n", pollRef)
+	cliutil.HintCommand(os.Stdout, "To poll for events", "sectool oast poll "+pollRef)
 
 	return nil
 }
@@ -69,24 +72,23 @@ func summary(mcpURL string, timeout time.Duration, oastID, since, eventType stri
 	}
 
 	if len(resp.Aggregates) == 0 {
-		fmt.Println("No events received.")
+		cliutil.NoResults(os.Stdout, "No events received.")
 		if resp.DroppedCount > 0 {
-			fmt.Printf("\n*Note: %d events were dropped due to buffer limit*\n", resp.DroppedCount)
+			cliutil.Hint(os.Stdout, fmt.Sprintf("Note: %d events were dropped due to buffer limit", resp.DroppedCount))
 		}
 		return nil
 	}
 
-	fmt.Println("| subdomain | source_ip | type | count |")
-	fmt.Println("|-----------|-----------|------|-------|")
+	t := cliutil.NewTable(os.Stdout)
+	t.AppendHeader(table.Row{"Subdomain", "Source IP", "Type", "Count"})
 	for _, agg := range resp.Aggregates {
-		fmt.Printf("| %s | %s | %s | %d |\n",
-			cliutil.EscapeMarkdown(agg.Subdomain), agg.SourceIP,
-			strings.ToUpper(agg.Type), agg.Count)
+		t.AppendRow(table.Row{agg.Subdomain, agg.SourceIP, strings.ToUpper(agg.Type), agg.Count})
 	}
-	fmt.Printf("\n*%d unique interaction patterns*\n", len(resp.Aggregates))
+	t.Render()
+	cliutil.Summary(os.Stdout, len(resp.Aggregates), "unique interaction pattern", "unique interaction patterns")
 
 	if resp.DroppedCount > 0 {
-		fmt.Printf("\n*Note: %d events were dropped due to buffer limit*\n", resp.DroppedCount)
+		cliutil.Hint(os.Stdout, fmt.Sprintf("Note: %d events were dropped due to buffer limit", resp.DroppedCount))
 	}
 
 	return nil
@@ -115,31 +117,30 @@ func poll(mcpURL string, timeout time.Duration, oastID, since, eventType string,
 	}
 
 	if len(resp.Events) == 0 {
-		fmt.Println("No events received.")
+		cliutil.NoResults(os.Stdout, "No events received.")
 		if resp.DroppedCount > 0 {
-			fmt.Printf("\n*Note: %d events were dropped due to buffer limit*\n", resp.DroppedCount)
+			cliutil.Hint(os.Stdout, fmt.Sprintf("Note: %d events were dropped due to buffer limit", resp.DroppedCount))
 		}
 		return nil
 	}
 
-	fmt.Println("| event_id | time | type | source_ip | subdomain |")
-	fmt.Println("|----------|------|------|-----------|-----------|")
+	t := cliutil.NewTable(os.Stdout)
+	t.AppendHeader(table.Row{"Event ID", "Time", "Type", "Source IP", "Subdomain"})
 	for _, event := range resp.Events {
-		fmt.Printf("| %s | %s | %s | %s | %s |\n",
-			event.EventID, event.Time, strings.ToUpper(event.Type),
-			event.SourceIP, cliutil.EscapeMarkdown(event.Subdomain))
+		t.AppendRow(table.Row{event.EventID, event.Time, strings.ToUpper(event.Type), event.SourceIP, event.Subdomain})
 	}
-	fmt.Printf("\n*%d event(s)*\n", len(resp.Events))
+	t.Render()
+	cliutil.Summary(os.Stdout, len(resp.Events), "event", "events")
 
 	if resp.DroppedCount > 0 {
-		fmt.Printf("\n*Note: %d events were dropped due to buffer limit*\n", resp.DroppedCount)
+		cliutil.Hint(os.Stdout, fmt.Sprintf("Note: %d events were dropped due to buffer limit", resp.DroppedCount))
 	}
 
 	// Show hints for next actions
-	fmt.Printf("\nTo view event details: `sectool oast get %s <event_id>`\n", oastID)
+	cliutil.HintCommand(os.Stdout, "To view event details", fmt.Sprintf("sectool oast get %s <event_id>", oastID))
 	if len(resp.Events) > 0 {
 		lastEvent := resp.Events[len(resp.Events)-1]
-		fmt.Printf("To poll for new events: `sectool oast poll %s --since %s`\n", oastID, lastEvent.EventID)
+		cliutil.HintCommand(os.Stdout, "To poll for new events", fmt.Sprintf("sectool oast poll %s --since %s", oastID, lastEvent.EventID))
 	}
 
 	return nil
@@ -160,11 +161,11 @@ func get(mcpURL string, timeout time.Duration, oastID, eventID string) error {
 		return fmt.Errorf("oast get failed: %w", err)
 	}
 
-	fmt.Printf("## OAST Event `%s`\n\n", resp.EventID)
-	fmt.Printf("- Time: %s\n", resp.Time)
-	fmt.Printf("- Type: %s\n", strings.ToUpper(resp.Type))
-	fmt.Printf("- Source IP: %s\n", resp.SourceIP)
-	fmt.Printf("- Subdomain: `%s`\n", resp.Subdomain)
+	fmt.Printf("%s\n\n", cliutil.Bold("OAST Event "+resp.EventID))
+	fmt.Printf("Time: %s\n", resp.Time)
+	fmt.Printf("Type: %s\n", strings.ToUpper(resp.Type))
+	fmt.Printf("Source IP: %s\n", resp.SourceIP)
+	fmt.Printf("Subdomain: %s\n", cliutil.ID(resp.Subdomain))
 
 	if len(resp.Details) > 0 {
 		fmt.Println()
@@ -209,8 +210,8 @@ func list(mcpURL string, timeout time.Duration, limit int) error {
 	}
 
 	if len(resp.Sessions) == 0 {
-		fmt.Println("No active OAST sessions.")
-		fmt.Println("\nTo create one: `sectool oast create`")
+		cliutil.NoResults(os.Stdout, "No active OAST sessions.")
+		cliutil.HintCommand(os.Stdout, "To create one", "sectool oast create")
 		return nil
 	}
 
@@ -218,22 +219,20 @@ func list(mcpURL string, timeout time.Duration, limit int) error {
 		return s.Label != ""
 	})
 
+	t := cliutil.NewTable(os.Stdout)
 	if hasLabels {
-		fmt.Println("| oast_id | label | domain | created_at |")
-		fmt.Println("|---------|-------|--------|------------|")
+		t.AppendHeader(table.Row{"OAST ID", "Label", "Domain", "Created At"})
 		for _, sess := range resp.Sessions {
-			fmt.Printf("| %s | %s | %s | %s |\n",
-				sess.OastID, sess.Label, sess.Domain, sess.CreatedAt)
+			t.AppendRow(table.Row{sess.OastID, sess.Label, sess.Domain, sess.CreatedAt})
 		}
 	} else {
-		fmt.Println("| oast_id | domain | created_at |")
-		fmt.Println("|---------|--------|------------|")
+		t.AppendHeader(table.Row{"OAST ID", "Domain", "Created At"})
 		for _, sess := range resp.Sessions {
-			fmt.Printf("| %s | %s | %s |\n",
-				sess.OastID, sess.Domain, sess.CreatedAt)
+			t.AppendRow(table.Row{sess.OastID, sess.Domain, sess.CreatedAt})
 		}
 	}
-	fmt.Printf("\n*%d active session(s)*\n", len(resp.Sessions))
+	t.Render()
+	cliutil.Summary(os.Stdout, len(resp.Sessions), "active session", "active sessions")
 
 	return nil
 }

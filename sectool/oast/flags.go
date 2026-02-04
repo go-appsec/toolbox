@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/go-appsec/llm-security-toolbox/sectool/cli"
+	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
 )
 
 var oastSubcommands = []string{"create", "summary", "poll", "get", "list", "delete", "help"}
@@ -36,7 +36,7 @@ func Parse(args []string, mcpURL string) error {
 		printUsage()
 		return nil
 	default:
-		return cli.UnknownSubcommandError("oast", args[0], oastSubcommands)
+		return cliutil.UnknownSubcommandError("oast", args[0], oastSubcommands)
 	}
 }
 

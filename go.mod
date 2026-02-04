@@ -8,11 +8,13 @@ require (
 	github.com/go-appsec/interactsh-lite v0.1.1
 	github.com/go-appsec/scout v0.1.0
 	github.com/gocolly/colly/v2 v2.3.0
+	github.com/jedib0t/go-pretty/v6 v6.7.8
 	github.com/mark3labs/mcp-go v0.43.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/net v0.49.0
 	golang.org/x/sys v0.40.0
+	golang.org/x/term v0.39.0
 )
 
 require (
@@ -32,8 +34,10 @@ require (
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/kennygrant/sanitize v1.2.4 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/nlnwa/whatwg-url v0.6.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/spf13/cast v1.7.1 // indirect

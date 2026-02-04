@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/go-appsec/llm-security-toolbox/sectool/cli"
+	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
 )
 
 var proxySubcommands = []string{"summary", "list", "export", "rule", "help"}
@@ -32,7 +32,7 @@ func Parse(args []string, mcpURL string) error {
 		printUsage()
 		return nil
 	default:
-		return cli.UnknownSubcommandError("proxy", args[0], proxySubcommands)
+		return cliutil.UnknownSubcommandError("proxy", args[0], proxySubcommands)
 	}
 }
 
@@ -74,7 +74,6 @@ proxy summary [options]
 proxy list [options]
 
   List individual flows with flow_id for export or replay.
-  At least one filter or --limit is REQUIRED. Use 'proxy summary' first.
 
   Options:
     --source <type>         filter by source: 'proxy', 'replay', or empty for both
@@ -259,7 +258,6 @@ func parseList(args []string, mcpURL string) error {
 		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool proxy list [options]
 
 List individual flows with flow_id for export or replay.
-At least one filter or --limit is REQUIRED. Use 'proxy summary' first.
 
 Filter examples:
   --host api.example.com          Exact host match
@@ -278,15 +276,6 @@ Options:
 
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-
-	// Require at least one filter or limit
-	hasFilters := host != "" || path != "" || method != "" || status != "" ||
-		contains != "" || containsBody != "" || since != "" ||
-		excludeHost != "" || excludePath != "" || limit > 0 || source != ""
-	if !hasFilters {
-		fs.Usage()
-		return errors.New("at least one filter or --limit is required; use 'sectool proxy summary' first to see available traffic")
 	}
 
 	return list(mcpURL, timeout, source, host, path, method, status, contains, containsBody, since, excludeHost, excludePath, limit, offset)
@@ -359,7 +348,7 @@ func parseRule(args []string, mcpURL string) error {
 		printRuleUsage()
 		return nil
 	default:
-		return cli.UnknownSubcommandError("proxy rule", args[0], ruleSubcommands)
+		return cliutil.UnknownSubcommandError("proxy rule", args[0], ruleSubcommands)
 	}
 }
 

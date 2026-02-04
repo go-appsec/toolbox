@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/go-appsec/llm-security-toolbox/sectool/cli"
+	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
 )
 
 const (
@@ -49,7 +49,7 @@ func Parse(args []string, mcpURL string) error {
 		printUsage()
 		return nil
 	default:
-		return cli.UnknownSubcommandError("crawl", args[0], crawlSubcommands)
+		return cliutil.UnknownSubcommandError("crawl", args[0], crawlSubcommands)
 	}
 }
 
@@ -124,7 +124,7 @@ crawl list <session_id> [options]
     --exclude-host <pat>   exclude hosts matching pattern
     --exclude-path <pat>   exclude paths matching pattern
     --since <val>          flows after: flow_id, timestamp, or 'last'
-    --limit <n>            maximum results (default: 100)
+    --limit <n>            maximum result count
     --offset <n>           skip first N results
 
   Output: Markdown table with flow_id, method, host, path, status, size
@@ -136,7 +136,7 @@ crawl forms <session_id> [options]
   List forms discovered during crawling.
 
   Options:
-    --limit <n>            maximum results (default: 100)
+    --limit <n>            maximum result count
 
   Output: Forms with fields and CSRF detection
 
@@ -147,7 +147,7 @@ crawl errors <session_id> [options]
   List errors encountered during crawling.
 
   Options:
-    --limit <n>            maximum results (default: 100)
+    --limit <n>            maximum result count
 
   Output: Markdown table with URL and error message
 
@@ -336,7 +336,7 @@ func parseList(args []string, mcpURL string) error {
 	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")
 	fs.StringVar(&excludePath, "exclude-path", "", "exclude paths matching pattern")
 	fs.StringVar(&since, "since", "", "flows after flow_id or timestamp")
-	fs.IntVar(&limit, "limit", 100, "maximum results")
+	fs.IntVar(&limit, "limit", 0, "maximum result count")
 	fs.IntVar(&offset, "offset", 0, "skip first N results")
 
 	fs.Usage = func() {
@@ -368,7 +368,7 @@ func parseForms(args []string, mcpURL string) error {
 	var limit int
 
 	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
-	fs.IntVar(&limit, "limit", 100, "maximum results")
+	fs.IntVar(&limit, "limit", 0, "maximum result count")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool crawl forms <session_id> [options]
@@ -399,7 +399,7 @@ func parseErrors(args []string, mcpURL string) error {
 	var limit int
 
 	fs.DurationVar(&timeout, "timeout", 30*time.Second, "client-side timeout")
-	fs.IntVar(&limit, "limit", 100, "maximum results")
+	fs.IntVar(&limit, "limit", 0, "maximum result count")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool crawl errors <session_id> [options]

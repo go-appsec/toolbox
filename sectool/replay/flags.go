@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/go-appsec/llm-security-toolbox/sectool/cli"
+	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
 )
 
 var replaySubcommands = []string{"send", "get", "create", "help"}
@@ -30,7 +30,7 @@ func Parse(args []string, mcpURL string) error {
 		printUsage()
 		return nil
 	default:
-		return cli.UnknownSubcommandError("replay", args[0], replaySubcommands)
+		return cliutil.UnknownSubcommandError("replay", args[0], replaySubcommands)
 	}
 }
 

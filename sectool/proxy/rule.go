@@ -3,8 +3,11 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"time"
+
+	"github.com/jedib0t/go-pretty/v6/table"
 
 	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
 	"github.com/go-appsec/llm-security-toolbox/sectool/mcpclient"
@@ -49,34 +52,29 @@ func printRuleTable(rules []protocol.RuleEntry) {
 		return r.Label != ""
 	})
 
+	t := cliutil.NewTable(os.Stdout)
+
 	if hasLabels {
-		fmt.Println("| rule_id | label | type | regex | match | replace |")
-		fmt.Println("|---------|-------|------|-------|-------|---------|")
+		t.AppendHeader(table.Row{"Rule ID", "Label", "Type", "Regex", "Match", "Replace"})
 		for _, r := range rules {
 			regex := ""
 			if r.IsRegex {
 				regex = "yes"
 			}
-			fmt.Printf("| %s | %s | %s | %s | %s | %s |\n",
-				r.RuleID, cliutil.EscapeMarkdown(r.Label), r.Type, regex,
-				cliutil.EscapeMarkdown(truncate(r.Match, 30)),
-				cliutil.EscapeMarkdown(truncate(r.Replace, 30)))
+			t.AppendRow(table.Row{r.RuleID, r.Label, r.Type, regex, truncate(r.Match, 30), truncate(r.Replace, 30)})
 		}
 	} else {
-		fmt.Println("| rule_id | type | regex | match | replace |")
-		fmt.Println("|---------|------|-------|-------|---------|")
+		t.AppendHeader(table.Row{"Rule ID", "Type", "Regex", "Match", "Replace"})
 		for _, r := range rules {
 			regex := ""
 			if r.IsRegex {
 				regex = "yes"
 			}
-			fmt.Printf("| %s | %s | %s | %s | %s |\n",
-				r.RuleID, r.Type, regex,
-				cliutil.EscapeMarkdown(truncate(r.Match, 30)),
-				cliutil.EscapeMarkdown(truncate(r.Replace, 30)))
+			t.AppendRow(table.Row{r.RuleID, r.Type, regex, truncate(r.Match, 30), truncate(r.Replace, 30)})
 		}
 	}
-	fmt.Printf("\n*%d rules*\n", len(rules))
+	t.Render()
+	cliutil.Summary(os.Stdout, len(rules), "rule", "rules")
 }
 
 func truncate(s string, max int) string {

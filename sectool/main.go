@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/go-appsec/llm-security-toolbox/sectool/cli"
+	"github.com/go-appsec/llm-security-toolbox/sectool/cliutil"
 	"github.com/go-appsec/llm-security-toolbox/sectool/config"
 	"github.com/go-appsec/llm-security-toolbox/sectool/crawl"
 	"github.com/go-appsec/llm-security-toolbox/sectool/encode"
@@ -62,7 +62,7 @@ func main() {
 
 	default:
 		validCommands := []string{"mcp", "proxy", "replay", "oast", "crawl", "encode", "version", "help"}
-		err = cli.UnknownCommandError(args[0], validCommands)
+		err = cliutil.UnknownCommandError(args[0], validCommands)
 	}
 
 	if err != nil {
