@@ -1,6 +1,6 @@
 export GO111MODULE = on
 
-REV_NUM := $(shell git rev-list --count HEAD 2>/dev/null || echo "0")
+REV_NUM := $(shell n=$$(git rev-list --count HEAD 2>/dev/null || echo "99"); echo $$((n - 99)))
 LDFLAGS := -ldflags "-s -w -X github.com/go-appsec/llm-security-toolbox/sectool/config.RevNum=$(REV_NUM)"
 
 .PHONY: build build-cross clean test test-all test-cover lint
@@ -9,7 +9,7 @@ build:
 	@mkdir -p bin
 	go build $(LDFLAGS) -o bin/sectool ./sectool
 
-PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64
+PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64
 
 build-cross:
 	@mkdir -p bin
