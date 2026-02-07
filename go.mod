@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/agnivade/levenshtein v1.2.1
 	github.com/go-analyze/bulk v0.1.3
-	github.com/go-appsec/interactsh-lite v0.1.1
+	github.com/go-appsec/interactsh-lite v0.1.2
 	github.com/go-appsec/scout v0.1.0
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/google/uuid v1.6.0

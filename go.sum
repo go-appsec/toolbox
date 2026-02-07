@@ -28,8 +28,8 @@ github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHk
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
 github.com/go-analyze/bulk v0.1.3 h1:pzRdBqzHDAT9PyROt0SlWE0YqPtdmTcEpIJY0C3vF0c=
 github.com/go-analyze/bulk v0.1.3/go.mod h1:afon/KtFJYnekIyN20H/+XUvcLFjE8sKR1CfpqfClgM=
-github.com/go-appsec/interactsh-lite v0.1.1 h1:ftpFUiUreDOcr7HRe144w1se4Fbk3ELm8haW3GGhH1g=
-github.com/go-appsec/interactsh-lite v0.1.1/go.mod h1:MjKCg0QRJajjQYrKSMqq3qS7UCImAfMsAQYd62UOVqY=
+github.com/go-appsec/interactsh-lite v0.1.2 h1:SRQhpunQ6mnhMGvdridNKvNvqjv+PbfoVmATFz/n5CE=
+github.com/go-appsec/interactsh-lite v0.1.2/go.mod h1:MjKCg0QRJajjQYrKSMqq3qS7UCImAfMsAQYd62UOVqY=
 github.com/go-appsec/scout v0.1.0 h1:Mm09zNapRtVGctiBAd9N+EObIxazaBalDDGM7IEtI5Q=
 github.com/go-appsec/scout v0.1.0/go.mod h1:kiQ8b+IWePng6Z9XqGumIeDp64UkFPAnI+R4wwkGklE=
 github.com/gobwas/glob v0.2.3 h1:A4xDbljILXROh+kObIiy5kIaPYD8e96x1tgBhUI5J+Y=
