@@ -46,7 +46,8 @@ type ProxyServer struct {
 // NewProxyServer creates a new proxy server with HTTPS MITM support.
 // configDir is the directory for CA certificates (e.g., ~/.sectool).
 // maxBodyBytes limits request and response body sizes stored in history.
-func NewProxyServer(port int, configDir string, maxBodyBytes int) (*ProxyServer, error) {
+// historyStorage is the storage backend for proxy history entries.
+func NewProxyServer(port int, configDir string, maxBodyBytes int, historyStorage store.Storage) (*ProxyServer, error) {
 	certManager, err := newCertManager(configDir)
 	if err != nil {
 		return nil, fmt.Errorf("create cert manager: %w", err)
@@ -59,8 +60,7 @@ func NewProxyServer(port int, configDir string, maxBodyBytes int) (*ProxyServer,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	storage := store.NewMemStorage()
-	history := newHistoryStore(storage)
+	history := newHistoryStore(historyStorage)
 
 	wsHandler := newWebSocketHandler(history, certManager)
 

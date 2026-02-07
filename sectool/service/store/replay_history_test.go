@@ -13,7 +13,9 @@ func TestReplayHistoryStore(t *testing.T) {
 	t.Parallel()
 
 	t.Run("store_and_get", func(t *testing.T) {
-		store := NewReplayHistoryStore()
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
 
 		entry := &ReplayHistoryEntry{
 			FlowID:          "abc123",
@@ -37,14 +39,18 @@ func TestReplayHistoryStore(t *testing.T) {
 	})
 
 	t.Run("get_not_found", func(t *testing.T) {
-		store := NewReplayHistoryStore()
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
 
 		_, ok := store.Get("nonexistent")
 		assert.False(t, ok)
 	})
 
 	t.Run("list_ordered_by_creation", func(t *testing.T) {
-		store := NewReplayHistoryStore()
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
 
 		store.Store(&ReplayHistoryEntry{FlowID: "first", CreatedAt: time.Now()})
 		time.Sleep(time.Millisecond)
@@ -60,7 +66,9 @@ func TestReplayHistoryStore(t *testing.T) {
 	})
 
 	t.Run("count", func(t *testing.T) {
-		store := NewReplayHistoryStore()
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
 
 		assert.Equal(t, 0, store.Count())
 
@@ -72,7 +80,9 @@ func TestReplayHistoryStore(t *testing.T) {
 	})
 
 	t.Run("clear", func(t *testing.T) {
-		store := NewReplayHistoryStore()
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
 
 		store.Store(&ReplayHistoryEntry{FlowID: "a"})
 		store.Store(&ReplayHistoryEntry{FlowID: "b"})
@@ -86,7 +96,9 @@ func TestReplayHistoryStore(t *testing.T) {
 	})
 
 	t.Run("update_reference_offset_increasing", func(t *testing.T) {
-		store := NewReplayHistoryStore()
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
 
 		// Simulate increasing offsets
 		ref1, cleared1 := store.UpdateReferenceOffset(10)
@@ -103,7 +115,9 @@ func TestReplayHistoryStore(t *testing.T) {
 	})
 
 	t.Run("history_clear_detection", func(t *testing.T) {
-		store := NewReplayHistoryStore()
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
 
 		// Simulate normal flow
 		_, cleared1 := store.UpdateReferenceOffset(100)
@@ -121,7 +135,9 @@ func TestReplayHistoryStore(t *testing.T) {
 	})
 
 	t.Run("history_clear_multiple_entries", func(t *testing.T) {
-		store := NewReplayHistoryStore()
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
 
 		// Add entries at various reference points
 		ref1, _ := store.UpdateReferenceOffset(50)
@@ -155,7 +171,9 @@ func TestReplayHistoryStore(t *testing.T) {
 	})
 
 	t.Run("auto_set_created_at", func(t *testing.T) {
-		store := NewReplayHistoryStore()
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
 
 		entry := &ReplayHistoryEntry{FlowID: "auto_time"}
 		store.Store(entry)
@@ -166,21 +184,146 @@ func TestReplayHistoryStore(t *testing.T) {
 	})
 
 	t.Run("preserve_explicit_created_at", func(t *testing.T) {
-		store := NewReplayHistoryStore()
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
 
 		explicit := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 		entry := &ReplayHistoryEntry{FlowID: "explicit_time", CreatedAt: explicit}
 		store.Store(entry)
 
 		got, _ := store.Get("explicit_time")
-		assert.Equal(t, explicit, got.CreatedAt)
+		assert.True(t, explicit.Equal(got.CreatedAt))
 	})
+}
+
+func TestReplayHistoryListMeta(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns_meta_only", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		store.Store(&ReplayHistoryEntry{
+			FlowID:     "r1",
+			Method:     "POST",
+			Host:       "example.com",
+			Path:       "/api",
+			Protocol:   "http/1.1",
+			RespStatus: 200,
+			RespBody:   []byte("body-data"),
+			RawRequest: []byte("POST /api HTTP/1.1\r\n\r\n"),
+			CreatedAt:  time.Now(),
+		})
+		time.Sleep(time.Millisecond)
+		store.Store(&ReplayHistoryEntry{
+			FlowID:       "r2",
+			Method:       "GET",
+			Host:         "other.com",
+			Path:         "/test",
+			RespStatus:   404,
+			RespBody:     []byte("not found"),
+			SourceFlowID: "p1",
+			CreatedAt:    time.Now(),
+		})
+
+		metas := store.ListMeta()
+		require.Len(t, metas, 2)
+
+		assert.Equal(t, "r1", metas[0].FlowID)
+		assert.Equal(t, "POST", metas[0].Method)
+		assert.Equal(t, "example.com", metas[0].Host)
+		assert.Equal(t, "/api", metas[0].Path)
+		assert.Equal(t, 200, metas[0].RespStatus)
+		assert.Equal(t, len("body-data"), metas[0].RespLen)
+
+		assert.Equal(t, "r2", metas[1].FlowID)
+		assert.Equal(t, "p1", metas[1].SourceFlowID)
+		assert.Equal(t, 404, metas[1].RespStatus)
+	})
+
+	t.Run("ordered_by_creation", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		store.Store(&ReplayHistoryEntry{FlowID: "first", CreatedAt: time.Now()})
+		time.Sleep(time.Millisecond)
+		store.Store(&ReplayHistoryEntry{FlowID: "second", CreatedAt: time.Now()})
+
+		metas := store.ListMeta()
+		require.Len(t, metas, 2)
+		assert.Equal(t, "first", metas[0].FlowID)
+		assert.Equal(t, "second", metas[1].FlowID)
+	})
+
+	t.Run("empty_store", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		metas := store.ListMeta()
+		assert.Empty(t, metas)
+	})
+}
+
+func TestReplayHistoryCountExcludesPayload(t *testing.T) {
+	t.Parallel()
+
+	storage := NewMemStorage()
+	t.Cleanup(func() { _ = storage.Close() })
+	store := NewReplayHistoryStore(storage)
+
+	store.Store(&ReplayHistoryEntry{
+		FlowID:   "a",
+		RespBody: []byte("large body data"),
+	})
+	store.Store(&ReplayHistoryEntry{
+		FlowID:   "b",
+		RespBody: []byte("another body"),
+	})
+
+	// Count should reflect 2 entries, not 4 keys (meta + payload each)
+	assert.Equal(t, 2, store.Count())
+}
+
+func TestReplayHistoryPayloadIsolation(t *testing.T) {
+	t.Parallel()
+
+	storage := NewMemStorage()
+	t.Cleanup(func() { _ = storage.Close() })
+	store := NewReplayHistoryStore(storage)
+
+	store.Store(&ReplayHistoryEntry{
+		FlowID:      "flow1",
+		Method:      "POST",
+		RawRequest:  []byte("POST /api HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+		RespHeaders: []byte("HTTP/1.1 200 OK\r\n\r\n"),
+		RespBody:    []byte("response body"),
+	})
+
+	// ListMeta should not contain payload data
+	metas := store.ListMeta()
+	require.Len(t, metas, 1)
+	assert.Equal(t, "flow1", metas[0].FlowID)
+	assert.Equal(t, "POST", metas[0].Method)
+	assert.Equal(t, len("response body"), metas[0].RespLen)
+
+	// Get should reconstruct full entry
+	entry, ok := store.Get("flow1")
+	require.True(t, ok)
+	assert.Equal(t, []byte("POST /api HTTP/1.1\r\nHost: example.com\r\n\r\n"), entry.RawRequest)
+	assert.Equal(t, []byte("HTTP/1.1 200 OK\r\n\r\n"), entry.RespHeaders)
+	assert.Equal(t, []byte("response body"), entry.RespBody)
 }
 
 func TestReplayHistoryStoreConcurrency(t *testing.T) {
 	t.Parallel()
 
-	store := NewReplayHistoryStore()
+	storage := NewMemStorage()
+	t.Cleanup(func() { _ = storage.Close() })
+	store := NewReplayHistoryStore(storage)
 	var wg sync.WaitGroup
 
 	// Concurrent stores

@@ -534,7 +534,7 @@ func TestHTTP2ProxyEndToEnd(t *testing.T) {
 	})
 	t.Cleanup(testServer.Close)
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024)
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage())
 	require.NoError(t, err)
 	go func() { _ = proxy.Serve() }()
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -591,7 +591,7 @@ func TestHTTP2ProxyHeaderRules(t *testing.T) {
 	})
 	t.Cleanup(testServer.Close)
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024)
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage())
 	require.NoError(t, err)
 	go func() { _ = proxy.Serve() }()
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })

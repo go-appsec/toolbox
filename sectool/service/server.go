@@ -52,15 +52,19 @@ type Server struct {
 	oastBackend    OastBackend
 	crawlerBackend CrawlerBackend
 
-	// Flow ID mapping (ephemeral)
-	flowStore      *store.FlowStore
-	crawlFlowStore *store.CrawlFlowStore
+	// Storage temp directory (shared by all spill stores)
+	storageTempDir string
 
-	// Request/response results store (ephemeral)
-	requestStore *store.RequestStore
+	// Flow ID mapping (ephemeral)
+	proxyIndex *store.ProxyIndex
 
 	// Replay history store (shared by both backends)
 	replayHistoryStore *store.ReplayHistoryStore
+
+	// Proxy history storage (passed to native proxy backend)
+	historyStorage store.Storage
+	// Rule storage (passed to native proxy backend)
+	ruleStorage store.Storage
 
 	// proxyLastOffset tracks the highest offset seen across all proxy list queries.
 	// Enables "since=last" to show only new traffic since the last query.
@@ -78,6 +82,32 @@ type Server struct {
 // NewServer creates a new MCP server instance with optional backends.
 // If a backend is nil, Run initializes the default implementation.
 func NewServer(flags MCPServerFlags, hb HttpBackend, ob OastBackend, cb CrawlerBackend) (*Server, error) {
+	// Create shared temp directory for all spill stores
+	storageTempDir, err := os.MkdirTemp("", "sectool-spill-*")
+	if err != nil {
+		return nil, fmt.Errorf("create storage temp dir: %w", err)
+	}
+
+	// Create per-store spill instances sharing the same temp directory
+	defaults := store.DefaultSpillStoreConfig()
+	defaults.TempDir = storageTempDir
+	storeNames := []string{"pidx", "replay", "hist", "rule"}
+	stores := make([]store.Storage, len(storeNames))
+	for i, name := range storeNames {
+		cfg := defaults
+		cfg.FilePrefix = name
+		stores[i], err = store.NewSpillStore(cfg)
+		if err != nil {
+			// Close already-created stores
+			for j := 0; j < i; j++ {
+				_ = stores[j].Close()
+			}
+			_ = os.RemoveAll(storageTempDir)
+			return nil, fmt.Errorf("create %s storage: %w", name, err)
+		}
+	}
+	proxyIndexStorage, replayStorage, historyStorage, ruleStorage := stores[0], stores[1], stores[2], stores[3]
+
 	s := &Server{
 		flagBurpMCPURL:     flags.BurpMCPURL,
 		flagConfigPath:     flags.ConfigPath,
@@ -88,19 +118,18 @@ func NewServer(flags MCPServerFlags, hb HttpBackend, ob OastBackend, cb CrawlerB
 		metricProvider:     make(map[string]HealthMetricProvider),
 		started:            make(chan struct{}),
 		shutdownCh:         make(chan struct{}),
-		flowStore:          store.NewFlowStore(),
-		crawlFlowStore:     store.NewCrawlFlowStore(),
-		requestStore:       store.NewRequestStore(),
-		replayHistoryStore: store.NewReplayHistoryStore(),
+		storageTempDir:     storageTempDir,
+		proxyIndex:         store.NewProxyIndex(proxyIndexStorage),
+		replayHistoryStore: store.NewReplayHistoryStore(replayStorage),
+		historyStorage:     historyStorage,
+		ruleStorage:        ruleStorage,
 		httpBackend:        hb,
 		oastBackend:        ob,
 		crawlerBackend:     cb,
 	}
 
 	// Register health metrics for store counts
-	s.RegisterHealthMetric("flows", func() string { return strconv.Itoa(s.flowStore.Count()) })
-	s.RegisterHealthMetric("crawl_flows", func() string { return strconv.Itoa(s.crawlFlowStore.Count()) })
-	s.RegisterHealthMetric("requests", func() string { return strconv.Itoa(s.requestStore.Count()) })
+	s.RegisterHealthMetric("flows", func() string { return strconv.Itoa(s.proxyIndex.Count()) })
 	s.RegisterHealthMetric("replay_history", func() string { return strconv.Itoa(s.replayHistoryStore.Count()) })
 
 	return s, nil
@@ -144,7 +173,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Setup Crawler backend
 	if s.crawlerBackend == nil {
-		s.crawlerBackend = NewCollyBackend(s.cfg.Crawler, s.cfg.MaxBodyBytes, s.crawlFlowStore, s.flowStore, s.httpBackend)
+		s.crawlerBackend = NewCollyBackend(s.cfg.Crawler, s.cfg.MaxBodyBytes, s.proxyIndex, s.httpBackend)
 	}
 
 	// Start MCP server
@@ -202,6 +231,14 @@ func (s *Server) shutdown() error {
 			log.Printf("warning: failed to close CrawlerBackend: %v", err)
 		}
 	}
+
+	// Close storage stores (each removes its own data file)
+	s.proxyIndex.Close()
+	s.replayHistoryStore.Close()
+	_ = s.historyStorage.Close()
+	_ = s.ruleStorage.Close()
+	// Remove shared temp directory
+	_ = os.RemoveAll(s.storageTempDir)
 
 	log.Printf("sectool MCP server stopped")
 	return nil
@@ -312,7 +349,7 @@ func (s *Server) connectBurpMCP(ctx context.Context) error {
 func (s *Server) startBuiltinProxy() error {
 	configDir := filepath.Dir(s.configPath)
 
-	backend, err := NewNativeProxyBackend(s.proxyPort, configDir, s.cfg.MaxBodyBytes)
+	backend, err := NewNativeProxyBackend(s.proxyPort, configDir, s.cfg.MaxBodyBytes, s.historyStorage, s.ruleStorage)
 	if err != nil {
 		return fmt.Errorf("start built-in proxy: %w", err)
 	}

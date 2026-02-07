@@ -2,8 +2,6 @@ package proxy
 
 import (
 	"bytes"
-	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -12,20 +10,33 @@ import (
 	"github.com/go-appsec/llm-security-toolbox/sectool/service/store"
 )
 
+const nextOffsetKey = "proxy:history:_next"
+
+func historyMetaKey(offset uint32) string {
+	return "proxy:history:" + strconv.FormatUint(uint64(offset), 10)
+}
+
+func historyPayloadKey(offset uint32) string {
+	return "proxy:history:" + strconv.FormatUint(uint64(offset), 10) + ":p"
+}
+
 // HistoryStore provides typed access to proxy history backed by store.Storage.
 type HistoryStore struct {
 	mu         sync.RWMutex
 	storage    store.Storage
 	nextOffset uint32
-	offsetKeys map[uint32]string // offset -> storage key
 }
 
 // newHistoryStore creates a history store using the provided storage backend.
+// Recovers nextOffset from storage so the store is usable after a reload.
 func newHistoryStore(storage store.Storage) *HistoryStore {
-	return &HistoryStore{
-		storage:    storage,
-		offsetKeys: make(map[uint32]string),
+	h := &HistoryStore{storage: storage}
+	if data, found, err := storage.Get(nextOffsetKey); err == nil && found {
+		if v, err := strconv.ParseUint(string(data), 10, 32); err == nil {
+			h.nextOffset = uint32(v)
+		}
 	}
+	return h
 }
 
 // Store adds an entry and assigns the next offset.
@@ -37,40 +48,59 @@ func (h *HistoryStore) Store(entry *HistoryEntry) uint32 {
 	offset := h.nextOffset
 	h.nextOffset++
 
-	entry.Offset = offset
-	key := fmt.Sprintf("proxy:history:%d", offset)
-	h.offsetKeys[offset] = key
-
-	if data, err := json.Marshal(entry); err != nil {
-		log.Printf("proxy: failed to marshal history entry %d: %v", offset, err)
-		return offset
-	} else if err := h.storage.Save(key, data); err != nil {
-		log.Printf("proxy: failed to save history entry %d: %v", offset, err)
+	// Persist counter before entry so offset is never reused on reload
+	if err := h.storage.Set(nextOffsetKey, []byte(strconv.FormatUint(uint64(h.nextOffset), 10))); err != nil {
+		log.Printf("proxy: failed to persist next offset: %v", err)
 	}
+
+	entry.Offset = offset
+	h.writeEntry(entry)
 	return offset
+}
+
+// writeEntry serializes and writes both meta and payload keys for an entry.
+func (h *HistoryStore) writeEntry(entry *HistoryEntry) {
+	meta := entry.extractMeta()
+	if metaData, err := store.Serialize(&meta); err != nil {
+		log.Printf("proxy: failed to serialize history meta %d: %v", entry.Offset, err)
+	} else if payloadData, err := store.Serialize(entry); err != nil {
+		log.Printf("proxy: failed to serialize history entry %d: %v", entry.Offset, err)
+	} else if err := h.storage.Set(historyMetaKey(entry.Offset), metaData); err != nil {
+		log.Printf("proxy: failed to save history meta %d: %v", entry.Offset, err)
+	} else if err := h.storage.Set(historyPayloadKey(entry.Offset), payloadData); err != nil {
+		log.Printf("proxy: failed to save history entry %d: %v", entry.Offset, err)
+	}
 }
 
 // Get retrieves an entry by offset.
 func (h *HistoryStore) Get(offset uint32) (*HistoryEntry, bool) {
-	h.mu.RLock()
-	key, exists := h.offsetKeys[offset]
-	h.mu.RUnlock()
-
-	if !exists {
-		return nil, false
-	}
-
-	data, found, err := h.storage.Load(key)
+	data, found, err := h.storage.Get(historyPayloadKey(offset))
 	if err != nil || !found {
 		return nil, false
 	}
 
 	var entry HistoryEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
+	if err := store.Deserialize(data, &entry); err != nil {
+		return nil, false
+	}
+	// msgpack timestamps lose timezone info; normalize to UTC
+	entry.Timestamp = entry.Timestamp.UTC()
+	return &entry, true
+}
+
+// GetMeta retrieves lightweight metadata for an entry by offset.
+func (h *HistoryStore) GetMeta(offset uint32) (*HistoryMeta, bool) {
+	data, found, err := h.storage.Get(historyMetaKey(offset))
+	if err != nil || !found {
 		return nil, false
 	}
 
-	return &entry, true
+	var meta HistoryMeta
+	if err := store.Deserialize(data, &meta); err != nil {
+		return nil, false
+	}
+	meta.Timestamp = meta.Timestamp.UTC()
+	return &meta, true
 }
 
 // List returns entries starting from startOffset, up to count.
@@ -90,6 +120,22 @@ func (h *HistoryStore) List(count int, startOffset uint32) []*HistoryEntry {
 	return entries
 }
 
+// ListMeta returns metadata for entries starting from startOffset, up to count.
+// Only deserializes lightweight metadata, skipping full request/response bodies.
+func (h *HistoryStore) ListMeta(count int, startOffset uint32) []HistoryMeta {
+	h.mu.RLock()
+	maxOffset := h.nextOffset
+	h.mu.RUnlock()
+
+	var metas []HistoryMeta
+	for offset := startOffset; offset < maxOffset && len(metas) < count; offset++ {
+		if meta, ok := h.GetMeta(offset); ok {
+			metas = append(metas, *meta)
+		}
+	}
+	return metas
+}
+
 // Count returns total number of entries.
 func (h *HistoryStore) Count() int {
 	h.mu.RLock()
@@ -102,7 +148,7 @@ func (h *HistoryStore) Count() int {
 // The entry must have been previously stored (Offset must be valid).
 func (h *HistoryStore) Update(entry *HistoryEntry) {
 	h.mu.RLock()
-	key, exists := h.offsetKeys[entry.Offset]
+	exists := entry.Offset < h.nextOffset
 	h.mu.RUnlock()
 
 	if !exists {
@@ -110,18 +156,64 @@ func (h *HistoryStore) Update(entry *HistoryEntry) {
 		return
 	}
 
-	data, err := json.Marshal(entry)
-	if err != nil {
-		log.Printf("proxy: failed to marshal history entry %d for update: %v", entry.Offset, err)
-		return
-	} else if err := h.storage.Save(key, data); err != nil {
-		log.Printf("proxy: failed to update history entry %d: %v", entry.Offset, err)
-	}
+	h.writeEntry(entry)
 }
 
 // Close closes the underlying storage.
 func (h *HistoryStore) Close() {
-	h.storage.Close()
+	_ = h.storage.Close()
+}
+
+// extractMeta builds HistoryMeta from a HistoryEntry using existing accessor methods.
+func (e *HistoryEntry) extractMeta() HistoryMeta {
+	return HistoryMeta{
+		Offset:      e.Offset,
+		Protocol:    e.Protocol,
+		Method:      e.GetMethod(),
+		Host:        e.GetHost(),
+		Path:        e.getFullPath(),
+		Status:      e.GetStatusCode(),
+		ContentType: e.GetResponseHeader("content-type"),
+		RespLen:     e.responseBodyLen(),
+		H2StreamID:  e.H2StreamID,
+		Timestamp:   e.Timestamp,
+		Duration:    e.Duration,
+	}
+}
+
+// getFullPath returns path including query string for filter compatibility.
+// For HTTP/1.1, concatenates Path + "?" + Query when Query is non-empty.
+// For H2, Path already includes query.
+func (e *HistoryEntry) getFullPath() string {
+	switch e.Protocol {
+	case "h2":
+		if e.H2Request != nil {
+			return e.H2Request.Path
+		}
+	default:
+		if e.Request != nil {
+			if e.Request.Query != "" {
+				return e.Request.Path + "?" + e.Request.Query
+			}
+			return e.Request.Path
+		}
+	}
+	return ""
+}
+
+// responseBodyLen returns the length of the response body.
+func (e *HistoryEntry) responseBodyLen() int {
+	switch e.Protocol {
+	case "h2":
+		if e.H2Response != nil {
+			return len(e.H2Response.Body)
+		}
+	default:
+		if e.Response != nil {
+			return len(e.Response.Body)
+		}
+	}
+	return 0
 }
 
 // FormatRequest returns the request in wire-compatible format.

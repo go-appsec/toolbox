@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -883,37 +884,14 @@ func TestHistoryStoreClose(t *testing.T) {
 	t.Run("close_idempotent", func(t *testing.T) {
 		h := newHistoryStore(store.NewMemStorage())
 
-		// Store some entries before closing
-		entry := &HistoryEntry{
+		h.Store(&HistoryEntry{
 			Protocol: "http/1.1",
 			Request:  &RawHTTP1Request{Method: "GET", Path: "/"},
-		}
-		offset := h.Store(entry)
+		})
 
+		// Double close should not panic
 		h.Close()
 		h.Close()
-
-		// Verify store is still accessible after double close
-		retrieved, ok := h.Get(offset)
-		assert.True(t, ok)
-		assert.Equal(t, 1, h.Count())
-		assert.Equal(t, "/", retrieved.Request.Path)
-	})
-
-	t.Run("access_after_close", func(t *testing.T) {
-		h := newHistoryStore(store.NewMemStorage())
-		entry := &HistoryEntry{
-			Protocol: "http/1.1",
-			Request:  &RawHTTP1Request{Method: "GET", Path: "/test"},
-		}
-		offset := h.Store(entry)
-
-		h.Close()
-
-		// Should still be able to read after close
-		retrieved, ok := h.Get(offset)
-		assert.True(t, ok)
-		assert.Equal(t, "/test", retrieved.Request.Path)
 	})
 }
 
@@ -1027,6 +1005,49 @@ func TestCount(t *testing.T) {
 	})
 }
 
+func TestNewHistoryStoreRecovery(t *testing.T) {
+	t.Parallel()
+
+	t.Run("recovers_offset_from_storage", func(t *testing.T) {
+		s := store.NewMemStorage()
+
+		h1 := newHistoryStore(s)
+		for i := 0; i < 5; i++ {
+			h1.Store(&HistoryEntry{
+				Protocol: "http/1.1",
+				Request:  &RawHTTP1Request{Method: "GET", Path: "/" + strconv.Itoa(i)},
+			})
+		}
+
+		// Create new store backed by same storage
+		h2 := newHistoryStore(s)
+		assert.Equal(t, 5, h2.Count())
+
+		// Existing entries accessible
+		for i := 0; i < 5; i++ {
+			entry, ok := h2.Get(uint32(i))
+			require.True(t, ok)
+			assert.Equal(t, "/"+strconv.Itoa(i), entry.GetPath())
+		}
+
+		// New entries get non-colliding offsets
+		h2.Store(&HistoryEntry{
+			Protocol: "http/1.1",
+			Request:  &RawHTTP1Request{Method: "GET", Path: "/new"},
+		})
+		assert.Equal(t, 6, h2.Count())
+
+		entry, ok := h2.Get(5)
+		require.True(t, ok)
+		assert.Equal(t, "/new", entry.GetPath())
+	})
+
+	t.Run("empty_storage", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		assert.Equal(t, 0, h.Count())
+	})
+}
+
 func TestListConcurrentWithStore(t *testing.T) {
 	t.Parallel()
 
@@ -1084,6 +1105,183 @@ func TestListConcurrentWithStore(t *testing.T) {
 		assert.NotEmpty(t, entry.GetMethod())
 		assert.NotEmpty(t, entry.GetPath())
 	}
+}
+
+func TestGetMeta(t *testing.T) {
+	t.Parallel()
+
+	t.Run("http1_fields", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		entry := &HistoryEntry{
+			Protocol:  "http/1.1",
+			Timestamp: time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC),
+			Duration:  150 * time.Millisecond,
+			Request: &RawHTTP1Request{
+				Method:  "POST",
+				Path:    "/api/data",
+				Query:   "page=1",
+				Version: "HTTP/1.1",
+				Headers: []Header{{Name: "Host", Value: "example.com"}},
+				Body:    []byte(`{"key":"value"}`),
+			},
+			Response: &RawHTTP1Response{
+				StatusCode: 201,
+				Headers:    []Header{{Name: "Content-Type", Value: "application/json"}},
+				Body:       []byte(`{"id":1}`),
+			},
+		}
+		offset := h.Store(entry)
+
+		meta, ok := h.GetMeta(offset)
+		require.True(t, ok)
+		assert.Equal(t, uint32(0), meta.Offset)
+		assert.Equal(t, "http/1.1", meta.Protocol)
+		assert.Equal(t, "POST", meta.Method)
+		assert.Equal(t, "example.com", meta.Host)
+		assert.Equal(t, "/api/data?page=1", meta.Path)
+		assert.Equal(t, 201, meta.Status)
+		assert.Equal(t, "application/json", meta.ContentType)
+		assert.Equal(t, len(`{"id":1}`), meta.RespLen)
+		assert.Equal(t, entry.Timestamp, meta.Timestamp)
+		assert.Equal(t, 150*time.Millisecond, meta.Duration)
+	})
+
+	t.Run("h2_fields", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		entry := &HistoryEntry{
+			Protocol:   "h2",
+			H2StreamID: 3,
+			Timestamp:  time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC),
+			H2Request: &H2RequestData{
+				Method:    "GET",
+				Authority: "api.example.com",
+				Path:      "/users?q=test",
+				Headers:   []Header{{Name: "accept", Value: "application/json"}},
+			},
+			H2Response: &H2ResponseData{
+				StatusCode: 200,
+				Headers:    []Header{{Name: "content-type", Value: "text/html"}},
+				Body:       []byte("response body"),
+			},
+		}
+		offset := h.Store(entry)
+
+		meta, ok := h.GetMeta(offset)
+		require.True(t, ok)
+		assert.Equal(t, "h2", meta.Protocol)
+		assert.Equal(t, "GET", meta.Method)
+		assert.Equal(t, "api.example.com", meta.Host)
+		assert.Equal(t, "/users?q=test", meta.Path)
+		assert.Equal(t, 200, meta.Status)
+		assert.Equal(t, "text/html", meta.ContentType)
+		assert.Equal(t, len("response body"), meta.RespLen)
+		assert.Equal(t, uint32(3), meta.H2StreamID)
+	})
+
+	t.Run("not_found", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		_, ok := h.GetMeta(999)
+		assert.False(t, ok)
+	})
+}
+
+func TestListMeta(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns_meta_only", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		for i := 0; i < 5; i++ {
+			h.Store(&HistoryEntry{
+				Protocol: "http/1.1",
+				Request: &RawHTTP1Request{
+					Method:  "GET",
+					Path:    "/" + strconv.Itoa(i),
+					Version: "HTTP/1.1",
+					Headers: []Header{{Name: "Host", Value: "example.com"}},
+				},
+				Response: &RawHTTP1Response{
+					StatusCode: 200,
+					Body:       []byte("body-" + strconv.Itoa(i)),
+				},
+			})
+		}
+
+		metas := h.ListMeta(3, 1)
+		require.Len(t, metas, 3)
+		assert.Equal(t, "/1", metas[0].Path)
+		assert.Equal(t, "/3", metas[2].Path)
+		assert.Equal(t, uint32(1), metas[0].Offset)
+		assert.Equal(t, uint32(3), metas[2].Offset)
+	})
+
+	t.Run("empty_history", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		metas := h.ListMeta(10, 0)
+		assert.Empty(t, metas)
+	})
+}
+
+func TestStoreMeta_path_includes_query(t *testing.T) {
+	t.Parallel()
+
+	t.Run("http1_with_query", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		offset := h.Store(&HistoryEntry{
+			Protocol: "http/1.1",
+			Request: &RawHTTP1Request{
+				Method: "GET",
+				Path:   "/search",
+				Query:  "q=test&page=2",
+			},
+		})
+
+		meta, ok := h.GetMeta(offset)
+		require.True(t, ok)
+		assert.Equal(t, "/search?q=test&page=2", meta.Path)
+	})
+
+	t.Run("http1_without_query", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		offset := h.Store(&HistoryEntry{
+			Protocol: "http/1.1",
+			Request:  &RawHTTP1Request{Method: "GET", Path: "/index"},
+		})
+
+		meta, ok := h.GetMeta(offset)
+		require.True(t, ok)
+		assert.Equal(t, "/index", meta.Path)
+	})
+
+	t.Run("h2_path_includes_query", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		offset := h.Store(&HistoryEntry{
+			Protocol: "h2",
+			H2Request: &H2RequestData{
+				Method: "GET",
+				Path:   "/api?token=abc",
+			},
+		})
+
+		meta, ok := h.GetMeta(offset)
+		require.True(t, ok)
+		assert.Equal(t, "/api?token=abc", meta.Path)
+	})
 }
 
 func TestUpdateConcurrent(t *testing.T) {

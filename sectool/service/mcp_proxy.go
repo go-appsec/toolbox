@@ -131,7 +131,8 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 
 	log.Printf("proxy/poll: mode=%s host=%q path=%q method=%q status=%q", outputMode, listReq.Host, listReq.Path, listReq.Method, listReq.Status)
 
-	allEntries, err := m.service.fetchAllProxyEntries(ctx)
+	needsFullText := listReq.Contains != "" || listReq.ContainsBody != ""
+	allEntries, err := m.service.fetchAllProxyEntries(ctx, needsFullText)
 	if err != nil {
 		return errorResultFromErr("failed to fetch proxy history: ", err), nil
 	}
@@ -141,7 +142,7 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 	if v := m.service.lastFlowID.Load(); v != nil {
 		lastFlowID = v.(string)
 	}
-	filtered := applyProxyFilters(allEntries, listReq, m.service.flowStore, m.service.replayHistoryStore, lastFlowID)
+	filtered := applyProxyFilters(allEntries, listReq, m.service.proxyIndex, m.service.replayHistoryStore, lastFlowID)
 
 	switch outputMode {
 	case "flows":
@@ -172,10 +173,7 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 				flowID = entry.flowID
 			} else {
 				// Proxy entry: generate flowID based on offset
-				headerLines := extractHeaderLines(entry.request)
-				_, reqBody := splitHeadersBody([]byte(entry.request))
-				hash := store.ComputeFlowHashSimple(entry.method, entry.host, entry.path, headerLines, reqBody)
-				flowID = m.service.flowStore.Register(entry.offset, hash, entry.source)
+				flowID = m.service.proxyIndex.Register(entry.offset)
 			}
 
 			scheme, port, _ := inferSchemeAndPort(entry.host)
@@ -227,24 +225,15 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 	// Hidden parameter for CLI: returns full base64-encoded bodies instead of previews
 	fullBody := req.GetBool("full_body", false)
 
-	entry, ok := m.service.flowStore.Lookup(flowID)
-	if !ok {
-		return errorResult("flow_id not found: run proxy_poll to see available flows"), nil
-	}
-
 	var rawReq, rawResp []byte
+	var source string
 
-	if entry.Source == SourceReplay {
-		// Fetch from replay history store
-		replayEntry, ok := m.service.replayHistoryStore.Get(flowID)
-		if !ok {
-			return errorResult("replay flow not found in history"), nil
-		}
+	if replayEntry, ok := m.service.replayHistoryStore.Get(flowID); ok {
 		rawReq = replayEntry.RawRequest
 		rawResp = slices.Concat(replayEntry.RespHeaders, replayEntry.RespBody)
-	} else {
-		// Existing proxy fetch logic
-		proxyEntries, err := m.service.httpBackend.GetProxyHistory(ctx, 1, entry.Offset)
+		source = SourceReplay
+	} else if offset, ok := m.service.proxyIndex.Offset(flowID); ok {
+		proxyEntries, err := m.service.httpBackend.GetProxyHistory(ctx, 1, offset)
 		if err != nil {
 			return errorResultFromErr("failed to fetch flow: ", err), nil
 		}
@@ -253,6 +242,9 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 		}
 		rawReq = []byte(proxyEntries[0].Request)
 		rawResp = []byte(proxyEntries[0].Response)
+		source = SourceProxy
+	} else {
+		return errorResult("flow_id not found: run proxy_poll to see available flows"), nil
 	}
 
 	method, host, path := extractRequestMeta(string(rawReq))
@@ -271,7 +263,7 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 	scheme, _, _ := inferSchemeAndPort(host)
 	fullURL := scheme + "://" + host + path
 
-	log.Printf("mcp/proxy_get: flow=%s method=%s url=%s source=%s", flowID, method, fullURL, entry.Source)
+	log.Printf("mcp/proxy_get: flow=%s method=%s url=%s source=%s", flowID, method, fullURL, source)
 
 	// Decompress bodies for display (gzip/deflate) - applies to both modes
 	displayReqBody, _ := decompressForDisplay(reqBody, string(reqHeaders))
@@ -482,73 +474,128 @@ type flowEntry struct {
 }
 
 // fetchAllProxyEntries retrieves all proxy history entries and replay entries, merged in chronological order.
-func (s *Server) fetchAllProxyEntries(ctx context.Context) ([]flowEntry, error) {
+// When needsFullText is false, uses metadata-only APIs (avoids deserializing full request/response bodies).
+// When needsFullText is true, loads full entries for contains/contains_body filters.
+func (s *Server) fetchAllProxyEntries(ctx context.Context, needsFullText bool) ([]flowEntry, error) {
 	var allEntries []flowEntry
 	var maxProxyOffset uint32
 	var offset uint32
 
-	// 1. Fetch all proxy entries
-	for {
-		proxyEntries, err := s.httpBackend.GetProxyHistory(ctx, fetchBatchSize, offset)
-		if err != nil {
-			return nil, err
-		}
-		if len(proxyEntries) == 0 {
-			break
-		}
-
-		for i, entry := range proxyEntries {
-			entryOffset := offset + uint32(i)
-			if entryOffset > maxProxyOffset {
-				maxProxyOffset = entryOffset
+	if needsFullText {
+		// Full-text path: need complete request/response for contains filters
+		for {
+			proxyEntries, err := s.httpBackend.GetProxyHistory(ctx, fetchBatchSize, offset)
+			if err != nil {
+				return nil, err
+			}
+			if len(proxyEntries) == 0 {
+				break
 			}
 
-			method, host, path := extractRequestMeta(entry.Request)
-			status := readResponseStatusCode([]byte(entry.Response))
-			_, respBody := splitHeadersBody([]byte(entry.Response))
+			for i, entry := range proxyEntries {
+				entryOffset := offset + uint32(i)
+				if entryOffset > maxProxyOffset {
+					maxProxyOffset = entryOffset
+				}
 
-			allEntries = append(allEntries, flowEntry{
-				offset:   entryOffset,
-				method:   method,
-				host:     host,
-				path:     path,
-				status:   status,
-				respLen:  len(respBody),
-				request:  entry.Request,
-				response: entry.Response,
-				source:   SourceProxy,
-			})
+				method, host, path := extractRequestMeta(entry.Request)
+				status := readResponseStatusCode([]byte(entry.Response))
+				_, respBody := splitHeadersBody([]byte(entry.Response))
+
+				allEntries = append(allEntries, flowEntry{
+					offset:   entryOffset,
+					method:   method,
+					host:     host,
+					path:     path,
+					status:   status,
+					respLen:  len(respBody),
+					request:  entry.Request,
+					response: entry.Response,
+					source:   SourceProxy,
+				})
+			}
+
+			offset += uint32(len(proxyEntries))
+			if len(proxyEntries) < fetchBatchSize {
+				break
+			}
 		}
+	} else {
+		// Metadata-only path: skip full request/response bodies
+		for {
+			metas, err := s.httpBackend.GetProxyHistoryMeta(ctx, fetchBatchSize, offset)
+			if err != nil {
+				return nil, err
+			}
+			if len(metas) == 0 {
+				break
+			}
 
-		offset += uint32(len(proxyEntries))
-		if len(proxyEntries) < fetchBatchSize {
-			break
+			for i, m := range metas {
+				entryOffset := offset + uint32(i)
+				if entryOffset > maxProxyOffset {
+					maxProxyOffset = entryOffset
+				}
+
+				allEntries = append(allEntries, flowEntry{
+					offset:  entryOffset,
+					method:  m.Method,
+					host:    m.Host,
+					path:    m.Path,
+					status:  m.Status,
+					respLen: m.RespLen,
+					source:  SourceProxy,
+				})
+			}
+
+			offset += uint32(len(metas))
+			if len(metas) < fetchBatchSize {
+				break
+			}
 		}
 	}
 
 	// 2. Update replay store's reference tracking (detects history clear)
 	if _, cleared := s.replayHistoryStore.UpdateReferenceOffset(maxProxyOffset); cleared {
 		// Proxy history was cleared - invalidate stale proxy flow IDs
-		s.flowStore.ClearBySource(SourceProxy)
+		s.proxyIndex.Clear()
 	}
 
 	// 3. Fetch replay entries and convert to flowEntry
-	replayEntries := s.replayHistoryStore.List()
-	for _, re := range replayEntries {
-		allEntries = append(allEntries, flowEntry{
-			offset:          0, // not used for sorting replays
-			referenceOffset: re.ReferenceOffset,
-			flowID:          re.FlowID, // preserve the assigned replay ID
-			method:          re.Method,
-			host:            re.Host,
-			path:            re.Path,
-			status:          re.RespStatus,
-			respLen:         len(re.RespBody),
-			request:         string(re.RawRequest),
-			response:        formatReplayResponse(re.RespHeaders, re.RespBody),
-			source:          SourceReplay,
-			timestamp:       re.CreatedAt,
-		})
+	if needsFullText {
+		replayEntries := s.replayHistoryStore.List()
+		for _, re := range replayEntries {
+			allEntries = append(allEntries, flowEntry{
+				offset:          0, // not used for sorting replays
+				referenceOffset: re.ReferenceOffset,
+				flowID:          re.FlowID,
+				method:          re.Method,
+				host:            re.Host,
+				path:            re.Path,
+				status:          re.RespStatus,
+				respLen:         len(re.RespBody),
+				request:         string(re.RawRequest),
+				response:        formatReplayResponse(re.RespHeaders, re.RespBody),
+				source:          SourceReplay,
+				timestamp:       re.CreatedAt,
+			})
+		}
+	} else {
+		replayMetas := s.replayHistoryStore.ListMeta()
+		for _, rm := range replayMetas {
+			allEntries = append(allEntries, flowEntry{
+				offset:          0,
+				referenceOffset: rm.ReferenceOffset,
+				flowID:          rm.FlowID,
+				method:          rm.Method,
+				host:            rm.Host,
+				path:            rm.Path,
+				status:          rm.RespStatus,
+				respLen:         rm.RespLen,
+				source:          SourceReplay,
+				timestamp:       rm.CreatedAt,
+			})
+		}
 	}
 
 	// 4. Sort: merge proxy and replay in chronological order
@@ -599,7 +646,7 @@ func effectivePosition(e flowEntry) float64 {
 }
 
 // applyProxyFilters applies filters that can't be expressed in Burp regex.
-func applyProxyFilters(entries []flowEntry, req *ProxyListRequest, flowStore *store.FlowStore, replayHistoryStore *store.ReplayHistoryStore, lastFlowID string) []flowEntry {
+func applyProxyFilters(entries []flowEntry, req *ProxyListRequest, proxyIndex *store.ProxyIndex, replayHistoryStore *store.ReplayHistoryStore, lastFlowID string) []flowEntry {
 	if !req.HasFilters() {
 		return entries
 	}
@@ -621,20 +668,16 @@ func applyProxyFilters(entries []flowEntry, req *ProxyListRequest, flowStore *st
 		}
 
 		if sinceFlowID != "" {
-			if entry, ok := flowStore.Lookup(sinceFlowID); ok {
-				if entry.Source == SourceReplay {
-					// Replay entry: get reference offset from replay history store
-					if replayEntry, ok := replayHistoryStore.Get(sinceFlowID); ok {
-						sincePosition = float64(replayEntry.ReferenceOffset) + 0.5
-						sinceTimestamp = replayEntry.CreatedAt
-						sinceIsReplay = true
-						hasSince = true
-					}
-				} else {
-					// Proxy entry: use offset
-					sincePosition = float64(entry.Offset)
-					hasSince = true
-				}
+			if replayEntry, ok := replayHistoryStore.Get(sinceFlowID); ok {
+				// Replay entry: get reference offset from replay history store
+				sincePosition = float64(replayEntry.ReferenceOffset) + 0.5
+				sinceTimestamp = replayEntry.CreatedAt
+				sinceIsReplay = true
+				hasSince = true
+			} else if offset, ok := proxyIndex.Offset(sinceFlowID); ok {
+				// Proxy entry: use offset
+				sincePosition = float64(offset)
+				hasSince = true
 			}
 		}
 	}

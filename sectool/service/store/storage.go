@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/go-analyze/bulk"
@@ -8,12 +9,13 @@ import (
 
 // Storage defines the interface for key-value blob storage.
 type Storage interface {
-	Save(key string, blob []byte) error
-	Load(key string) ([]byte, bool, error)
+	Set(key string, blob []byte) error
+	Get(key string) ([]byte, bool, error)
+	KeySet() []string
+	Size() int
 	Delete(key string) error
-	ListKeys() ([]string, error)
-	Clear() error
-	Close()
+	DeleteAll() error
+	Close() error
 }
 
 type memStorage struct {
@@ -26,7 +28,7 @@ func NewMemStorage() Storage {
 	return &memStorage{data: make(map[string][]byte)}
 }
 
-func (m *memStorage) Save(key string, blob []byte) error {
+func (m *memStorage) Set(key string, blob []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -34,7 +36,7 @@ func (m *memStorage) Save(key string, blob []byte) error {
 	return nil
 }
 
-func (m *memStorage) Load(key string) ([]byte, bool, error) {
+func (m *memStorage) Get(key string) ([]byte, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -42,7 +44,21 @@ func (m *memStorage) Load(key string) ([]byte, bool, error) {
 	if !ok {
 		return nil, false, nil
 	}
-	return append([]byte(nil), blob...), true, nil
+	return slices.Clone(blob), true, nil
+}
+
+func (m *memStorage) KeySet() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return bulk.MapKeysSlice(m.data)
+}
+
+func (m *memStorage) Size() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return len(m.data)
 }
 
 func (m *memStorage) Delete(key string) error {
@@ -53,14 +69,7 @@ func (m *memStorage) Delete(key string) error {
 	return nil
 }
 
-func (m *memStorage) ListKeys() ([]string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	return bulk.MapKeysSlice(m.data), nil
-}
-
-func (m *memStorage) Clear() error {
+func (m *memStorage) DeleteAll() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -68,6 +77,6 @@ func (m *memStorage) Clear() error {
 	return nil
 }
 
-func (m *memStorage) Close() {
-	// no resources to free
+func (m *memStorage) Close() error {
+	return m.DeleteAll()
 }

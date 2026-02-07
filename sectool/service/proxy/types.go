@@ -11,26 +11,26 @@ import (
 type Header struct {
 	// Name preserves original casing and whitespace anomalies
 	// (e.g., "Content-Type", "content-type", or "Header " with trailing space)
-	Name string `json:"name"`
+	Name string `json:"name" msgpack:"n"`
 
 	// Value is the header value with leading/trailing whitespace trimmed
-	Value string `json:"value"`
+	Value string `json:"value" msgpack:"v"`
 
 	// RawLine contains the original wire bytes for this header (excluding line ending).
 	// Used by SerializeRaw() to preserve exact wire format including obs-fold.
 	// nil when header was programmatically created or Wire format not tracked.
-	RawLine []byte `json:"raw_line,omitempty"`
+	RawLine []byte `json:"raw_line,omitempty" msgpack:"rl,omitempty"`
 }
 
 // WireFormat stores metadata about the original wire encoding.
 type WireFormat struct {
 	// WasChunked indicates the body was received with chunked transfer encoding.
 	// When true, SerializeRaw can optionally re-emit chunked encoding.
-	WasChunked bool `json:"was_chunked,omitempty"`
+	WasChunked bool `json:"was_chunked,omitempty" msgpack:"wc,omitempty"`
 
 	// UsedBareLF indicates the message used bare LF (\n) instead of CRLF (\r\n).
 	// When true, SerializeRaw uses bare LF for line endings.
-	UsedBareLF bool `json:"used_bare_lf,omitempty"`
+	UsedBareLF bool `json:"used_bare_lf,omitempty" msgpack:"lf,omitempty"`
 }
 
 // Headers is a slice of Header with helper methods for case-insensitive access.
@@ -73,50 +73,50 @@ func (h *Headers) Remove(name string) {
 // The SerializeRaw() method reconstructs wire bytes from the stored components.
 type RawHTTP1Request struct {
 	// Request line components
-	Method  string `json:"method"`          // "GET", "POST", etc.
-	Path    string `json:"path"`            // path without query string, e.g., "/path"
-	Query   string `json:"query,omitempty"` // query string without leading ?, e.g., "foo=bar"
-	Version string `json:"version"`         // "HTTP/1.1" or "HTTP/1.0"
+	Method  string `json:"method" msgpack:"m"`                    // "GET", "POST", etc.
+	Path    string `json:"path" msgpack:"p"`                      // path without query string, e.g., "/path"
+	Query   string `json:"query,omitempty" msgpack:"q,omitempty"` // query string without leading ?, e.g., "foo=bar"
+	Version string `json:"version" msgpack:"v"`                   // "HTTP/1.1" or "HTTP/1.0"
 
 	// Headers preserves order and original name casing/whitespace
-	Headers Headers `json:"headers"`
+	Headers Headers `json:"headers" msgpack:"h"`
 
 	// Body is the request body (decoded if chunked, raw otherwise)
 	// For chunked encoding, this contains the reassembled body without chunk framing
-	Body []byte `json:"body,omitempty"`
+	Body []byte `json:"body,omitempty" msgpack:"b,omitempty"`
 
 	// Trailers for chunked encoding (raw bytes, rare but must preserve)
 	// TODO - FUTURE - Parse trailers into []Header if trailer rules are needed
-	Trailers []byte `json:"trailers,omitempty"`
+	Trailers []byte `json:"trailers,omitempty" msgpack:"t,omitempty"`
 
 	// Protocol metadata for replay fidelity
-	Protocol string `json:"protocol"` // "http/1.1" - stored for history/replay
+	Protocol string `json:"protocol" msgpack:"pr"` // "http/1.1" - stored for history/replay
 
 	// Wire contains metadata about the original wire encoding.
 	// Used by SerializeRaw() to preserve exact wire format.
-	Wire *WireFormat `json:"wire,omitempty"`
+	Wire *WireFormat `json:"wire,omitempty" msgpack:"w,omitempty"`
 }
 
 // RawHTTP1Response represents a parsed HTTP/1.1 response with wire-level fidelity.
 type RawHTTP1Response struct {
 	// Status line components
-	Version    string `json:"version"`               // "HTTP/1.1" or "HTTP/1.0"
-	StatusCode int    `json:"status_code"`           // 200, 404, etc.
-	StatusText string `json:"status_text,omitempty"` // "OK", "Not Found", etc.
+	Version    string `json:"version" msgpack:"v"`                          // "HTTP/1.1" or "HTTP/1.0"
+	StatusCode int    `json:"status_code" msgpack:"sc"`                     // 200, 404, etc.
+	StatusText string `json:"status_text,omitempty" msgpack:"st,omitempty"` // "OK", "Not Found", etc.
 
 	// Headers preserves order and original name casing
-	Headers Headers `json:"headers"`
+	Headers Headers `json:"headers" msgpack:"h"`
 
 	// Body is the response body (decoded if chunked, raw otherwise)
-	Body []byte `json:"body,omitempty"`
+	Body []byte `json:"body,omitempty" msgpack:"b,omitempty"`
 
 	// Trailers for chunked encoding (raw bytes)
 	// TODO - FUTURE - Parse trailers into []Header if trailer rules are needed
-	Trailers []byte `json:"trailers,omitempty"`
+	Trailers []byte `json:"trailers,omitempty" msgpack:"t,omitempty"`
 
 	// Wire contains metadata about the original wire encoding.
 	// Used by SerializeRaw() to preserve exact wire format.
-	Wire *WireFormat `json:"wire,omitempty"`
+	Wire *WireFormat `json:"wire,omitempty" msgpack:"w,omitempty"`
 }
 
 // GetHeader returns the first header value with the given name (case-insensitive).
@@ -142,69 +142,69 @@ func (r *RawHTTP1Response) RemoveHeader(name string) { r.Headers.Remove(name) }
 // The SerializeRaw() methods on Request/Response reconstruct wire bytes on demand.
 type HistoryEntry struct {
 	// Offset is the monotonic history index
-	Offset uint32 `json:"offset"`
+	Offset uint32 `json:"offset" msgpack:"o"`
 
 	// Protocol identifies the HTTP version: "http/1.1", "h2", or "websocket"
-	Protocol string `json:"protocol"`
+	Protocol string `json:"protocol" msgpack:"pr"`
 
 	// HTTP/1.1 request/response (nil for HTTP/2)
-	Request  *RawHTTP1Request  `json:"request,omitempty"`
-	Response *RawHTTP1Response `json:"response,omitempty"`
+	Request  *RawHTTP1Request  `json:"request,omitempty" msgpack:"rq,omitempty"`
+	Response *RawHTTP1Response `json:"response,omitempty" msgpack:"rs,omitempty"`
 
 	// HTTP/2 request/response (nil for HTTP/1.1)
-	H2Request  *H2RequestData  `json:"h2_request,omitempty"`
-	H2Response *H2ResponseData `json:"h2_response,omitempty"`
-	H2StreamID uint32          `json:"h2_stream_id,omitempty"` // for debugging/correlation
+	H2Request  *H2RequestData  `json:"h2_request,omitempty" msgpack:"h2q,omitempty"`
+	H2Response *H2ResponseData `json:"h2_response,omitempty" msgpack:"h2r,omitempty"`
+	H2StreamID uint32          `json:"h2_stream_id,omitempty" msgpack:"h2s,omitempty"` // for debugging/correlation
 
 	// WSFrames contains WebSocket frames for Protocol="websocket" entries.
 	// The handshake is stored in Request/Response; frames are appended here.
-	WSFrames []WSFrame `json:"ws_frames,omitempty"`
+	WSFrames []WSFrame `json:"ws_frames,omitempty" msgpack:"ws,omitempty"`
 
 	// Timing metadata
-	Timestamp time.Time     `json:"timestamp"`
-	Duration  time.Duration `json:"duration"`
+	Timestamp time.Time     `json:"timestamp" msgpack:"ts"`
+	Duration  time.Duration `json:"duration" msgpack:"d"`
 }
 
 // WSFrame represents a single WebSocket frame stored in history.
 type WSFrame struct {
 	// Direction is "to-server" or "to-client"
-	Direction string `json:"direction"`
+	Direction string `json:"direction" msgpack:"dr"`
 
 	// Opcode is the WebSocket opcode (1=text, 2=binary, 8=close, 9=ping, 10=pong)
-	Opcode byte `json:"opcode"`
+	Opcode byte `json:"opcode" msgpack:"op"`
 
 	// Payload is the frame payload (unmasked)
-	Payload []byte `json:"payload,omitempty"`
+	Payload []byte `json:"payload,omitempty" msgpack:"pl,omitempty"`
 
 	// Timestamp when the frame was captured
-	Timestamp time.Time `json:"timestamp"`
+	Timestamp time.Time `json:"timestamp" msgpack:"ts"`
 }
 
 // H2RequestData represents an HTTP/2 request for history storage.
 type H2RequestData struct {
 	// Pseudo-headers
-	Method    string `json:"method"`    // from :method
-	Scheme    string `json:"scheme"`    // from :scheme
-	Authority string `json:"authority"` // from :authority
-	Path      string `json:"path"`      // from :path
+	Method    string `json:"method" msgpack:"m"`    // from :method
+	Scheme    string `json:"scheme" msgpack:"s"`    // from :scheme
+	Authority string `json:"authority" msgpack:"a"` // from :authority
+	Path      string `json:"path" msgpack:"p"`      // from :path
 
 	// Regular headers (not pseudo-headers)
-	Headers Headers `json:"headers"`
+	Headers Headers `json:"headers" msgpack:"h"`
 
 	// Body is the request body
-	Body []byte `json:"body,omitempty"`
+	Body []byte `json:"body,omitempty" msgpack:"b,omitempty"`
 }
 
 // H2ResponseData represents an HTTP/2 response for history storage.
 type H2ResponseData struct {
 	// StatusCode from :status pseudo-header
-	StatusCode int `json:"status_code"`
+	StatusCode int `json:"status_code" msgpack:"sc"`
 
 	// Regular headers (not pseudo-headers)
-	Headers Headers `json:"headers"`
+	Headers Headers `json:"headers" msgpack:"h"`
 
 	// Body is the response body
-	Body []byte `json:"body,omitempty"`
+	Body []byte `json:"body,omitempty" msgpack:"b,omitempty"`
 }
 
 // GetHeader returns the first header value with the given name (case-insensitive).
@@ -218,6 +218,22 @@ func (r *H2ResponseData) GetHeader(name string) string { return r.Headers.Get(na
 
 // SetHeader sets or replaces the first header with the given name (case-insensitive).
 func (r *H2ResponseData) SetHeader(name, value string) { r.Headers.Set(name, value) }
+
+// HistoryMeta holds lightweight metadata extracted at store time.
+// Used by summary/list paths to avoid deserializing full request/response bodies.
+type HistoryMeta struct {
+	Offset      uint32        `msgpack:"o"`
+	Protocol    string        `msgpack:"pr"`
+	Method      string        `msgpack:"m"`
+	Host        string        `msgpack:"h"`
+	Path        string        `msgpack:"p"` // includes query string
+	Status      int           `msgpack:"s"`
+	ContentType string        `msgpack:"ct"`
+	RespLen     int           `msgpack:"rl"`
+	H2StreamID  uint32        `msgpack:"h2,omitempty"`
+	Timestamp   time.Time     `msgpack:"ts"`
+	Duration    time.Duration `msgpack:"d"`
+}
 
 // Target specifies where to send a request.
 type Target struct {

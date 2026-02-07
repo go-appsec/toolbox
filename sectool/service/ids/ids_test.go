@@ -84,9 +84,3 @@ func TestIsValid(t *testing.T) {
 		})
 	}
 }
-
-func BenchmarkGenerate(b *testing.B) {
-	for range b.N {
-		Generate(DefaultLength)
-	}
-}

@@ -87,30 +87,22 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 		return errorResult("flow_id is required"), nil
 	}
 
-	// Try flowStore (proxy or replay), then crawler backend
+	// Try replay history, then proxy index, then crawler backend
 	var rawRequest []byte
 	var httpProtocol string // "http/1.1", "h2", or empty (defaults to http/1.1)
-	if entry, ok := m.service.flowStore.Lookup(flowID); ok {
-		if entry.Source == SourceReplay {
-			// Fetch from replay history store
-			replayEntry, ok := m.service.replayHistoryStore.Get(flowID)
-			if !ok {
-				return errorResult("replay flow not found in history"), nil
-			}
-			rawRequest = replayEntry.RawRequest
-			httpProtocol = replayEntry.Protocol
-		} else {
-			// Fetch from proxy history
-			proxyEntries, err := m.service.httpBackend.GetProxyHistory(ctx, 1, entry.Offset)
-			if err != nil {
-				return errorResultFromErr("failed to fetch flow: ", err), nil
-			}
-			if len(proxyEntries) == 0 {
-				return errorResult("flow not found in proxy history"), nil
-			}
-			rawRequest = []byte(proxyEntries[0].Request)
-			httpProtocol = proxyEntries[0].Protocol
+	if replayEntry, ok := m.service.replayHistoryStore.Get(flowID); ok {
+		rawRequest = replayEntry.RawRequest
+		httpProtocol = replayEntry.Protocol
+	} else if offset, ok := m.service.proxyIndex.Offset(flowID); ok {
+		proxyEntries, err := m.service.httpBackend.GetProxyHistory(ctx, 1, offset)
+		if err != nil {
+			return errorResultFromErr("failed to fetch flow: ", err), nil
 		}
+		if len(proxyEntries) == 0 {
+			return errorResult("flow not found in proxy history"), nil
+		}
+		rawRequest = []byte(proxyEntries[0].Request)
+		httpProtocol = proxyEntries[0].Protocol
 	} else if flow, err := m.service.crawlerBackend.GetFlow(ctx, flowID); err == nil && flow != nil {
 		rawRequest = flow.Request
 		// Crawler uses HTTP/1.1
@@ -246,12 +238,6 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 	respCode, respStatusLine := parseResponseStatus(respHeaders)
 	log.Printf("mcp/replay_send: %s completed in %v (status=%d, size=%d)", replayID, result.Duration, respCode, len(respBody))
 
-	m.service.requestStore.Store(replayID, &store.RequestEntry{
-		Headers:  respHeaders,
-		Body:     respBody,
-		Duration: result.Duration,
-	})
-
 	// Store in replay history for proxy_poll visibility
 	method, replayHost, replayPath := extractRequestMeta(string(rawRequest))
 	refOffset, _ := m.service.replayHistoryStore.UpdateReferenceOffset(m.service.proxyLastOffset.Load())
@@ -269,7 +255,6 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 		Duration:        result.Duration,
 		SourceFlowID:    flowID,
 	})
-	m.service.flowStore.RegisterKnown(replayID, SourceReplay)
 
 	return jsonResult(protocol.ReplaySendResponse{
 		ReplayID: replayID,
@@ -298,15 +283,15 @@ func (m *mcpServer) handleReplayGet(ctx context.Context, req mcp.CallToolRequest
 	fullBody := req.GetBool("full_body", false)
 
 	log.Printf("mcp/replay_get: retrieving %s", replayID)
-	result, ok := m.service.requestStore.Get(replayID)
+	result, ok := m.service.replayHistoryStore.Get(replayID)
 	if !ok {
 		return errorResult("replay not found: replay results are ephemeral and cleared on service restart"), nil
 	}
 
-	respCode, respStatusLine := parseResponseStatus(result.Headers)
+	respCode, respStatusLine := parseResponseStatus(result.RespHeaders)
 
 	// Decompress response for display (gzip/deflate) - applies to both modes
-	displayBody, _ := decompressForDisplay(result.Body, string(result.Headers))
+	displayBody, _ := decompressForDisplay(result.RespBody, string(result.RespHeaders))
 
 	// Format body based on full_body flag
 	var respBodyStr string
@@ -321,10 +306,10 @@ func (m *mcpServer) handleReplayGet(ctx context.Context, req mcp.CallToolRequest
 		Duration:          result.Duration.String(),
 		Status:            respCode,
 		StatusLine:        respStatusLine,
-		RespHeaders:       string(result.Headers),
-		RespHeadersParsed: parseHeadersToMap(string(result.Headers)),
+		RespHeaders:       string(result.RespHeaders),
+		RespHeadersParsed: parseHeadersToMap(string(result.RespHeaders)),
 		RespBody:          respBodyStr,
-		RespSize:          len(result.Body),
+		RespSize:          len(result.RespBody),
 	})
 }
 
@@ -411,12 +396,6 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 	respCode, respStatusLine := parseResponseStatus(result.Headers)
 	log.Printf("mcp/request_send: %s completed in %v (status=%d, size=%d)", replayID, result.Duration, respCode, len(result.Body))
 
-	m.service.requestStore.Store(replayID, &store.RequestEntry{
-		Headers:  result.Headers,
-		Body:     result.Body,
-		Duration: result.Duration,
-	})
-
 	// Store in replay history for proxy_poll visibility
 	refOffset, _ := m.service.replayHistoryStore.UpdateReferenceOffset(m.service.proxyLastOffset.Load())
 	m.service.replayHistoryStore.Store(&store.ReplayHistoryEntry{
@@ -433,7 +412,6 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 		Duration:        result.Duration,
 		SourceFlowID:    "", // No source for request_send
 	})
-	m.service.flowStore.RegisterKnown(replayID, SourceReplay)
 
 	return jsonResult(protocol.ReplaySendResponse{
 		ReplayID: replayID,

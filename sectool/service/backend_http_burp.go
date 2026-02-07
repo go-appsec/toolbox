@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"slices"
 	"strings"
 	"time"
@@ -63,6 +64,28 @@ func (b *BurpBackend) GetProxyHistory(ctx context.Context, count int, offset uin
 	return result, nil
 }
 
+func (b *BurpBackend) GetProxyHistoryMeta(ctx context.Context, count int, offset uint32) ([]ProxyEntryMeta, error) {
+	entries, err := b.GetProxyHistory(ctx, count, offset)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]ProxyEntryMeta, len(entries))
+	for i, e := range entries {
+		method, host, path := extractRequestMeta(e.Request)
+		status := readResponseStatusCode([]byte(e.Response))
+		_, respBody := splitHeadersBody([]byte(e.Response))
+		result[i] = ProxyEntryMeta{
+			Method:   method,
+			Host:     host,
+			Path:     path,
+			Status:   status,
+			RespLen:  len(respBody),
+			Protocol: e.Protocol,
+		}
+	}
+	return result, nil
+}
+
 func (b *BurpBackend) SendRequest(ctx context.Context, name string, req SendRequestInput) (*SendRequestResult, error) {
 	scheme := schemeHTTP
 	if req.Target.UsesHTTPS {
@@ -87,15 +110,17 @@ func (b *BurpBackend) doSendRequest(ctx context.Context, name string, req SendRe
 	if len(reqPath) > 8 {
 		reqPath = reqPath[:8] + ".."
 	}
-	// Extract domain+TLD only (strip subdomains)
+	// Extract domain+TLD only (strip subdomains), but keep IP addresses intact
 	domain := req.Target.Hostname
-	parts := strings.Split(domain, ".")
-	if len(parts) > 2 {
-		// Handle multipart TLDs like co.uk: if second-to-last is short, keep 3 parts
-		if len(parts[len(parts)-2]) <= 3 {
-			domain = strings.Join(parts[len(parts)-3:], ".")
-		} else {
-			domain = strings.Join(parts[len(parts)-2:], ".")
+	if net.ParseIP(domain) == nil {
+		parts := strings.Split(domain, ".")
+		if len(parts) > 2 {
+			// Handle multipart TLDs like co.uk: if second-to-last is short, keep 3 parts
+			if len(parts[len(parts)-2]) <= 3 {
+				domain = strings.Join(parts[len(parts)-3:], ".")
+			} else {
+				domain = strings.Join(parts[len(parts)-2:], ".")
+			}
 		}
 	}
 	id := strings.TrimPrefix(name, "sectool-")

@@ -9,7 +9,7 @@ import (
 	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
 )
 
-// Flow source constants for flowStore and replay history.
+// Flow source constants for display and sorting.
 const (
 	SourceProxy  = "proxy"
 	SourceReplay = "replay"

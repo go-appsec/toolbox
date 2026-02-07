@@ -42,14 +42,13 @@ type CollyBackend struct {
 	mu           sync.RWMutex
 	sessions     map[string]*crawlSession // by ID
 	byLabel      map[string]string        // label -> session ID
-	flowStore    *store.CrawlFlowStore
 	config       config.CrawlerConfig
 	maxBodyBytes int
 	closed       bool
 
 	// For resolving seed flows from proxy history
-	proxyFlowStore *store.FlowStore
-	httpBackend    HttpBackend
+	proxyIndex  *store.ProxyIndex
+	httpBackend HttpBackend
 }
 
 // crawlSession holds the state for a single crawl session.
@@ -194,15 +193,14 @@ func readBodyLimited(r io.Reader, limit int) ([]byte, int, bool) {
 }
 
 // NewCollyBackend creates a new Colly-backed CrawlerBackend.
-func NewCollyBackend(cfg config.CrawlerConfig, maxBodyBytes int, flowStore *store.CrawlFlowStore, proxyFlowStore *store.FlowStore, httpBackend HttpBackend) *CollyBackend {
+func NewCollyBackend(cfg config.CrawlerConfig, maxBodyBytes int, proxyIndex *store.ProxyIndex, httpBackend HttpBackend) *CollyBackend {
 	return &CollyBackend{
-		sessions:       make(map[string]*crawlSession),
-		byLabel:        make(map[string]string),
-		flowStore:      flowStore,
-		config:         cfg,
-		maxBodyBytes:   maxBodyBytes,
-		proxyFlowStore: proxyFlowStore,
-		httpBackend:    httpBackend,
+		sessions:     make(map[string]*crawlSession),
+		byLabel:      make(map[string]string),
+		config:       cfg,
+		maxBodyBytes: maxBodyBytes,
+		proxyIndex:   proxyIndex,
+		httpBackend:  httpBackend,
 	}
 }
 
@@ -428,8 +426,6 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		sess.urlsQueued--
 		sess.lastActivity = time.Now()
 		sess.mu.Unlock()
-
-		b.flowStore.Register(flowID, sess.info.ID)
 	})
 
 	// URL discovery from links
@@ -764,29 +760,21 @@ func (b *CollyBackend) ListErrors(ctx context.Context, sessionID string, limit i
 }
 
 func (b *CollyBackend) GetFlow(ctx context.Context, flowID string) (*CrawlFlow, error) {
-	entry, ok := b.flowStore.Lookup(flowID)
-	if !ok {
-		return nil, fmt.Errorf("%w: flow %s", ErrNotFound, flowID)
-	}
-
 	b.mu.RLock()
-	sess, ok := b.sessions[entry.SessionID]
+	sessions := bulk.MapValuesSlice(b.sessions)
 	b.mu.RUnlock()
 
-	if !ok {
-		return nil, fmt.Errorf("%w: flow %s (session expired)", ErrNotFound, flowID)
+	for _, sess := range sessions {
+		sess.mu.RLock()
+		flow, ok := sess.flowsByID[flowID]
+		sess.mu.RUnlock()
+		if ok {
+			flowCopy := *flow
+			return &flowCopy, nil
+		}
 	}
 
-	sess.mu.RLock()
-	flow, ok := sess.flowsByID[flowID]
-	sess.mu.RUnlock()
-
-	if !ok {
-		return nil, fmt.Errorf("%w: flow %s", ErrNotFound, flowID)
-	}
-
-	flowCopy := *flow
-	return &flowCopy, nil
+	return nil, fmt.Errorf("%w: flow %s", ErrNotFound, flowID)
 }
 
 func (b *CollyBackend) StopSession(ctx context.Context, sessionID string) error {
@@ -884,13 +872,13 @@ func (b *CollyBackend) resolveSeeds(ctx context.Context, seeds []CrawlSeed, expl
 		}
 
 		if seed.FlowID != "" {
-			entry, ok := b.proxyFlowStore.Lookup(seed.FlowID)
+			offset, ok := b.proxyIndex.Offset(seed.FlowID)
 			if !ok {
 				return nil, nil, nil, fmt.Errorf("seed flow %q not found in proxy history", seed.FlowID)
 			}
 
 			// Fetch the proxy entry to get headers
-			proxyEntries, err := b.httpBackend.GetProxyHistory(ctx, 1, entry.Offset)
+			proxyEntries, err := b.httpBackend.GetProxyHistory(ctx, 1, offset)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("failed to fetch seed flow %q: %w", seed.FlowID, err)
 			}

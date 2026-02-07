@@ -45,6 +45,10 @@ type HttpBackend interface {
 	// Returns up to count entries starting from offset.
 	GetProxyHistory(ctx context.Context, count int, offset uint32) ([]ProxyEntry, error)
 
+	// GetProxyHistoryMeta retrieves lightweight metadata for proxy history entries.
+	// Returns up to count entries starting from offset.
+	GetProxyHistoryMeta(ctx context.Context, count int, offset uint32) ([]ProxyEntryMeta, error)
+
 	// SendRequest sends an HTTP request and returns the response.
 	// The request is raw HTTP bytes. Response is returned as headers and body.
 	SendRequest(ctx context.Context, name string, req SendRequestInput) (*SendRequestResult, error)
@@ -65,6 +69,18 @@ type HttpBackend interface {
 	// DeleteRule removes a rule by ID or label.
 	// Searches both HTTP and WebSocket rules automatically.
 	DeleteRule(ctx context.Context, idOrLabel string) error
+}
+
+// ProxyEntryMeta holds lightweight metadata for a proxy history entry.
+// Used by summary/list paths to avoid deserializing full request/response bodies.
+type ProxyEntryMeta struct {
+	Method      string
+	Host        string
+	Path        string // includes query string
+	Status      int
+	RespLen     int
+	Protocol    string
+	ContentType string
 }
 
 // ProxyRuleInput contains parameters for creating/updating a rule.
@@ -195,7 +211,6 @@ type CrawlerBackend interface {
 	ListErrors(ctx context.Context, sessionID string, limit int) ([]CrawlError, error)
 
 	// GetFlow returns a flow by ID. Returns ErrNotFound if flow doesn't exist.
-	// Searches CrawlFlowStore (not session-scoped).
 	GetFlow(ctx context.Context, flowID string) (*CrawlFlow, error)
 
 	// StopSession immediately stops a running crawl. In-flight requests are abandoned.

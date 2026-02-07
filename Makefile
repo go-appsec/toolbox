@@ -3,7 +3,7 @@ export GO111MODULE = on
 REV_NUM := $(shell n=$$(git rev-list --count HEAD 2>/dev/null || echo "101"); echo $$((n - 101)))
 LDFLAGS := -ldflags "-s -w -X github.com/go-appsec/llm-security-toolbox/sectool/config.RevNum=$(REV_NUM)"
 
-.PHONY: build build-cross clean test test-all test-cover lint
+.PHONY: build build-cross clean test test-all test-cover bench lint
 
 build:
 	@mkdir -p bin
@@ -33,6 +33,9 @@ test-all:
 
 test-cover:
 	go test -race -coverprofile=test.out ./... && go tool cover --html=test.out
+
+bench:
+	go test --benchmem -benchtime=20s -bench='Benchmark.*' -run='^$$' ./...
 
 lint:
 	golangci-lint run --timeout=600s && go vet ./...

@@ -16,6 +16,12 @@ import (
 	"github.com/go-appsec/llm-security-toolbox/sectool/protocol"
 	"github.com/go-appsec/llm-security-toolbox/sectool/service/ids"
 	"github.com/go-appsec/llm-security-toolbox/sectool/service/proxy"
+	"github.com/go-appsec/llm-security-toolbox/sectool/service/store"
+)
+
+const (
+	ruleKeyHTTP = "http_rules"
+	ruleKeyWS   = "ws_rules"
 )
 
 // NativeProxyBackend implements HttpBackend using the native proxy.
@@ -24,25 +30,26 @@ import (
 type NativeProxyBackend struct {
 	server *proxy.ProxyServer
 
-	// Rules (managed by service layer, applied in future phase)
-	rulesMu   sync.RWMutex
-	httpRules []nativeStoredRule
-	wsRules   []nativeStoredRule
+	// Rules: cached from ruleStorage for hot path access
+	rulesMu     sync.RWMutex
+	httpRules   []nativeStoredRule
+	wsRules     []nativeStoredRule
+	ruleStorage store.Storage
 
 	closed atomic.Bool
 }
 
 // nativeStoredRule is the persistent format for rules.
 type nativeStoredRule struct {
-	ID      string `json:"id"`
-	Label   string `json:"label,omitempty"`
-	Type    string `json:"type"`
-	IsRegex bool   `json:"is_regex"`
-	Match   string `json:"match"`
-	Replace string `json:"replace"`
+	ID      string `json:"id" msgpack:"id"`
+	Label   string `json:"label,omitempty" msgpack:"l,omitempty"`
+	Type    string `json:"type" msgpack:"t"`
+	IsRegex bool   `json:"is_regex" msgpack:"ir"`
+	Match   string `json:"match" msgpack:"m"`
+	Replace string `json:"replace" msgpack:"r"`
 
 	// compiled is the pre-compiled regex (nil if not a regex rule)
-	compiled *regexp.Regexp
+	compiled *regexp.Regexp `msgpack:"-"`
 }
 
 // Compile-time checks that NativeProxyBackend implements interfaces.
@@ -51,15 +58,22 @@ var _ proxy.RuleApplier = (*NativeProxyBackend)(nil)
 
 // NewNativeProxyBackend creates a new native proxy backend.
 // Does NOT start serving - call Serve() separately (typically in a goroutine).
-func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int) (*NativeProxyBackend, error) {
-	server, err := proxy.NewProxyServer(port, configDir, maxBodyBytes)
+// historyStorage is the storage backend for proxy history entries.
+// ruleStorage is the storage backend for persisting match/replace rules.
+func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, historyStorage store.Storage, ruleStorage store.Storage) (*NativeProxyBackend, error) {
+	server, err := proxy.NewProxyServer(port, configDir, maxBodyBytes, historyStorage)
 	if err != nil {
 		return nil, fmt.Errorf("create proxy server: %w", err)
 	}
 
 	b := &NativeProxyBackend{
-		server: server,
+		server:      server,
+		ruleStorage: ruleStorage,
 	}
+
+	// Load persisted rules
+	b.httpRules = b.loadRuleList(ruleKeyHTTP)
+	b.wsRules = b.loadRuleList(ruleKeyWS)
 
 	// Wire backend as rule applier for the proxy handlers
 	server.SetRuleApplier(b)
@@ -80,6 +94,37 @@ func (b *NativeProxyBackend) Addr() string {
 // WaitReady blocks until Serve() has entered its accept loop.
 func (b *NativeProxyBackend) WaitReady(ctx context.Context) error {
 	return b.server.WaitReady(ctx)
+}
+
+func (b *NativeProxyBackend) loadRuleList(key string) []nativeStoredRule {
+	data, found, err := b.ruleStorage.Get(key)
+	if err != nil || !found {
+		return nil
+	}
+	var rules []nativeStoredRule
+	if err := store.Deserialize(data, &rules); err != nil {
+		log.Printf("native: failed to load rules %s: %v", key, err)
+		return nil
+	}
+	// Recompile regexes
+	for i := range rules {
+		if rules[i].IsRegex {
+			rules[i].compiled, _ = regexp.Compile(rules[i].Match)
+		}
+	}
+	return rules
+}
+
+// saveRules writes the rule list to storage. Caller must hold rulesMu.
+func (b *NativeProxyBackend) saveRules(key string, rules []nativeStoredRule) error {
+	if len(rules) == 0 {
+		return b.ruleStorage.Delete(key)
+	}
+	data, err := store.Serialize(rules)
+	if err != nil {
+		return fmt.Errorf("serialize rules: %w", err)
+	}
+	return b.ruleStorage.Set(key, data)
 }
 
 func (b *NativeProxyBackend) Close() error {
@@ -114,6 +159,23 @@ func (b *NativeProxyBackend) GetProxyHistory(ctx context.Context, count int, off
 		})
 	}
 
+	return result, nil
+}
+
+func (b *NativeProxyBackend) GetProxyHistoryMeta(ctx context.Context, count int, offset uint32) ([]ProxyEntryMeta, error) {
+	metas := b.server.History().ListMeta(count, offset)
+	result := make([]ProxyEntryMeta, len(metas))
+	for i, m := range metas {
+		result[i] = ProxyEntryMeta{
+			Method:      m.Method,
+			Host:        m.Host,
+			Path:        m.Path,
+			Status:      m.Status,
+			RespLen:     m.RespLen,
+			Protocol:    m.Protocol,
+			ContentType: m.ContentType,
+		}
+	}
 	return result, nil
 }
 
@@ -225,11 +287,19 @@ func (b *NativeProxyBackend) AddRule(ctx context.Context, input ProxyRuleInput) 
 		Replace:  input.Replace,
 		compiled: compiled,
 	}
+
+	// Save to storage (source of truth), then update cache
+	target := &b.httpRules
+	key := ruleKeyHTTP
 	if isWSType(input.Type) {
-		b.wsRules = append(b.wsRules, rule)
-	} else {
-		b.httpRules = append(b.httpRules, rule)
+		target = &b.wsRules
+		key = ruleKeyWS
 	}
+	updated := append(slices.Clone(*target), rule)
+	if err := b.saveRules(key, updated); err != nil {
+		return nil, fmt.Errorf("persist rule: %w", err)
+	}
+	*target = updated
 
 	return &protocol.RuleEntry{
 		RuleID:  rule.ID,
@@ -245,10 +315,18 @@ func (b *NativeProxyBackend) UpdateRule(ctx context.Context, idOrLabel string, i
 	b.rulesMu.Lock()
 	defer b.rulesMu.Unlock()
 
-	rule, isWS := b.findRule(idOrLabel)
-	if rule == nil {
+	idx, isWS := b.findRule(idOrLabel)
+	if idx < 0 {
 		return nil, ErrNotFound
 	}
+
+	target := &b.httpRules
+	key := ruleKeyHTTP
+	if isWS {
+		target = &b.wsRules
+		key = ruleKeyWS
+	}
+	current := (*target)[idx]
 
 	// Validate type matches websocket category
 	if isWSType(input.Type) != isWS {
@@ -264,15 +342,14 @@ func (b *NativeProxyBackend) UpdateRule(ctx context.Context, idOrLabel string, i
 	}
 
 	// Check label uniqueness if changing
-	if input.Label != "" && input.Label != rule.Label {
-		if b.labelExistsExcluding(input.Label, rule.ID) {
+	if input.Label != "" && input.Label != current.Label {
+		if b.labelExistsExcluding(input.Label, current.ID) {
 			return nil, fmt.Errorf("%w: %s", ErrLabelExists, input.Label)
 		}
-		rule.Label = input.Label
 	}
 
 	// Determine new regex state
-	newIsRegex := rule.IsRegex
+	newIsRegex := current.IsRegex
 	if input.IsRegex != nil {
 		newIsRegex = *input.IsRegex
 	}
@@ -287,11 +364,24 @@ func (b *NativeProxyBackend) UpdateRule(ctx context.Context, idOrLabel string, i
 		}
 	}
 
+	// Build updated rule
+	rule := current
+	if input.Label != "" && input.Label != current.Label {
+		rule.Label = input.Label
+	}
 	rule.Type = input.Type
 	rule.Match = input.Match
 	rule.Replace = input.Replace
 	rule.IsRegex = newIsRegex
 	rule.compiled = compiled
+
+	// Save to storage (source of truth), then update cache
+	updated := slices.Clone(*target)
+	updated[idx] = rule
+	if err := b.saveRules(key, updated); err != nil {
+		return nil, fmt.Errorf("persist rule: %w", err)
+	}
+	*target = updated
 
 	return &protocol.RuleEntry{
 		RuleID:  rule.ID,
@@ -309,33 +399,41 @@ func (b *NativeProxyBackend) DeleteRule(ctx context.Context, idOrLabel string) e
 
 	for i, r := range b.httpRules {
 		if r.ID == idOrLabel || r.Label == idOrLabel {
-			b.httpRules = slices.Delete(b.httpRules, i, i+1)
+			updated := slices.Delete(slices.Clone(b.httpRules), i, i+1)
+			if err := b.saveRules(ruleKeyHTTP, updated); err != nil {
+				return fmt.Errorf("persist rule: %w", err)
+			}
+			b.httpRules = updated
 			return nil
 		}
 	}
 	for i, r := range b.wsRules {
 		if r.ID == idOrLabel || r.Label == idOrLabel {
-			b.wsRules = slices.Delete(b.wsRules, i, i+1)
+			updated := slices.Delete(slices.Clone(b.wsRules), i, i+1)
+			if err := b.saveRules(ruleKeyWS, updated); err != nil {
+				return fmt.Errorf("persist rule: %w", err)
+			}
+			b.wsRules = updated
 			return nil
 		}
 	}
 	return ErrNotFound
 }
 
-// findRule finds a rule by ID or label, returning the rule and whether it's a WebSocket rule.
-// Caller must hold rulesMu.
-func (b *NativeProxyBackend) findRule(idOrLabel string) (*nativeStoredRule, bool) {
+// findRule finds a rule by ID or label, returning the cache index and whether it's a WebSocket rule.
+// Returns -1 if not found. Caller must hold rulesMu.
+func (b *NativeProxyBackend) findRule(idOrLabel string) (int, bool) {
 	for i := range b.httpRules {
 		if b.httpRules[i].ID == idOrLabel || b.httpRules[i].Label == idOrLabel {
-			return &b.httpRules[i], false
+			return i, false
 		}
 	}
 	for i := range b.wsRules {
 		if b.wsRules[i].ID == idOrLabel || b.wsRules[i].Label == idOrLabel {
-			return &b.wsRules[i], true
+			return i, true
 		}
 	}
-	return nil, false
+	return -1, false
 }
 
 // labelExists checks if a label is already in use. Caller must hold rulesMu.
