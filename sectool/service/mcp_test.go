@@ -70,10 +70,11 @@ type TestMCPServer struct {
 
 	mu               sync.Mutex
 	proxyHistory     []testProxyEntry
-	sendResponses    []string // Stack of responses for send_http1_request
+	sendResponses    []string // Stack of responses for send_http1_request and send_http2_request
 	lastSentRequest  string   // Last raw request sent via send_http1_request
 	matchReplaceHTTP []testMatchReplaceRule
 	matchReplaceWS   []testMatchReplaceRule
+	toolCallLog      []string // Ordered log of tool names called
 }
 
 type testMatchReplaceRule struct {
@@ -183,6 +184,7 @@ func NewTestMCPServer(t *testing.T) *TestMCPServer {
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			ts.mu.Lock()
 			defer ts.mu.Unlock()
+			ts.toolCallLog = append(ts.toolCallLog, "send_http1_request")
 
 			// Capture the sent request content
 			ts.lastSentRequest = req.GetString("content", "")
@@ -202,6 +204,34 @@ func NewTestMCPServer(t *testing.T) *TestMCPServer {
 	)
 
 	mcpServer.AddTool(
+		mcp.NewTool("send_http2_request",
+			mcp.WithDescription("Send HTTP/2 request"),
+			mcp.WithObject("pseudoHeaders", mcp.Description("HTTP/2 pseudo-headers")),
+			mcp.WithObject("headers", mcp.Description("HTTP/2 headers")),
+			mcp.WithString("requestBody", mcp.Description("Request body")),
+			mcp.WithString("targetHostname", mcp.Description("Target hostname")),
+			mcp.WithNumber("targetPort", mcp.Description("Target port")),
+			mcp.WithBoolean("usesHttps", mcp.Description("Use HTTPS")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ts.mu.Lock()
+			defer ts.mu.Unlock()
+			ts.toolCallLog = append(ts.toolCallLog, "send_http2_request")
+
+			// Pop from sendResponses stack if available
+			if len(ts.sendResponses) > 0 {
+				resp := ts.sendResponses[0]
+				ts.sendResponses = ts.sendResponses[1:]
+				return mcp.NewToolResultText(resp), nil
+			}
+
+			return mcp.NewToolResultText(
+				`HttpRequestResponse{httpRequest=GET / HTTP/2, httpResponse=HTTP/2 200 OK\r\nContent-Type: text/html\r\n\r\n<html>OK</html>, messageAnnotations=Annotations{}}`,
+			), nil
+		},
+	)
+
+	mcpServer.AddTool(
 		mcp.NewTool("create_repeater_tab",
 			mcp.WithDescription("Create Repeater tab"),
 			mcp.WithString("content", mcp.Description("Raw HTTP request")),
@@ -211,6 +241,9 @@ func NewTestMCPServer(t *testing.T) *TestMCPServer {
 			mcp.WithString("tabName", mcp.Description("Tab name")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			ts.mu.Lock()
+			defer ts.mu.Unlock()
+			ts.toolCallLog = append(ts.toolCallLog, "create_repeater_tab")
 			return mcp.NewToolResultText("Tab created"), nil
 		},
 	)
@@ -326,4 +359,18 @@ func (t *TestMCPServer) ClearProxyHistory() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.proxyHistory = nil
+}
+
+// ToolCallLog returns a copy of the ordered tool call log.
+func (t *TestMCPServer) ToolCallLog() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.toolCallLog...)
+}
+
+// ClearToolCallLog resets the tool call log.
+func (t *TestMCPServer) ClearToolCallLog() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.toolCallLog = nil
 }

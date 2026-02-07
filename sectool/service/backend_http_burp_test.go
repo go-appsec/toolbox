@@ -413,3 +413,150 @@ func TestBurpBackendUpdateTypeMismatch(t *testing.T) {
 		assert.Contains(t, err.Error(), "cannot update WebSocket rule with HTTP type")
 	})
 }
+
+func newTestBurpBackend(t *testing.T) (*BurpBackend, *TestMCPServer) {
+	t.Helper()
+	mockServer := NewTestMCPServer(t)
+	client := mcp.New(mockServer.URL())
+	require.NoError(t, client.Connect(t.Context()))
+	t.Cleanup(func() { _ = client.Close() })
+	return &BurpBackend{client: client}, mockServer
+}
+
+func TestBurpBackendSendCreatesRepeaterTab(t *testing.T) {
+	t.Parallel()
+
+	backend, mockServer := newTestBurpBackend(t)
+
+	_, err := backend.SendRequest(t.Context(), "sectool-abc123", SendRequestInput{
+		RawRequest: []byte("GET /api HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+		Target:     Target{Hostname: "example.com", Port: 443, UsesHTTPS: true},
+	})
+	require.NoError(t, err)
+
+	log := mockServer.ToolCallLog()
+	require.Len(t, log, 2)
+	assert.Equal(t, "create_repeater_tab", log[0])
+	assert.Equal(t, "send_http1_request", log[1])
+}
+
+func TestBurpBackendSendRedirectCreatesTabPerHop(t *testing.T) {
+	t.Parallel()
+
+	backend, mockServer := newTestBurpBackend(t)
+
+	// First response: 302 redirect
+	mockServer.SetSendResponse(
+		`HttpRequestResponse{httpRequest=GET /old HTTP/1.1, httpResponse=HTTP/1.1 302 Found\r\nLocation: /new\r\n\r\n, messageAnnotations=Annotations{}}`,
+	)
+	// Second response: 200 OK
+	mockServer.SetSendResponse(
+		`HttpRequestResponse{httpRequest=GET /new HTTP/1.1, httpResponse=HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html>OK</html>, messageAnnotations=Annotations{}}`,
+	)
+
+	_, err := backend.SendRequest(t.Context(), "sectool-redir1", SendRequestInput{
+		RawRequest:      []byte("GET /old HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+		Target:          Target{Hostname: "example.com", Port: 443, UsesHTTPS: true},
+		FollowRedirects: true,
+	})
+	require.NoError(t, err)
+
+	log := mockServer.ToolCallLog()
+	// Expect: create_repeater_tab, send, create_repeater_tab, send
+	require.Len(t, log, 4)
+	assert.Equal(t, "create_repeater_tab", log[0])
+	assert.Equal(t, "send_http1_request", log[1])
+	assert.Equal(t, "create_repeater_tab", log[2])
+	assert.Equal(t, "send_http1_request", log[3])
+}
+
+func TestBurpBackendSendH2RoutesToH2(t *testing.T) {
+	t.Parallel()
+
+	backend, mockServer := newTestBurpBackend(t)
+
+	_, err := backend.SendRequest(t.Context(), "sectool-h2test", SendRequestInput{
+		RawRequest: []byte("GET /api HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+		Target:     Target{Hostname: "example.com", Port: 443, UsesHTTPS: true},
+		Protocol:   "h2",
+	})
+	require.NoError(t, err)
+
+	log := mockServer.ToolCallLog()
+	require.Len(t, log, 2)
+	assert.Equal(t, "create_repeater_tab", log[0])
+	assert.Equal(t, "send_http2_request", log[1])
+}
+
+func TestRawRequestToH2Params(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		raw        string
+		target     Target
+		wantMethod string
+		wantPath   string
+		wantScheme string
+		wantAuth   string
+		wantBody   string
+	}{
+		{
+			name:       "simple_get",
+			raw:        "GET /api HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			target:     Target{Hostname: "example.com", Port: 443, UsesHTTPS: true},
+			wantMethod: "GET",
+			wantPath:   "/api",
+			wantScheme: "https",
+			wantAuth:   "example.com",
+		},
+		{
+			name:       "post_with_body",
+			raw:        "POST /data HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nhello",
+			target:     Target{Hostname: "example.com", Port: 443, UsesHTTPS: true},
+			wantMethod: "POST",
+			wantPath:   "/data",
+			wantScheme: "https",
+			wantAuth:   "example.com",
+			wantBody:   "hello",
+		},
+		{
+			name:       "custom_port",
+			raw:        "GET / HTTP/1.1\r\nHost: example.com:8443\r\n\r\n",
+			target:     Target{Hostname: "example.com", Port: 8443, UsesHTTPS: true},
+			wantMethod: "GET",
+			wantPath:   "/",
+			wantScheme: "https",
+			wantAuth:   "example.com:8443",
+		},
+		{
+			name:       "query_string",
+			raw:        "GET /search?q=test&page=1 HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			target:     Target{Hostname: "example.com", Port: 443, UsesHTTPS: true},
+			wantMethod: "GET",
+			wantPath:   "/search?q=test&page=1",
+			wantScheme: "https",
+			wantAuth:   "example.com",
+		},
+		{
+			name:       "no_host_header",
+			raw:        "GET /path HTTP/1.1\r\n\r\n",
+			target:     Target{Hostname: "fallback.com", Port: 8080, UsesHTTPS: false},
+			wantMethod: "GET",
+			wantPath:   "/path",
+			wantScheme: "http",
+			wantAuth:   "fallback.com:8080",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := rawRequestToH2Params([]byte(tt.raw), tt.target)
+			assert.Equal(t, tt.wantMethod, params.PseudoHeaders[":method"])
+			assert.Equal(t, tt.wantPath, params.PseudoHeaders[":path"])
+			assert.Equal(t, tt.wantScheme, params.PseudoHeaders[":scheme"])
+			assert.Equal(t, tt.wantAuth, params.PseudoHeaders[":authority"])
+			assert.Equal(t, tt.wantBody, params.RequestBody)
+		})
+	}
+}

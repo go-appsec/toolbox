@@ -103,7 +103,8 @@ func (b *BurpBackend) SendRequest(ctx context.Context, name string, req SendRequ
 	return b.doSendRequest(ctx, name, req)
 }
 
-// doSendRequest performs the actual request sending.
+// doSendRequest builds a closure that creates a Repeater tab for every request
+// (including redirect hops) and sends via the appropriate protocol.
 func (b *BurpBackend) doSendRequest(ctx context.Context, name string, req SendRequestInput) (*SendRequestResult, error) {
 	// Build descriptive tab name: st-domain/path [id]
 	reqPath := extractRequestPath(req.RawRequest)
@@ -124,44 +125,64 @@ func (b *BurpBackend) doSendRequest(ctx context.Context, name string, req SendRe
 		}
 	}
 	id := strings.TrimPrefix(name, "sectool-")
-	tabName := fmt.Sprintf("st-%s%s [%s]", domain, reqPath, id)
 
-	err := b.client.CreateRepeaterTab(ctx, mcp.RepeaterTabParams{
-		TabName:        tabName,
-		Content:        string(req.RawRequest),
-		TargetHostname: req.Target.Hostname,
-		TargetPort:     req.Target.Port,
-		UsesHTTPS:      req.Target.UsesHTTPS,
-	})
-	if err != nil {
-		return nil, err
+	// Track redirect hop count for tab naming
+	var hopCount int
+
+	// Closure creates a Repeater tab and sends for every request including redirect hops
+	sender := func(ctx context.Context, r SendRequestInput, start time.Time) (*SendRequestResult, error) {
+		tabName := fmt.Sprintf("st-%s%s [%s]", domain, reqPath, id)
+		if hopCount > 0 {
+			tabName = fmt.Sprintf("st-%s%s [%s R%d]", domain, reqPath, id, hopCount)
+		}
+		hopCount++
+		return b.sendWithRepeater(ctx, tabName, r, start)
 	}
 
 	start := time.Now()
 
 	if req.FollowRedirects {
-		return FollowRedirects(ctx, req, start, 10, b.sendSingle)
+		return FollowRedirects(ctx, req, start, 10, sender)
 	}
-	return b.sendSingle(ctx, req, start)
+	return sender(ctx, req, start)
 }
 
-// sendSingle sends a single request without following redirects.
-func (b *BurpBackend) sendSingle(ctx context.Context, req SendRequestInput, start time.Time) (*SendRequestResult, error) {
-	result, err := b.client.SendHTTP1Request(ctx, mcp.SendRequestParams{
+// sendWithRepeater creates a Repeater tab (best-effort) and sends the request
+// using the appropriate protocol (H1 or H2).
+func (b *BurpBackend) sendWithRepeater(ctx context.Context, tabName string, req SendRequestInput, start time.Time) (*SendRequestResult, error) {
+	// Best-effort Repeater tab creation
+	if err := b.client.CreateRepeaterTab(ctx, mcp.RepeaterTabParams{
+		TabName:        tabName,
 		Content:        string(req.RawRequest),
 		TargetHostname: req.Target.Hostname,
 		TargetPort:     req.Target.Port,
 		UsesHTTPS:      req.Target.UsesHTTPS,
-	})
+	}); err != nil {
+		log.Printf("burp: failed to create repeater tab %q (continuing): %v", tabName, err)
+	}
+
+	// Route to appropriate send method
+	var rawResponse string
+	var err error
+	if req.Protocol == "h2" {
+		params := rawRequestToH2Params(req.RawRequest, req.Target)
+		rawResponse, err = b.client.SendHTTP2Request(ctx, params)
+	} else {
+		rawResponse, err = b.client.SendHTTP1Request(ctx, mcp.SendRequestParams{
+			Content:        string(req.RawRequest),
+			TargetHostname: req.Target.Hostname,
+			TargetPort:     req.Target.Port,
+			UsesHTTPS:      req.Target.UsesHTTPS,
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	headers, body, err := parseBurpResponse(result)
-	if err != nil {
-		// Return raw result if parsing fails
+	headers, body, parseErr := parseBurpResponse(rawResponse)
+	if parseErr != nil {
 		return &SendRequestResult{
-			Headers:  []byte(result),
+			Headers:  []byte(rawResponse),
 			Body:     nil,
 			Duration: time.Since(start),
 		}, nil
@@ -172,6 +193,68 @@ func (b *BurpBackend) sendSingle(ctx context.Context, req SendRequestInput, star
 		Body:     body,
 		Duration: time.Since(start),
 	}, nil
+}
+
+// rawRequestToH2Params converts raw HTTP/1.1-format request bytes to H2 params.
+// Extracts method and path from the request line, maps Host to :authority,
+// and lowercases header names per H2 convention.
+func rawRequestToH2Params(raw []byte, target Target) mcp.SendHTTP2RequestParams {
+	// Extract request URI from first line
+	requestURI := "/"
+	lines := bytes.SplitN(raw, []byte("\r\n"), 2)
+	if len(lines) > 0 {
+		lineParts := bytes.SplitN(lines[0], []byte(" "), 3)
+		if len(lineParts) >= 2 {
+			requestURI = string(lineParts[1])
+		}
+	}
+
+	scheme := schemeHTTPS
+	if !target.UsesHTTPS {
+		scheme = schemeHTTP
+	}
+
+	pseudos := map[string]string{
+		":method": extractMethod(raw),
+		":path":   requestURI,
+		":scheme": scheme,
+	}
+
+	headers := make(map[string]string)
+	for _, line := range extractHeaderLines(string(raw)) {
+		idx := strings.IndexByte(line, ':')
+		if idx <= 0 {
+			continue
+		}
+		name := strings.TrimSpace(line[:idx])
+		value := strings.TrimSpace(line[idx+1:])
+		lower := strings.ToLower(name)
+		if lower == "host" {
+			pseudos[":authority"] = value
+			continue
+		}
+		headers[lower] = value
+	}
+
+	// Ensure :authority is set from target if not in headers
+	if _, ok := pseudos[":authority"]; !ok {
+		host := target.Hostname
+		if (target.UsesHTTPS && target.Port != 443) || (!target.UsesHTTPS && target.Port != 80) {
+			host = fmt.Sprintf("%s:%d", target.Hostname, target.Port)
+		}
+		pseudos[":authority"] = host
+	}
+
+	_, body := splitHeadersBody(raw)
+
+	return mcp.SendHTTP2RequestParams{
+		PseudoHeaders:  pseudos,
+		Headers:        headers,
+		RequestBody:    string(body),
+		TargetHostname: target.Hostname,
+		TargetPort:     target.Port,
+		UsesHTTPS:      target.UsesHTTPS,
+	}
 }
 
 // parseBurpResponse extracts HTTP response from Burp's toString format.
