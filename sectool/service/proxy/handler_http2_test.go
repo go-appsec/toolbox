@@ -369,7 +369,7 @@ func TestH2ConnNeedsWindowUpdate(t *testing.T) {
 	assert.Equal(t, uint32(0), connUp)
 	assert.Equal(t, uint32(0), streamUp)
 
-	_ = h.consumeRecvWindow(1, 40000)
+	require.NoError(t, h.consumeRecvWindow(1, 40000))
 
 	connUp, streamUp = h.needsWindowUpdate(1)
 	assert.Positive(t, connUp)
@@ -388,8 +388,8 @@ func TestH2ConnRemoveStreamWindow(t *testing.T) {
 		recvWindowStream:  make(map[uint32]int32),
 	}
 
-	_ = h.consumeRecvWindow(1, 1000)
-	_ = h.consumeRecvWindow(3, 500)
+	require.NoError(t, h.consumeRecvWindow(1, 1000))
+	require.NoError(t, h.consumeRecvWindow(3, 500))
 	assert.Len(t, h.recvWindowStream, 2)
 
 	h.removeStreamWindow(1)

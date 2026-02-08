@@ -46,7 +46,7 @@ func TestNewCertManager(t *testing.T) {
 		cm1, err := newCertManager(tempDir)
 		require.NoError(t, err)
 		caCert1 := cm1.CACert()
-		_ = cm1.Close()
+		require.NoError(t, cm1.Close())
 
 		cm2, err := newCertManager(tempDir)
 		require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestNewCertManager(t *testing.T) {
 		// First generate valid CA to get a valid cert
 		cm, err := newCertManager(tempDir)
 		require.NoError(t, err)
-		_ = cm.Close()
+		require.NoError(t, cm.Close())
 
 		// Overwrite key with invalid PEM
 		err = os.WriteFile(filepath.Join(tempDir, "ca-key.pem"), []byte("not a valid pem"), 0600)
@@ -136,7 +136,7 @@ func TestNewCertManager(t *testing.T) {
 		// Generate a leaf certificate (not CA)
 		leafCert, err := cm.GetCertificate("example.com")
 		require.NoError(t, err)
-		_ = cm.Close()
+		require.NoError(t, cm.Close())
 
 		// Overwrite CA cert with leaf cert
 		leafCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafCert.Certificate[0]})
@@ -168,7 +168,7 @@ func TestNewCertManager(t *testing.T) {
 
 		expiredCertDER, err := x509.CreateCertificate(rand.Reader, expiredTemplate, expiredTemplate, cm.caKey.Public(), cm.caKey)
 		require.NoError(t, err)
-		_ = cm.Close()
+		require.NoError(t, cm.Close())
 
 		expiredCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: expiredCertDER})
 		err = os.WriteFile(filepath.Join(tempDir, "ca.pem"), expiredCertPEM, 0644)
@@ -199,7 +199,7 @@ func TestNewCertManager(t *testing.T) {
 
 		badCertDER, err := x509.CreateCertificate(rand.Reader, badTemplate, badTemplate, cm.caKey.Public(), cm.caKey)
 		require.NoError(t, err)
-		_ = cm.Close()
+		require.NoError(t, cm.Close())
 
 		badCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: badCertDER})
 		err = os.WriteFile(filepath.Join(tempDir, "ca.pem"), badCertPEM, 0644)

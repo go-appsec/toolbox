@@ -348,7 +348,7 @@ func TestInteractshBackend_CreateAfterClose(t *testing.T) {
 	t.Parallel()
 
 	backend := NewInteractshBackend()
-	_ = backend.Close()
+	require.NoError(t, backend.Close())
 
 	_, err := backend.CreateSession(t.Context(), "")
 	require.Error(t, err)

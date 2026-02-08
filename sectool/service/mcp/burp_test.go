@@ -17,7 +17,7 @@ func TestBurpClientClosed(t *testing.T) {
 	t.Cleanup(cancel)
 
 	client := New(config.DefaultBurpMCPURL)
-	_ = client.Close() // Close immediately
+	require.NoError(t, client.Close())
 
 	_, err := client.GetProxyHistory(ctx, 10, 0)
 	require.ErrorIs(t, err, ErrClientClosed)

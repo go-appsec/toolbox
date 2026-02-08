@@ -40,12 +40,13 @@ func TestMemStorage_Delete(t *testing.T) {
 	s := NewMemStorage()
 	t.Cleanup(func() { _ = s.Close() })
 
-	_ = s.Set("key1", []byte("value1"))
+	require.NoError(t, s.Set("key1", []byte("value1")))
 
 	err := s.Delete("key1")
 	require.NoError(t, err)
 
-	_, found, _ := s.Get("key1")
+	_, found, err := s.Get("key1")
+	require.NoError(t, err)
 	assert.False(t, found)
 }
 
@@ -55,9 +56,9 @@ func TestMemStorage_KeySet(t *testing.T) {
 	s := NewMemStorage()
 	t.Cleanup(func() { _ = s.Close() })
 
-	_ = s.Set("a:1", []byte("v1"))
-	_ = s.Set("a:2", []byte("v2"))
-	_ = s.Set("b:1", []byte("v3"))
+	require.NoError(t, s.Set("a:1", []byte("v1")))
+	require.NoError(t, s.Set("a:2", []byte("v2")))
+	require.NoError(t, s.Set("b:1", []byte("v3")))
 
 	keys := s.KeySet()
 	assert.Len(t, keys, 3)
@@ -69,8 +70,8 @@ func TestMemStorage_DeleteAll(t *testing.T) {
 	s := NewMemStorage()
 	t.Cleanup(func() { _ = s.Close() })
 
-	_ = s.Set("key1", []byte("v1"))
-	_ = s.Set("key2", []byte("v2"))
+	require.NoError(t, s.Set("key1", []byte("v1")))
+	require.NoError(t, s.Set("key2", []byte("v2")))
 
 	err := s.DeleteAll()
 	require.NoError(t, err)
@@ -86,19 +87,21 @@ func TestMemStorage_CopiesData(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 
 	original := []byte("original")
-	_ = s.Set("key", original)
+	require.NoError(t, s.Set("key", original))
 
 	// Modify original
 	original[0] = 'X'
 
 	// Loaded data should be unchanged
-	loaded, _, _ := s.Get("key")
+	loaded, _, err := s.Get("key")
+	require.NoError(t, err)
 	assert.Equal(t, byte('o'), loaded[0])
 
 	// Modify loaded data
 	loaded[0] = 'Y'
 
 	// Load again should be unchanged
-	loaded2, _, _ := s.Get("key")
+	loaded2, _, err := s.Get("key")
+	require.NoError(t, err)
 	assert.Equal(t, byte('o'), loaded2[0])
 }

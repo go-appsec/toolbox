@@ -192,7 +192,7 @@ func TestNativeProxyBackend_Rules_Persistence(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_ = backend1.Close()
+	require.NoError(t, backend1.Close())
 
 	// Create new backend with same ruleStorage — rules should be loaded
 	backend2, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), ruleStorage)
@@ -238,7 +238,7 @@ func TestNativeProxyBackend_Rules_DeletePersists(t *testing.T) {
 
 	err = backend1.DeleteRule(t.Context(), "to-delete")
 	require.NoError(t, err)
-	_ = backend1.Close()
+	require.NoError(t, backend1.Close())
 
 	// New backend should only see the surviving rule
 	backend2, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), ruleStorage)

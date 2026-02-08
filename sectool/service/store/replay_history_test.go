@@ -149,9 +149,12 @@ func TestReplayHistoryStore(t *testing.T) {
 		store.Store(&ReplayHistoryEntry{FlowID: "e3", ReferenceOffset: ref3})
 
 		// Verify entries have their offsets
-		e1, _ := store.Get("e1")
-		e2, _ := store.Get("e2")
-		e3, _ := store.Get("e3")
+		e1, ok := store.Get("e1")
+		require.True(t, ok)
+		e2, ok := store.Get("e2")
+		require.True(t, ok)
+		e3, ok := store.Get("e3")
+		require.True(t, ok)
 		assert.Equal(t, uint32(50), e1.ReferenceOffset)
 		assert.Equal(t, uint32(100), e2.ReferenceOffset)
 		assert.Equal(t, uint32(150), e3.ReferenceOffset)
@@ -161,9 +164,12 @@ func TestReplayHistoryStore(t *testing.T) {
 		assert.True(t, cleared)
 
 		// All entries should now have ReferenceOffset=0
-		e1, _ = store.Get("e1")
-		e2, _ = store.Get("e2")
-		e3, _ = store.Get("e3")
+		e1, ok = store.Get("e1")
+		require.True(t, ok)
+		e2, ok = store.Get("e2")
+		require.True(t, ok)
+		e3, ok = store.Get("e3")
+		require.True(t, ok)
 		assert.Equal(t, uint32(0), e1.ReferenceOffset)
 		assert.Equal(t, uint32(0), e2.ReferenceOffset)
 		assert.Equal(t, uint32(0), e3.ReferenceOffset)
@@ -177,7 +183,8 @@ func TestReplayHistoryStore(t *testing.T) {
 		entry := &ReplayHistoryEntry{FlowID: "auto_time"}
 		store.Store(entry)
 
-		got, _ := store.Get("auto_time")
+		got, ok := store.Get("auto_time")
+		require.True(t, ok)
 		assert.False(t, got.CreatedAt.IsZero())
 		assert.WithinDuration(t, time.Now(), got.CreatedAt, time.Second)
 	})
@@ -191,7 +198,8 @@ func TestReplayHistoryStore(t *testing.T) {
 		entry := &ReplayHistoryEntry{FlowID: "explicit_time", CreatedAt: explicit}
 		store.Store(entry)
 
-		got, _ := store.Get("explicit_time")
+		got, ok := store.Get("explicit_time")
+		require.True(t, ok)
 		assert.True(t, explicit.Equal(got.CreatedAt))
 	})
 }

@@ -51,11 +51,12 @@ func TestSpillStore(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = s.Close() })
 
-		_ = s.Set("key1", []byte("v"))
+		require.NoError(t, s.Set("key1", []byte("v")))
 
 		require.NoError(t, s.Delete("key1"))
 
-		_, found, _ := s.Get("key1")
+		_, found, err := s.Get("key1")
+		require.NoError(t, err)
 		assert.False(t, found)
 	})
 
@@ -64,9 +65,9 @@ func TestSpillStore(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = s.Close() })
 
-		_ = s.Set("a", []byte("1"))
-		_ = s.Set("b", []byte("2"))
-		_ = s.Set("c", []byte("3"))
+		require.NoError(t, s.Set("a", []byte("1")))
+		require.NoError(t, s.Set("b", []byte("2")))
+		require.NoError(t, s.Set("c", []byte("3")))
 
 		keys := s.KeySet()
 		assert.Len(t, keys, 3)
@@ -80,8 +81,8 @@ func TestSpillStore(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = s.Close() })
 
-		_ = s.Set("k1", []byte("v"))
-		_ = s.Set("k2", []byte("v"))
+		require.NoError(t, s.Set("k1", []byte("v")))
+		require.NoError(t, s.Set("k2", []byte("v")))
 
 		require.NoError(t, s.DeleteAll())
 
@@ -95,20 +96,22 @@ func TestSpillStore(t *testing.T) {
 		t.Cleanup(func() { _ = s.Close() })
 
 		original := []byte("original")
-		_ = s.Set("key", original)
+		require.NoError(t, s.Set("key", original))
 
 		// Modify original
 		original[0] = 'X'
 
 		// Loaded data should be unchanged
-		loaded, _, _ := s.Get("key")
+		loaded, _, err := s.Get("key")
+		require.NoError(t, err)
 		assert.Equal(t, byte('o'), loaded[0])
 
 		// Modify loaded data
 		loaded[0] = 'Y'
 
 		// Load again should be unchanged
-		loaded2, _, _ := s.Get("key")
+		loaded2, _, err := s.Get("key")
+		require.NoError(t, err)
 		assert.Equal(t, byte('o'), loaded2[0])
 	})
 
@@ -120,7 +123,7 @@ func TestSpillStore(t *testing.T) {
 		_, err = os.Stat(s.dataDir)
 		require.NoError(t, err)
 
-		_ = s.Close()
+		require.NoError(t, s.Close())
 
 		// Verify temp dir is removed
 		_, err = os.Stat(s.dataDir)
@@ -156,7 +159,8 @@ func TestSpillStore(t *testing.T) {
 		err = s.Set(key, []byte("value"))
 		require.NoError(t, err)
 
-		data, found, _ := s.Get(key)
+		data, found, err := s.Get(key)
+		require.NoError(t, err)
 		assert.True(t, found)
 		assert.Equal(t, []byte("value"), data)
 	})
@@ -180,13 +184,13 @@ func TestSpillStore(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = s.Close() })
 
-		_ = s.Set("key", []byte("short"))
+		require.NoError(t, s.Set("key", []byte("short")))
 
 		s.mu.Lock()
 		hotBytesBefore := s.hotBytes
 		s.mu.Unlock()
 
-		_ = s.Set("key", []byte("much-longer-value"))
+		require.NoError(t, s.Set("key", []byte("much-longer-value")))
 
 		s.mu.Lock()
 		hotBytesAfter := s.hotBytes
@@ -194,7 +198,8 @@ func TestSpillStore(t *testing.T) {
 
 		assert.Equal(t, hotBytesBefore-int64(len("short"))+int64(len("much-longer-value")), hotBytesAfter)
 
-		loaded, found, _ := s.Get("key")
+		loaded, found, err := s.Get("key")
+		require.NoError(t, err)
 		assert.True(t, found)
 		assert.Equal(t, []byte("much-longer-value"), loaded)
 	})
@@ -223,7 +228,7 @@ func TestSpillStore(t *testing.T) {
 	t.Run("set_on_closed", func(t *testing.T) {
 		s, err := NewSpillStore(DefaultSpillStoreConfig())
 		require.NoError(t, err)
-		_ = s.Close()
+		require.NoError(t, s.Close())
 
 		err = s.Set("key", []byte("value"))
 		assert.ErrorIs(t, err, ErrClosed)
@@ -232,8 +237,8 @@ func TestSpillStore(t *testing.T) {
 	t.Run("get_on_closed", func(t *testing.T) {
 		s, err := NewSpillStore(DefaultSpillStoreConfig())
 		require.NoError(t, err)
-		_ = s.Set("key", []byte("value"))
-		_ = s.Close()
+		require.NoError(t, s.Set("key", []byte("value")))
+		require.NoError(t, s.Close())
 
 		_, _, err = s.Get("key")
 		assert.ErrorIs(t, err, ErrClosed)
@@ -242,7 +247,7 @@ func TestSpillStore(t *testing.T) {
 	t.Run("delete_on_closed", func(t *testing.T) {
 		s, err := NewSpillStore(DefaultSpillStoreConfig())
 		require.NoError(t, err)
-		_ = s.Close()
+		require.NoError(t, s.Close())
 
 		assert.ErrorIs(t, s.Delete("key"), ErrClosed)
 	})
@@ -250,7 +255,7 @@ func TestSpillStore(t *testing.T) {
 	t.Run("key_set_on_closed", func(t *testing.T) {
 		s, err := NewSpillStore(DefaultSpillStoreConfig())
 		require.NoError(t, err)
-		_ = s.Close()
+		require.NoError(t, s.Close())
 
 		keys := s.KeySet()
 		assert.Empty(t, keys)
@@ -259,7 +264,7 @@ func TestSpillStore(t *testing.T) {
 	t.Run("delete_all_on_closed", func(t *testing.T) {
 		s, err := NewSpillStore(DefaultSpillStoreConfig())
 		require.NoError(t, err)
-		_ = s.Close()
+		require.NoError(t, s.Close())
 
 		assert.ErrorIs(t, s.DeleteAll(), ErrClosed)
 	})
@@ -371,7 +376,7 @@ func TestSpillStore_Eviction(t *testing.T) {
 		data := make([]byte, 100)
 		require.NoError(t, s.Set("key1", data))
 		for i := 0; i < 5; i++ {
-			_ = s.Set("filler"+string(rune('a'+i)), make([]byte, 100))
+			require.NoError(t, s.Set("filler"+string(rune('a'+i)), make([]byte, 100)))
 		}
 		s.wg.Wait()
 
@@ -417,15 +422,16 @@ func TestSpillStore_Eviction(t *testing.T) {
 
 		// Set entries
 		for i := 0; i < 3; i++ {
-			_ = s.Set("key"+string(rune('a'+i)), make([]byte, 100))
+			require.NoError(t, s.Set("key"+string(rune('a'+i)), make([]byte, 100)))
 		}
 
 		// Access keya to update lastAccess
-		_, _, _ = s.Get("keya")
+		_, _, err = s.Get("keya")
+		require.NoError(t, err)
 
 		// Add more to trigger eviction - should evict keyb, keyc first
 		for i := 0; i < 3; i++ {
-			_ = s.Set("filler"+string(rune('a'+i)), make([]byte, 100))
+			require.NoError(t, s.Set("filler"+string(rune('a'+i)), make([]byte, 100)))
 		}
 		s.wg.Wait()
 
@@ -510,7 +516,7 @@ func TestSpillStore_Encryption(t *testing.T) {
 
 		// Set more to trigger eviction
 		for i := 0; i < 5; i++ {
-			_ = s.Set("filler"+string(rune('a'+i)), make([]byte, 50))
+			require.NoError(t, s.Set("filler"+string(rune('a'+i)), make([]byte, 50)))
 		}
 
 		s.wg.Wait() // Wait for eviction to complete
@@ -550,7 +556,7 @@ func TestSpillStore_Encryption(t *testing.T) {
 
 		// Trigger eviction
 		for i := 0; i < 5; i++ {
-			_ = s.Set("filler"+string(rune('a'+i)), make([]byte, 50))
+			require.NoError(t, s.Set("filler"+string(rune('a'+i)), make([]byte, 50)))
 		}
 		s.wg.Wait()
 
@@ -681,7 +687,7 @@ func TestSpillStore_CleanEntries(t *testing.T) {
 		require.NoError(t, s.Delete("fillera"))
 		require.NoError(t, s.Delete("fillerb"))
 		for i := 0; i < 3; i++ {
-			_ = s.Set("filler2_"+string(rune('a'+i)), make([]byte, 100))
+			require.NoError(t, s.Set("filler2_"+string(rune('a'+i)), make([]byte, 100)))
 		}
 
 		s.wg.Wait() // Wait for eviction to complete
@@ -729,7 +735,7 @@ func TestSpillStore_CleanEntries(t *testing.T) {
 
 		// Fill cache to trigger eviction
 		for i := 0; i < 5; i++ {
-			_ = s.Set("filler"+string(rune('a'+i)), make([]byte, 100))
+			require.NoError(t, s.Set("filler"+string(rune('a'+i)), make([]byte, 100)))
 		}
 		s.wg.Wait()
 
@@ -766,7 +772,7 @@ func TestSpillStore_CleanEntries(t *testing.T) {
 
 		// Evict again
 		for i := 0; i < 5; i++ {
-			_ = s.Set("filler2_"+string(rune('a'+i)), make([]byte, 100))
+			require.NoError(t, s.Set("filler2_"+string(rune('a'+i)), make([]byte, 100)))
 		}
 		s.wg.Wait()
 
@@ -805,7 +811,7 @@ func TestSpillStore_CleanEntries(t *testing.T) {
 			for j := range data {
 				data[j] = byte(i)
 			}
-			_ = s.Set("key"+string(rune('a'+i)), data)
+			require.NoError(t, s.Set("key"+string(rune('a'+i)), data))
 			s.wg.Wait() // wait after each to ensure eviction completes
 		}
 
@@ -874,7 +880,8 @@ func TestSpillStore_CleanEntries(t *testing.T) {
 		s.wg.Wait()
 
 		// Get to make clean
-		_, _, _ = s.Get("key1")
+		_, _, err = s.Get("key1")
+		require.NoError(t, err)
 		s.wg.Wait()
 
 		s.mu.Lock()
@@ -908,7 +915,7 @@ func TestSpillStore_CompactionTruncatesEmptyDisk(t *testing.T) {
 
 	// Set entries to trigger eviction
 	for i := 0; i < 5; i++ {
-		_ = s.Set("key"+string(rune('a'+i)), make([]byte, 100))
+		require.NoError(t, s.Set("key"+string(rune('a'+i)), make([]byte, 100)))
 	}
 	s.wg.Wait()
 
@@ -920,7 +927,8 @@ func TestSpillStore_CompactionTruncatesEmptyDisk(t *testing.T) {
 
 	// Get all entries back to memory
 	for i := 0; i < 5; i++ {
-		_, _, _ = s.Get("key" + string(rune('a'+i)))
+		_, _, err = s.Get("key" + string(rune('a'+i)))
+		require.NoError(t, err)
 	}
 	s.wg.Wait()
 
@@ -955,7 +963,7 @@ func TestSpillStore_OverwriteTriggersCompaction(t *testing.T) {
 
 	// Set entries to trigger eviction
 	for i := 0; i < 3; i++ {
-		_ = s.Set("key"+string(rune('a'+i)), make([]byte, 50))
+		require.NoError(t, s.Set("key"+string(rune('a'+i)), make([]byte, 50)))
 	}
 	s.wg.Wait()
 
@@ -975,7 +983,7 @@ func TestSpillStore_OverwriteTriggersCompaction(t *testing.T) {
 
 	// Overwrite the disk entry multiple times to accumulate dead space
 	for i := 0; i < 3; i++ {
-		_ = s.Set(diskKey, make([]byte, 50))
+		require.NoError(t, s.Set(diskKey, make([]byte, 50)))
 		s.wg.Wait()
 	}
 
@@ -1005,12 +1013,13 @@ func TestSpillStore_AccessSeqOrdering(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 
 	// Set entries in order
-	_ = s.Set("old", make([]byte, 50))
-	_ = s.Set("middle", make([]byte, 50))
-	_ = s.Set("new", make([]byte, 50))
+	require.NoError(t, s.Set("old", make([]byte, 50)))
+	require.NoError(t, s.Set("middle", make([]byte, 50)))
+	require.NoError(t, s.Set("new", make([]byte, 50)))
 
 	// Access "old" to make it most recent
-	_, _, _ = s.Get("old")
+	_, _, err = s.Get("old")
+	require.NoError(t, err)
 
 	// Verify access sequences reflect access order
 	s.mu.Lock()
@@ -1037,8 +1046,8 @@ func TestSpillStore_GetReleasesLockDuringIO(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 
 	// Set and evict an entry
-	_ = s.Set("key1", make([]byte, 80))
-	_ = s.Set("key2", make([]byte, 80)) // trigger eviction
+	require.NoError(t, s.Set("key1", make([]byte, 80)))
+	require.NoError(t, s.Set("key2", make([]byte, 80))) // trigger eviction
 	s.wg.Wait()
 
 	// Verify key1 is on disk
@@ -1067,11 +1076,13 @@ func TestSpillStore_GetReleasesLockDuringIO(t *testing.T) {
 	wg.Wait()
 
 	// Verify both operations completed
-	d1, f1, _ := s.Get("key1")
+	d1, f1, err := s.Get("key1")
+	require.NoError(t, err)
 	assert.True(t, f1)
 	assert.Len(t, d1, 80)
 
-	d3, f3, _ := s.Get("key3")
+	d3, f3, err := s.Get("key3")
+	require.NoError(t, err)
 	assert.True(t, f3)
 	assert.Equal(t, []byte("new"), d3)
 }
@@ -1094,8 +1105,8 @@ func TestSpillStore_GetDuringModification(t *testing.T) {
 	for i := range original {
 		original[i] = 1
 	}
-	_ = s.Set("key1", original)
-	_ = s.Set("key2", make([]byte, 80)) // trigger eviction
+	require.NoError(t, s.Set("key1", original))
+	require.NoError(t, s.Set("key2", make([]byte, 80))) // trigger eviction
 	s.wg.Wait()
 
 	// Verify key1 is on disk
