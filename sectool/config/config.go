@@ -9,18 +9,17 @@ import (
 )
 
 const (
-	Version              = "0.1.0"
 	DefaultBurpMCPURL    = "http://127.0.0.1:9876/sse"
 	DefaultBurpProxyAddr = "127.0.0.1:8080"
 	DefaultMCPPort       = 9119
 	DefaultProxyPort     = 8080
 )
 
-// RevNum is injected at build time via ldflags; defaults to "dev".
-var RevNum = "dev"
+// Version is injected at build time via ldflags; defaults to "dev".
+var Version = "dev"
 
 func UserAgent() string {
-	return "Mozilla/5.0 (compatible; go-appsec/llm-security-toolbox sectool-v" + Version + "-" + RevNum + ")"
+	return "Mozilla/5.0 (compatible; go-appsec/llm-security-toolbox sectool-" + Version + ")"
 }
 
 // DefaultPath returns ~/.sectool/config.json.

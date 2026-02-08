@@ -142,7 +142,7 @@ func (s *Server) WaitTillStarted() {
 
 // Run starts the MCP server and blocks until shutdown.
 func (s *Server) Run(ctx context.Context) error {
-	log.Printf("sectool MCP server starting (version=%s-%s)", config.Version, config.RevNum)
+	log.Printf("sectool MCP server starting (version=%s)", config.Version)
 
 	markStarted := sync.OnceFunc(func() {
 		s.startedAt = time.Now()

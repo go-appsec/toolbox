@@ -1,7 +1,7 @@
 export GO111MODULE = on
 
-REV_NUM := $(shell n=$$(git rev-list --count HEAD 2>/dev/null || echo "101"); echo $$((n - 101)))
-LDFLAGS := -ldflags "-s -w -X github.com/go-appsec/llm-security-toolbox/sectool/config.RevNum=$(REV_NUM)"
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS := -ldflags "-s -w -X github.com/go-appsec/llm-security-toolbox/sectool/config.Version=$(VERSION)"
 
 .PHONY: build build-cross clean test test-all test-cover bench lint
 

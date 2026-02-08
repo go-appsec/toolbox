@@ -35,7 +35,7 @@ func main() {
 	case "encode":
 		err = encode.Parse(args[1:])
 	case "version", "--version", "-v":
-		_, _ = fmt.Printf("sectool version %s-%s\n", config.Version, config.RevNum)
+		_, _ = fmt.Printf("sectool version %s\n", config.Version)
 		return
 	case "help", "--help", "-h":
 		printRootUsage()
