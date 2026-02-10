@@ -3,6 +3,8 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/go-appsec/toolbox/blob/main/LICENSE)
 [![Build Status](https://github.com/go-appsec/toolbox/actions/workflows/tests-main.yml/badge.svg)](https://github.com/go-appsec/toolbox/actions/workflows/tests-main.yml)
 
+**MCP-based application security testing tools for your coding agent.**
+
 Collaborative application security testing with coding agents. Sectool gives your agent the same tools you use — proxy history, request replay, crawling, out-of-band testing — via MCP (Model Context Protocol), allowing you to work together. You handle authentication or interact with the UI, the agent probes targets and analyzes responses, and attempts other permutations. Combining your abilities makes routine tasks easier, junior security engineers more capable, hidden indicators less likely to be missed, and complex testing more thorough.
 
 ## Getting Started
