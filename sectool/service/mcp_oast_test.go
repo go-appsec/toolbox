@@ -50,6 +50,7 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 		args map[string]interface{}
 	}{
 		{name: "poll_basic", args: map[string]interface{}{}},
+		{name: "poll_no_wait", args: map[string]interface{}{"wait": "0s"}},
 		{name: "poll_with_wait", args: map[string]interface{}{"wait": "100ms"}},
 		{name: "poll_with_type_filter", args: map[string]interface{}{"type": "dns"}},
 		{name: "poll_with_limit", args: map[string]interface{}{"limit": 5}},

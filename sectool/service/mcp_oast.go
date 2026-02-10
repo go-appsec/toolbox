@@ -33,8 +33,9 @@ Output modes:
 - "events": Returns individual events with event_id for use with oast_get.
 
 Options:
-- Immediate: omit wait
-- Long-poll: set wait (e.g., '30s', max 120s)
+- Default: long-poll for 30s
+- Custom: set wait (e.g., '60s', max 120s)
+- Immediate: set wait to '0s'
 - Incremental: use since parameter, accepts event_id or "last"
 - Filter by type: dns, http, smtp, ftp, ldap, smb, responder
 
@@ -43,7 +44,7 @@ Response includes events/aggregates and optional dropped_count; use oast_get for
 		mcp.WithString("output_mode", mcp.Description("Output mode: 'summary' (default) or 'events'")),
 		mcp.WithString("since", mcp.Description("event_id or 'last' (per-session cursor)")),
 		mcp.WithString("type", mcp.Description("Filter by event type: dns, http, smtp, ftp, ldap, smb, responder")),
-		mcp.WithString("wait", mcp.Description("Long-poll duration (e.g., '30s', max 120s)")),
+		mcp.WithString("wait", mcp.Description("Long-poll duration (default '30s', max 120s, '0s' to disable)")),
 		mcp.WithNumber("limit", mcp.Description("Maximum number of events to return")),
 	)
 }
@@ -101,16 +102,16 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 
 	outputMode := req.GetString("output_mode", "summary")
 
-	var wait time.Duration
+	wait := 30 * time.Second
 	if waitStr := req.GetString("wait", ""); waitStr != "" {
 		parsed, err := time.ParseDuration(waitStr)
 		if err != nil {
 			return errorResult("invalid wait duration: " + err.Error()), nil
 		}
-		if parsed > 120*time.Second {
-			parsed = 120 * time.Second
-		}
 		wait = parsed
+	}
+	if wait > 120*time.Second {
+		wait = 120 * time.Second
 	}
 
 	since := req.GetString("since", "")
