@@ -11,6 +11,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/cliutil"
 	"github.com/go-appsec/toolbox/sectool/mcpclient"
 	"github.com/go-appsec/toolbox/sectool/protocol"
+	"github.com/go-appsec/toolbox/sectool/util"
 )
 
 func ruleList(mcpURL string, websocket bool, limit int) error {
@@ -51,6 +52,7 @@ func printRuleTable(rules []protocol.RuleEntry) {
 	})
 
 	t := cliutil.NewTable(os.Stdout)
+	tr := util.TruncateString
 
 	if hasLabels {
 		t.AppendHeader(table.Row{"Rule ID", "Label", "Type", "Regex", "Match", "Replace"})
@@ -59,7 +61,7 @@ func printRuleTable(rules []protocol.RuleEntry) {
 			if r.IsRegex {
 				regex = "yes"
 			}
-			t.AppendRow(table.Row{r.RuleID, r.Label, r.Type, regex, truncate(r.Match, 30), truncate(r.Replace, 30)})
+			t.AppendRow(table.Row{r.RuleID, r.Label, r.Type, regex, tr(r.Match, 30), tr(r.Replace, 30)})
 		}
 	} else {
 		t.AppendHeader(table.Row{"Rule ID", "Type", "Regex", "Match", "Replace"})
@@ -68,18 +70,11 @@ func printRuleTable(rules []protocol.RuleEntry) {
 			if r.IsRegex {
 				regex = "yes"
 			}
-			t.AppendRow(table.Row{r.RuleID, r.Type, regex, truncate(r.Match, 30), truncate(r.Replace, 30)})
+			t.AppendRow(table.Row{r.RuleID, r.Type, regex, tr(r.Match, 30), tr(r.Replace, 30)})
 		}
 	}
 	t.Render()
 	cliutil.Summary(os.Stdout, len(rules), "rule", "rules")
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-2] + ".."
 }
 
 func ruleAdd(mcpURL string, ruleType, match, replace, label string, isRegex bool) error {

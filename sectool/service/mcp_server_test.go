@@ -109,6 +109,7 @@ func TestMCP_ListTools(t *testing.T) {
 	expectedTools := []string{
 		"proxy_poll",
 		"proxy_get",
+		"cookie_jar",
 		"proxy_rule_list",
 		"proxy_rule_add",
 		"proxy_rule_update",

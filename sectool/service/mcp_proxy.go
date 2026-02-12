@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -14,9 +15,11 @@ import (
 	"github.com/go-analyze/bulk"
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/go-appsec/toolbox/sectool/jwt"
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
 	"github.com/go-appsec/toolbox/sectool/service/store"
+	"github.com/go-appsec/toolbox/sectool/util"
 )
 
 func (m *mcpServer) proxyPollTool() mcp.Tool {
@@ -101,6 +104,145 @@ func (m *mcpServer) proxyRuleDeleteTool() mcp.Tool {
 		mcp.WithString("rule_id", mcp.Required(), mcp.Description("Rule ID or label to delete")),
 	)
 }
+
+func (m *mcpServer) cookieJarTool() mcp.Tool {
+	return mcp.NewTool("cookie_jar",
+		mcp.WithDescription(`Extract and deduplicate cookies from proxy and replay traffic.
+Returns cookies deduplicated by (name, domain) with security attributes (Secure, HttpOnly, SameSite) and origin flow_id.
+Without filters: overview only (no values). With name or domain filter: includes full values and auto-decoded JWT claims.`),
+		mcp.WithString("name", mcp.Description("Filter by cookie name (exact match); enables value and JWT decode in response")),
+		mcp.WithString("domain", mcp.Description("Filter by cookie domain (matches domain and subdomains); enables value and JWT decode in response")),
+	)
+}
+
+func (m *mcpServer) handleCookieJar(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if err := m.requireWorkflow(); err != nil {
+		return err, nil
+	}
+
+	nameFilter := req.GetString("name", "")
+	domainFilter := req.GetString("domain", "")
+	// Detail mode: include values and JWT decode when any filter is applied
+	detailMode := nameFilter != "" || domainFilter != ""
+
+	log.Printf("mcp/cookie_jar: name=%q domain=%q detail=%v", nameFilter, domainFilter, detailMode)
+
+	// Fetch all proxy+replay entries with full response data
+	allEntries, err := m.service.fetchAllProxyEntries(ctx, true)
+	if err != nil {
+		return errorResultFromErr("failed to fetch proxy history: ", err), nil
+	}
+
+	// Filter out-of-scope domains
+	cfg := m.service.cfg
+	if len(cfg.AllowedDomains) > 0 || len(cfg.ExcludeDomains) > 0 {
+		allEntries = bulk.SliceFilterInPlace(func(e flowEntry) bool {
+			allowed, _ := cfg.IsDomainAllowed(e.host)
+			return allowed
+		}, allEntries)
+	}
+
+	// Extract cookies: deduplicate by (name, domain), keeping last seen
+	type cookieKey struct{ name, domain string }
+	seen := make(map[cookieKey]protocol.CookieEntry)
+	var order []cookieKey
+	for _, entry := range allEntries {
+		if entry.response == "" {
+			continue
+		}
+
+		resp, parseErr := readResponseBytes([]byte(entry.response))
+		if parseErr != nil {
+			continue
+		}
+
+		cookies := resp.Cookies()
+		_ = resp.Body.Close()
+		if len(cookies) == 0 {
+			continue
+		}
+
+		var flowID string
+		if entry.flowID != "" {
+			flowID = entry.flowID
+		} else {
+			flowID = m.service.proxyIndex.Register(entry.offset)
+		}
+
+		for _, c := range cookies {
+			if nameFilter != "" && c.Name != nameFilter {
+				continue
+			}
+
+			domain := c.Domain
+			if domain == "" {
+				domain = entry.host
+			}
+			// Strip leading dot for consistency
+			domain = strings.TrimPrefix(domain, ".")
+
+			if domainFilter != "" && !matchesCookieDomain(domain, domainFilter) {
+				continue
+			}
+
+			var sameSite string
+			switch c.SameSite {
+			case http.SameSiteLaxMode:
+				sameSite = "Lax"
+			case http.SameSiteStrictMode:
+				sameSite = "Strict"
+			case http.SameSiteNoneMode:
+				sameSite = "None"
+			}
+
+			var expires string
+			if !c.Expires.IsZero() {
+				expires = c.Expires.UTC().Format(time.RFC3339)
+			} else if c.MaxAge > 0 {
+				expires = time.Now().Add(time.Duration(c.MaxAge) * time.Second).UTC().Format(time.RFC3339)
+			} else {
+				expires = "session"
+			}
+
+			// Include value and JWT decode only in detail mode
+			var value string
+			var decoded *jwt.Result
+			if detailMode {
+				value = c.Value
+				if strings.HasPrefix(c.Value, "eyJ") {
+					decoded, _ = jwt.DecodeJWT(c.Value)
+				}
+			}
+
+			key := cookieKey{name: c.Name, domain: domain}
+			if _, exists := seen[key]; !exists {
+				order = append(order, key)
+			}
+			seen[key] = protocol.CookieEntry{
+				Name:     c.Name,
+				Domain:   domain,
+				Path:     c.Path,
+				Secure:   c.Secure,
+				HttpOnly: c.HttpOnly,
+				SameSite: sameSite,
+				Expires:  expires,
+				Value:    value,
+				Decoded:  decoded,
+				FlowID:   flowID,
+			}
+		}
+	}
+
+	// Build result in insertion order
+	cookies := make([]protocol.CookieEntry, 0, len(order))
+	for _, key := range order {
+		cookies = append(cookies, seen[key])
+	}
+
+	log.Printf("mcp/cookie_jar: returning %d cookies", len(cookies))
+	return jsonResult(&protocol.CookieJarResponse{Cookies: cookies})
+}
+
 func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if err := m.requireWorkflow(); err != nil {
 		return err, nil
@@ -192,7 +334,7 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 				Scheme:         scheme,
 				Host:           entry.host,
 				Port:           port,
-				Path:           truncateString(entry.path, maxPathLength),
+				Path:           util.TruncateString(entry.path, maxPathLength),
 				Status:         entry.status,
 				ResponseLength: entry.respLen,
 				Source:         entry.source,

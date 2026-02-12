@@ -104,6 +104,12 @@ type CrawlPollOpts struct {
 	Offset       int
 }
 
+// CookieJarOpts are options for CookieJar.
+type CookieJarOpts struct {
+	Name   string
+	Domain string
+}
+
 // OastPollOpts are options for OastPoll.
 type OastPollOpts struct {
 	OutputMode string // "summary" or "events"

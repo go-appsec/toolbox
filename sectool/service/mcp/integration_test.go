@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/service/testutil"
+	"github.com/go-appsec/toolbox/sectool/util"
 )
 
 // Integration tests for Burp MCP client.
@@ -212,7 +213,7 @@ func TestBurpSendHTTP1Request(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Logf("Response length: %d bytes", len(response))
-	t.Logf("Response preview: %s", truncate(response, 500))
+	t.Logf("Response preview: %s", util.TruncateString(response, 500))
 
 	// Should have HTTP response
 	assert.Contains(t, response, "HTTP/")
@@ -313,13 +314,6 @@ func extractFirstLine(s string) string {
 	return s
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
-}
-
 func itoa(n int) string {
 	if n == 0 {
 		return "0"
@@ -353,7 +347,7 @@ func TestBurpSendHTTP2Request(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Logf("HTTP/2 Response length: %d bytes", len(response))
-	t.Logf("HTTP/2 Response preview: %s", truncate(response, 500))
+	t.Logf("HTTP/2 Response preview: %s", util.TruncateString(response, 500))
 
 	// Should have HTTP response
 	assert.Contains(t, response, "HTTP/")
@@ -390,7 +384,7 @@ func TestBurpGetProxyWebsocketHistory_FirstPage(t *testing.T) {
 
 	t.Logf("Retrieved %d WebSocket history entries", len(entries))
 	for i, entry := range entries {
-		t.Logf("  [%d] %s: %s", i, entry.Direction, truncate(entry.Payload, 100))
+		t.Logf("  [%d] %s: %s", i, entry.Direction, util.TruncateString(entry.Payload, 100))
 	}
 }
 
@@ -436,7 +430,7 @@ func TestBurpGetActiveEditorContents(t *testing.T) {
 
 	t.Logf("Active editor contents length: %d bytes", len(contents))
 	if contents != "" {
-		t.Logf("Contents preview: %s", truncate(contents, 200))
+		t.Logf("Contents preview: %s", util.TruncateString(contents, 200))
 	}
 }
 
@@ -464,7 +458,8 @@ func TestBurpGetMatchReplaceRules(t *testing.T) {
 	for i, rule := range rules {
 		t.Logf("  [%d] type=%s enabled=%v comment=%q match=%q replace=%q",
 			i, rule.RuleType, rule.Enabled, rule.Comment,
-			truncate(rule.StringMatch, 50), truncate(rule.StringReplace, 50))
+			util.TruncateString(rule.StringMatch, 50),
+			util.TruncateString(rule.StringReplace, 50))
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/cliutil"
 )
 
-var proxySubcommands = []string{"summary", "list", "export", "rule", "help"}
+var proxySubcommands = []string{"summary", "list", "cookies", "export", "rule", "help"}
 
 func Parse(args []string, mcpURL string) error {
 	if len(args) < 1 {
@@ -23,6 +23,8 @@ func Parse(args []string, mcpURL string) error {
 		return parseSummary(args[1:], mcpURL)
 	case "list":
 		return parseList(args[1:], mcpURL)
+	case "cookies":
+		return parseCookies(args[1:], mcpURL)
 	case "export":
 		return parseExport(args[1:], mcpURL)
 	case "rule":
@@ -96,6 +98,24 @@ proxy list [options]
     sectool proxy list --source replay --limit 10         # recent replay requests
 
   Output: Markdown table with flow_id, method, host, path, status, size
+
+---
+
+proxy cookies [options]
+
+  Extract and deduplicate cookies from proxy and replay traffic.
+  Shows Set-Cookie attributes, values, and auto-decodes JWT cookie values.
+
+  Options:
+    --name <name>           filter by cookie name (exact match)
+    --domain <name>         filter by domain (matches domain and all subdomains)
+
+  Examples:
+    sectool proxy cookies                                    # all observed cookies
+    sectool proxy cookies --name session                     # specific cookie by name
+    sectool proxy cookies --domain example.com               # cookies for domain + subdomains
+
+  Output: Markdown table with name, domain, path, flags, expires, value, flow_id
 
 ---
 
@@ -534,4 +554,29 @@ Options:
 	}
 
 	return ruleDelete(mcpURL, fs.Args()[0])
+}
+
+func parseCookies(args []string, mcpURL string) error {
+	fs := pflag.NewFlagSet("proxy cookies", pflag.ContinueOnError)
+	fs.SetInterspersed(true)
+	var name, domain string
+
+	fs.StringVar(&name, "name", "", "filter by cookie name (exact match)")
+	fs.StringVar(&domain, "domain", "", "filter by domain (matches domain and subdomains)")
+
+	fs.Usage = func() {
+		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool proxy cookies [options]
+
+Extract and deduplicate cookies from proxy and replay traffic.
+
+Options:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	return cookies(mcpURL, name, domain)
 }

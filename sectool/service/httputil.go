@@ -21,6 +21,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
+	"github.com/go-appsec/toolbox/sectool/util"
 )
 
 const (
@@ -94,7 +95,7 @@ func aggregateByTuple[T any](entries []T, extract func(T) (host, path, method st
 	for key, count := range counts {
 		result = append(result, protocol.SummaryEntry{
 			Host:   key.Host,
-			Path:   truncateString(key.Path, maxPathLength),
+			Path:   util.TruncateString(key.Path, maxPathLength),
 			Method: key.Method,
 			Status: key.Status,
 			Count:  count,
@@ -552,6 +553,15 @@ func matchesGlob(s, pattern string) bool {
 		return false
 	}
 	return re.MatchString(s)
+}
+
+// matchesCookieDomain returns true if domain equals filter or is a subdomain of filter.
+// e.g. filter "example.com" matches "example.com", "api.example.com", "a.b.example.com".
+func matchesCookieDomain(domain, filter string) bool {
+	if strings.EqualFold(domain, filter) {
+		return true
+	}
+	return len(domain) > len(filter) && strings.HasSuffix(strings.ToLower(domain), "."+strings.ToLower(filter))
 }
 
 // parseCommaSeparated parses a comma-separated list into a slice.

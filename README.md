@@ -108,6 +108,8 @@ The CLI provides a human-friendly interface to the same tools that agents use. M
 # Proxy history
 sectool proxy summary              # Aggregated traffic summary
 sectool proxy list --host example  # List flows matching filter
+sectool proxy cookies              # List observed cookies (overview)
+sectool proxy cookies --name sid   # Cookie details with value + JWT decode
 sectool proxy export <flow_id>     # Export flow to ./sectool-requests/<flow_id>/
 sectool proxy rule list            # List match/replace rules
 

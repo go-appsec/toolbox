@@ -44,7 +44,7 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 
 - `sectool/service/server.go` - MCP server lifecycle and backend coordination
 - `sectool/service/mcp_server.go` - MCP server setup, tool registration, workflow handling
-- `sectool/service/mcp_proxy.go` - Proxy tool handlers (poll, get, rules)
+- `sectool/service/mcp_proxy.go` - Proxy tool handlers (poll, get, cookie_jar, rules)
 - `sectool/service/mcp_replay.go` - Replay tool handlers (send, get, request_send)
 - `sectool/service/mcp_crawl.go` - Crawl tool handlers (create, seed, status, poll, get, sessions, stop)
 - `sectool/service/mcp_oast.go` - OAST tool handlers (create, poll, get, list, delete)
@@ -93,8 +93,9 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 
 ### CLI Commands
 
-- `sectool/proxy/flags.go` - Subcommand parsing (summary/list/export/rule)
+- `sectool/proxy/flags.go` - Subcommand parsing (summary/list/cookies/export/rule)
 - `sectool/proxy/list.go` - List/summary command implementation
+- `sectool/proxy/cookies.go` - Cookies command implementation
 - `sectool/proxy/export.go` - Export command implementation
 - `sectool/proxy/rule.go` - Rule CRUD command implementations
 - `sectool/crawl/flags.go` - Crawl subcommand parsing
@@ -163,6 +164,7 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 - `workflow` - select mode (explore/test-report) for task-specific instructions
 - `proxy_poll` - query proxy history: summary or list with filters
 - `proxy_get` - full request/response for a flow
+- `cookie_jar` - extract and deduplicate cookies; overview without filters, full values and JWT decode with name/domain filter
 - `proxy_rule_list` - list match/replace rules
 - `proxy_rule_add` - add match/replace rule
 - `proxy_rule_update` - update existing rule
@@ -191,7 +193,7 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 
 CLI requires a running MCP server. Maps to MCP tools via `sectool <module> <sub>` pattern.
 
-- `proxy`: `summary`, `list`, `export`, `rule {add,update,delete,list}`
+- `proxy`: `summary`, `list`, `cookies`, `export`, `rule {add,update,delete,list}`
 - `crawl`: `create`, `seed`, `status`, `summary`, `list`, `export`, `sessions`, `stop`
 - `replay`: `send`, `get`
 - `oast`: `create`, `summary`, `poll`, `list`, `delete`

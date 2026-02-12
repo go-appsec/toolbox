@@ -1090,6 +1090,33 @@ func TestMatchesGlob(t *testing.T) {
 	}
 }
 
+func TestMatchesCookieDomain(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		domain string
+		filter string
+		match  bool
+	}{
+		{"example.com", "example.com", true},
+		{"api.example.com", "example.com", true},
+		{"a.b.example.com", "example.com", true},
+		{"Example.COM", "example.com", true},     // case insensitive
+		{"api.EXAMPLE.com", "Example.Com", true}, // case insensitive subdomain
+		{"other.com", "example.com", false},
+		{"notexample.com", "example.com", false}, // suffix but not subdomain
+		{"example.com.evil.com", "example.com", false},
+		{"", "example.com", false},
+		{"example.com", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.domain+"_"+tt.filter, func(t *testing.T) {
+			assert.Equal(t, tt.match, matchesCookieDomain(tt.domain, tt.filter))
+		})
+	}
+}
+
 func TestParseCommaSeparated(t *testing.T) {
 	t.Parallel()
 

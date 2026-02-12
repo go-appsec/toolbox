@@ -172,6 +172,7 @@ func (m *mcpServer) registerTools() {
 func (m *mcpServer) addProxyTools() {
 	m.server.AddTool(m.proxyPollTool(), m.handleProxyPoll)
 	m.server.AddTool(m.proxyGetTool(), m.handleProxyGet)
+	m.server.AddTool(m.cookieJarTool(), m.handleCookieJar)
 	m.server.AddTool(m.proxyRuleListTool(), m.handleProxyRuleList)
 	m.server.AddTool(m.proxyRuleAddTool(), m.handleProxyRuleAdd)
 	m.server.AddTool(m.proxyRuleUpdateTool(), m.handleProxyRuleUpdate)

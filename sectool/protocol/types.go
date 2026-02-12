@@ -1,5 +1,7 @@
 package protocol
 
+import "github.com/go-appsec/toolbox/sectool/jwt"
+
 // =============================================================================
 // Proxy Types
 // =============================================================================
@@ -258,6 +260,25 @@ type CrawlSession struct {
 	Label     string `json:"label,omitempty"`
 	State     string `json:"state"`
 	CreatedAt string `json:"created_at"`
+}
+
+// CookieJarResponse is the response for cookie_jar.
+type CookieJarResponse struct {
+	Cookies []CookieEntry `json:"cookies"`
+}
+
+// CookieEntry represents a cookie observed in proxy/replay traffic.
+type CookieEntry struct {
+	Name     string      `json:"name"`
+	Domain   string      `json:"domain"`
+	Path     string      `json:"path"`
+	Secure   bool        `json:"secure"`
+	HttpOnly bool        `json:"httponly"`
+	SameSite string      `json:"samesite,omitempty"`
+	Expires  string      `json:"expires"`
+	Value    string      `json:"value,omitempty"`
+	Decoded  *jwt.Result `json:"decoded,omitempty"`
+	FlowID   string      `json:"flow_id"`
 }
 
 // CrawlGetResponse is the response for crawl_get.

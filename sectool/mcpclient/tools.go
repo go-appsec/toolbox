@@ -139,6 +139,22 @@ func (c *Client) ProxyRuleDelete(ctx context.Context, ruleID string) error {
 	return err
 }
 
+// CookieJar calls cookie_jar and returns extracted cookies.
+func (c *Client) CookieJar(ctx context.Context, opts CookieJarOpts) (*protocol.CookieJarResponse, error) {
+	args := make(map[string]interface{})
+	if opts.Name != "" {
+		args["name"] = opts.Name
+	}
+	if opts.Domain != "" {
+		args["domain"] = opts.Domain
+	}
+	var resp protocol.CookieJarResponse
+	if err := c.CallToolJSON(ctx, "cookie_jar", args, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // ReplaySend calls replay_send and returns the result.
 func (c *Client) ReplaySend(ctx context.Context, opts ReplaySendOpts) (*protocol.ReplaySendResponse, error) {
 	args := map[string]interface{}{

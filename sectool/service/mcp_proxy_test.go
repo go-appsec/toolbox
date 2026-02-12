@@ -685,3 +685,309 @@ func TestMCP_ProxyPollDomainScoping(t *testing.T) {
 		}
 	})
 }
+
+func TestMCP_CookieJar(t *testing.T) {
+	t.Parallel()
+
+	t.Run("overview_no_values", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		mockMCP.AddProxyEntry(
+			"GET /login HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: sid=abc123; Path=/; Secure; HttpOnly; SameSite=Lax\r\n\r\n",
+			"",
+		)
+
+		// No filters: overview mode, no values
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", nil)
+		require.Len(t, resp.Cookies, 1)
+		c := resp.Cookies[0]
+		assert.Equal(t, "sid", c.Name)
+		assert.Empty(t, c.Value)
+		assert.Nil(t, c.Decoded)
+		assert.Equal(t, "example.com", c.Domain)
+		assert.Equal(t, "/", c.Path)
+		assert.True(t, c.Secure)
+		assert.True(t, c.HttpOnly)
+		assert.Equal(t, "Lax", c.SameSite)
+		assert.NotEmpty(t, c.FlowID)
+	})
+
+	t.Run("detail_with_name", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		mockMCP.AddProxyEntry(
+			"GET /login HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: sid=abc123; Path=/; Secure; HttpOnly; SameSite=Lax\r\n\r\n",
+			"",
+		)
+
+		// With name filter: detail mode, includes value
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", map[string]interface{}{
+			"name": "sid",
+		})
+		require.Len(t, resp.Cookies, 1)
+		c := resp.Cookies[0]
+		assert.Equal(t, "sid", c.Name)
+		assert.Equal(t, "abc123", c.Value)
+		assert.Equal(t, "example.com", c.Domain)
+		assert.Equal(t, "/", c.Path)
+		assert.True(t, c.Secure)
+		assert.True(t, c.HttpOnly)
+		assert.Equal(t, "Lax", c.SameSite)
+		assert.NotEmpty(t, c.FlowID)
+	})
+
+	t.Run("dedup_keeps_last", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		mockMCP.AddProxyEntry(
+			"GET /page1 HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: token=old; Domain=example.com\r\n\r\n",
+			"",
+		)
+		mockMCP.AddProxyEntry(
+			"GET /page2 HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: token=new; Domain=example.com\r\n\r\n",
+			"",
+		)
+
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", map[string]interface{}{
+			"name": "token",
+		})
+		require.Len(t, resp.Cookies, 1)
+		assert.Equal(t, "new", resp.Cookies[0].Value)
+	})
+
+	t.Run("domain_filter", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: a=1; Domain=example.com\r\n\r\n",
+			"",
+		)
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: sub.example.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: c=3; Domain=sub.example.com\r\n\r\n",
+			"",
+		)
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: other.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: b=2; Domain=other.com\r\n\r\n",
+			"",
+		)
+
+		// "example.com" matches example.com and subdomains
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", map[string]interface{}{
+			"domain": "example.com",
+		})
+		require.Len(t, resp.Cookies, 2)
+		names := map[string]bool{resp.Cookies[0].Name: true, resp.Cookies[1].Name: true}
+		assert.True(t, names["a"])
+		assert.True(t, names["c"])
+	})
+
+	t.Run("replay_included", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		mockMCP.AddProxyEntry(
+			"GET /api HTTP/1.1\r\nHost: test.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\n\r\nok",
+			"",
+		)
+		mockMCP.SetSendResponse(
+			"HttpRequestResponse{httpRequest=GET /api HTTP/1.1, httpResponse=HTTP/1.1 200 OK\r\nSet-Cookie: replay_cookie=yes\r\n\r\nok}",
+		)
+
+		// Get flow_id and replay it
+		flows := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"limit":       1,
+		})
+		require.NotEmpty(t, flows.Flows)
+
+		_ = CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
+			"flow_id": flows.Flows[0].FlowID,
+		})
+
+		// Use name filter to get value in detail mode
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", map[string]interface{}{
+			"name": "replay_cookie",
+		})
+		require.Len(t, resp.Cookies, 1)
+		assert.Equal(t, "replay_cookie", resp.Cookies[0].Name)
+		assert.Equal(t, "yes", resp.Cookies[0].Value)
+	})
+
+	t.Run("no_cookies", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		mockMCP.AddProxyEntry(
+			"GET /plain HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nhello",
+			"",
+		)
+
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", nil)
+		assert.Empty(t, resp.Cookies)
+	})
+
+	t.Run("domain_defaults_to_host", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		// Cookie without Domain attribute should default to request host
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: mysite.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: name=val; Path=/\r\n\r\n",
+			"",
+		)
+
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", nil)
+		require.Len(t, resp.Cookies, 1)
+		assert.Equal(t, "mysite.com", resp.Cookies[0].Domain)
+	})
+
+	t.Run("config_domain_scoping", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServerWithConfig(t, &config.Config{
+			AllowedDomains: []string{"allowed.com"},
+		})
+
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: allowed.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: ok=1\r\n\r\n",
+			"",
+		)
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: blocked.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: nope=2\r\n\r\n",
+			"",
+		)
+
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", nil)
+		require.Len(t, resp.Cookies, 1)
+		assert.Equal(t, "ok", resp.Cookies[0].Name)
+	})
+
+	t.Run("multiple_cookies_one_response", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: multi.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2; Secure\r\nSet-Cookie: c=3; SameSite=Strict\r\n\r\n",
+			"",
+		)
+
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", nil)
+		require.Len(t, resp.Cookies, 3)
+
+		names := make(map[string]bool)
+		for _, c := range resp.Cookies {
+			names[c.Name] = true
+		}
+		assert.True(t, names["a"])
+		assert.True(t, names["b"])
+		assert.True(t, names["c"])
+	})
+
+	t.Run("name_filter", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: session=abc\r\nSet-Cookie: csrf=xyz\r\nSet-Cookie: tracking=123\r\n\r\n",
+			"",
+		)
+
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", map[string]interface{}{
+			"name": "session",
+		})
+		require.Len(t, resp.Cookies, 1)
+		assert.Equal(t, "session", resp.Cookies[0].Name)
+		assert.Equal(t, "abc", resp.Cookies[0].Value)
+	})
+
+	t.Run("name_and_domain_filter", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: a.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: sid=a1; Domain=a.com\r\n\r\n",
+			"",
+		)
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: b.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: sid=b1; Domain=b.com\r\n\r\n",
+			"",
+		)
+
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", map[string]interface{}{
+			"name":   "sid",
+			"domain": "a.com",
+		})
+		require.Len(t, resp.Cookies, 1)
+		assert.Equal(t, "a1", resp.Cookies[0].Value)
+		assert.Equal(t, "a.com", resp.Cookies[0].Domain)
+	})
+
+	t.Run("jwt_auto_decode", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		jwtValue := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+
+		mockMCP.AddProxyEntry(
+			"GET /login HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: token="+jwtValue+"; Path=/; HttpOnly\r\n\r\n",
+			"",
+		)
+
+		// With name filter: detail mode returns value + decoded JWT
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", map[string]interface{}{
+			"name": "token",
+		})
+		require.Len(t, resp.Cookies, 1)
+		c := resp.Cookies[0]
+		assert.Equal(t, "token", c.Name)
+		assert.Equal(t, jwtValue, c.Value)
+		require.NotNil(t, c.Decoded)
+		assert.Equal(t, "HS256", c.Decoded.Header["alg"])
+		assert.Equal(t, "1234567890", c.Decoded.Payload["sub"])
+		assert.Equal(t, "John Doe", c.Decoded.Payload["name"])
+	})
+
+	t.Run("jwt_hidden_in_overview", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		jwtValue := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: token="+jwtValue+"\r\n\r\n",
+			"",
+		)
+
+		// No filter: overview mode omits value and decoded
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", nil)
+		require.Len(t, resp.Cookies, 1)
+		assert.Empty(t, resp.Cookies[0].Value)
+		assert.Nil(t, resp.Cookies[0].Decoded)
+	})
+
+	t.Run("non_jwt_no_decoded", func(t *testing.T) {
+		_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+		mockMCP.AddProxyEntry(
+			"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			"HTTP/1.1 200 OK\r\nSet-Cookie: sid=plainvalue123; Path=/\r\n\r\n",
+			"",
+		)
+
+		// With name filter: detail mode but non-JWT has no decoded
+		resp := CallMCPToolJSONOK[protocol.CookieJarResponse](t, mcpClient, "cookie_jar", map[string]interface{}{
+			"name": "sid",
+		})
+		require.Len(t, resp.Cookies, 1)
+		assert.Equal(t, "plainvalue123", resp.Cookies[0].Value)
+		assert.Nil(t, resp.Cookies[0].Decoded)
+	})
+}
