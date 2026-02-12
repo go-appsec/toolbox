@@ -48,7 +48,9 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/mcp_replay.go` - Replay tool handlers (send, get, request_send)
 - `sectool/service/mcp_crawl.go` - Crawl tool handlers (create, seed, status, poll, get, sessions, stop)
 - `sectool/service/mcp_oast.go` - OAST tool handlers (create, poll, get, list, delete)
-- `sectool/service/mcp_encode.go` - Encode tool handlers (url, base64, html)
+- `sectool/service/mcp_encode.go` - Encode/decode tool handlers (url, base64, html)
+- `sectool/service/mcp_hash.go` - Hash tool handler (md5, sha1, sha256, sha512, HMAC)
+- `sectool/service/mcp_jwt.go` - JWT decode tool handler
 - `sectool/service/flags.go` - MCP server flag parsing (`--port`, `--workflow`, `--config`)
 - `sectool/service/backend.go` - HttpBackend, OastBackend, CrawlerBackend interfaces
 - `sectool/service/backend_http_native.go` - Native built-in proxy implementation of HttpBackend
@@ -101,8 +103,12 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/replay/replay.go` - Command implementations
 - `sectool/oast/flags.go` - Subcommand parsing (create/poll/list/delete)
 - `sectool/oast/oast.go` - Command implementations
-- `sectool/encode/flags.go` - Subcommand parsing (url/base64/html)
-- `sectool/encode/encode.go` - Encoding/decoding implementations
+- `sectool/encoding/flags.go` - Encode/decode subcommand parsing (url/base64/html)
+- `sectool/encoding/encoding.go` - Encoding/decoding implementations
+- `sectool/hash/flags.go` - Hash subcommand parsing
+- `sectool/hash/hash.go` - Hash computation (plain and HMAC)
+- `sectool/jwt/flags.go` - JWT subcommand parsing
+- `sectool/jwt/jwt.go` - JWT decode and inspection
 
 ### Config
 
@@ -176,9 +182,10 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 - `oast_get` - full details of specific OAST event
 - `oast_list` - list active OAST sessions
 - `oast_delete` - delete OAST session
-- `encode_url` - URL encode/decode
-- `encode_base64` - base64 encode/decode
-- `encode_html` - HTML entity encode/decode
+- `encode` - encode a string (url, base64, html)
+- `decode` - decode a string (url, base64, html)
+- `hash` - compute hash digest (md5, sha1, sha256, sha512, HMAC)
+- `jwt_decode` - decode and inspect JWT tokens
 
 ## CLI Commands
 
@@ -189,6 +196,9 @@ CLI requires a running MCP server. Maps to MCP tools via `sectool <module> <sub>
 - `replay`: `send`, `get`
 - `oast`: `create`, `summary`, `poll`, `list`, `delete`
 - `encode`: `url`, `base64`, `html`
+- `decode`: `url`, `base64`, `html`
+- `hash`: compute hash digests
+- `jwt`: decode JWT tokens
 - `version`
 
 ## Development Guidelines

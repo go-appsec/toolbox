@@ -102,7 +102,7 @@ The server exposes two endpoints:
 
 ## CLI Usage
 
-The CLI provides a human-friendly interface to the same tools that agents use. CLI commands require the MCP server to be running (`sectool mcp`).
+The CLI provides a human-friendly interface to the same tools that agents use. Most CLI commands require the MCP server to be running (`sectool mcp`); encode, decode, hash, and jwt run locally.
 
 ```bash
 # Proxy history
@@ -136,10 +136,20 @@ sectool oast get <oast_id> <event_id>
 sectool oast list
 sectool oast delete <oast_id>
 
-# Encoding utilities
+# Encoding/decoding utilities
 sectool encode url "hello world"
+sectool decode url "hello+world"
 sectool encode base64 "test"
+sectool decode base64 "dGVzdA=="
 sectool encode html "<script>"
+
+# Hashing
+sectool hash "test"                           # SHA-256 (default)
+sectool hash --algorithm md5 "test"
+sectool hash --key "secret" "test"            # HMAC-SHA-256
+
+# JWT inspection
+sectool jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.sig
 ```
 
 Use `sectool <command> --help` for detailed options.
@@ -153,4 +163,4 @@ Use `sectool <command> --help` for detailed options.
 - **Request replay** - Replay captured requests with modifications to headers, body, query params, or JSON fields
 - **Web crawling** - Discover application structure, forms, and endpoints
 - **OAST testing** - Create out-of-band domains and poll for DNS/HTTP/SMTP interactions via Interactsh
-- **Encoding utilities** - URL, Base64, and HTML entity encoding/decoding
+- **Encoding utilities** - URL, Base64, HTML encoding/decoding, hashing (MD5/SHA/HMAC), JWT inspection

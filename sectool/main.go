@@ -12,7 +12,9 @@ import (
 	"github.com/go-appsec/toolbox/sectool/cliutil"
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/crawl"
-	"github.com/go-appsec/toolbox/sectool/encode"
+	"github.com/go-appsec/toolbox/sectool/encoding"
+	"github.com/go-appsec/toolbox/sectool/hash"
+	"github.com/go-appsec/toolbox/sectool/jwt"
 	"github.com/go-appsec/toolbox/sectool/oast"
 	"github.com/go-appsec/toolbox/sectool/proxy"
 	"github.com/go-appsec/toolbox/sectool/replay"
@@ -33,7 +35,13 @@ func main() {
 	case "mcp":
 		os.Exit(runServiceMode(args[1:]))
 	case "encode":
-		err = encode.Parse(args[1:])
+		err = encoding.ParseEncode(args[1:])
+	case "decode":
+		err = encoding.ParseDecode(args[1:])
+	case "hash":
+		err = hash.Parse(args[1:])
+	case "jwt":
+		err = jwt.Parse(args[1:])
 	case "version", "--version", "-v":
 		_, _ = fmt.Printf("sectool version %s\n", config.Version)
 		return
@@ -61,7 +69,7 @@ func main() {
 		}
 
 	default:
-		validCommands := []string{"mcp", "proxy", "replay", "oast", "crawl", "encode", "version", "help"}
+		validCommands := []string{"mcp", "proxy", "replay", "oast", "crawl", "encode", "decode", "hash", "jwt", "version", "help"}
 		err = cliutil.UnknownCommandError(args[0], validCommands)
 	}
 
@@ -100,7 +108,10 @@ Commands:
   replay     Replay HTTP requests (with modifications)
   oast       Manage OAST domains for out-of-band testing
   crawl      Web crawler for URL and form discovery
-  encode     Encoding/decoding utilities (url, base64, html)
+  encode     Encode strings (url, base64, html)
+  decode     Decode strings (url, base64, html)
+  hash       Compute hash digests (md5, sha1, sha256, sha512)
+  jwt        Decode and inspect JWT tokens
 
 Global Options:
   --config <path>    Config file path (default: ~/.sectool/config.json)

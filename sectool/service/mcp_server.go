@@ -145,20 +145,26 @@ func (m *mcpServer) registerTools() {
 		m.addProxyTools()
 		m.addReplayTools()
 		m.addOastTools()
-		m.addEncodeTools()
+		m.addEncodingTools()
+		m.addHashTools()
+		m.addJWTTools()
 		m.addCrawlTools()
 	case WorkflowModeTestReport:
 		m.addProxyTools()
 		m.addReplayTools()
 		m.addOastTools()
-		m.addEncodeTools()
+		m.addEncodingTools()
+		m.addHashTools()
+		m.addJWTTools()
 		// crawl tools excluded
 	default: // Empty (default) workflowMode: require workflow tool call first, all tools registered
 		m.server.AddTool(m.workflowTool(), m.handleWorkflow)
 		m.addProxyTools()
 		m.addReplayTools()
 		m.addOastTools()
-		m.addEncodeTools()
+		m.addEncodingTools()
+		m.addHashTools()
+		m.addJWTTools()
 		m.addCrawlTools()
 	}
 }
@@ -186,10 +192,17 @@ func (m *mcpServer) addOastTools() {
 	m.server.AddTool(m.oastDeleteTool(), m.handleOastDelete)
 }
 
-func (m *mcpServer) addEncodeTools() {
-	m.server.AddTool(m.encodeURLTool(), m.handleEncodeURL)
-	m.server.AddTool(m.encodeBase64Tool(), m.handleEncodeBase64)
-	m.server.AddTool(m.encodeHTMLTool(), m.handleEncodeHTML)
+func (m *mcpServer) addEncodingTools() {
+	m.server.AddTool(m.encodeTool(), m.handleEncode)
+	m.server.AddTool(m.decodeTool(), m.handleDecode)
+}
+
+func (m *mcpServer) addHashTools() {
+	m.server.AddTool(m.hashTool(), m.handleHash)
+}
+
+func (m *mcpServer) addJWTTools() {
+	m.server.AddTool(m.jwtDecodeTool(), m.handleJWTDecode)
 }
 
 func (m *mcpServer) addCrawlTools() {

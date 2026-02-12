@@ -2,93 +2,51 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
-	"html"
-	"net/url"
 
 	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/go-appsec/toolbox/sectool/encoding"
 )
 
-func (m *mcpServer) encodeURLTool() mcp.Tool {
-	return mcp.NewTool("encode_url",
-		mcp.WithDescription("URL encode or decode a string."),
-		mcp.WithString("input", mcp.Required(), mcp.Description("String to encode or decode")),
-		mcp.WithBoolean("decode", mcp.Description("Decode instead of encode")),
+func (m *mcpServer) encodeTool() mcp.Tool {
+	return mcp.NewTool("encode",
+		mcp.WithDescription("Encode a string. Supported types: url (percent-encoding), base64, html (entity encoding)."),
+		mcp.WithString("input", mcp.Required(), mcp.Description("String to encode")),
+		mcp.WithString("type", mcp.Required(), mcp.Enum("url", "base64", "html"), mcp.Description("Encoding type")),
 	)
 }
 
-func (m *mcpServer) encodeBase64Tool() mcp.Tool {
-	return mcp.NewTool("encode_base64",
-		mcp.WithDescription("Base64 encode or decode a string."),
-		mcp.WithString("input", mcp.Required(), mcp.Description("String to encode or decode")),
-		mcp.WithBoolean("decode", mcp.Description("Decode instead of encode")),
+func (m *mcpServer) decodeTool() mcp.Tool {
+	return mcp.NewTool("decode",
+		mcp.WithDescription("Decode a string. Supported types: url (percent-encoding), base64, html (entity decoding)."),
+		mcp.WithString("input", mcp.Required(), mcp.Description("String to decode")),
+		mcp.WithString("type", mcp.Required(), mcp.Enum("url", "base64", "html"), mcp.Description("Encoding type")),
 	)
 }
 
-func (m *mcpServer) encodeHTMLTool() mcp.Tool {
-	return mcp.NewTool("encode_html",
-		mcp.WithDescription("HTML entity encode or decode a string."),
-		mcp.WithString("input", mcp.Required(), mcp.Description("String to encode or decode")),
-		mcp.WithBoolean("decode", mcp.Description("Decode instead of encode")),
-	)
-}
-func (m *mcpServer) handleEncodeURL(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (m *mcpServer) handleEncode(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	input := req.GetString("input", "")
 	if input == "" {
 		return errorResult("input is required"), nil
 	}
 
-	decode := req.GetBool("decode", false)
-
-	var result string
-	if decode {
-		decoded, err := url.QueryUnescape(input)
-		if err != nil {
-			return errorResult("URL decode error: " + err.Error()), nil
-		}
-		result = decoded
-	} else {
-		result = url.QueryEscape(input)
+	result, err := encoding.Encode(input, req.GetString("type", ""))
+	if err != nil {
+		return errorResult(err.Error()), nil
 	}
 
 	return mcp.NewToolResultText(result), nil
 }
 
-func (m *mcpServer) handleEncodeBase64(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (m *mcpServer) handleDecode(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	input := req.GetString("input", "")
 	if input == "" {
 		return errorResult("input is required"), nil
 	}
 
-	decode := req.GetBool("decode", false)
-
-	var result string
-	if decode {
-		decoded, err := base64.StdEncoding.DecodeString(input)
-		if err != nil {
-			return errorResult("base64 decode error: " + err.Error()), nil
-		}
-		result = string(decoded)
-	} else {
-		result = base64.StdEncoding.EncodeToString([]byte(input))
-	}
-
-	return mcp.NewToolResultText(result), nil
-}
-
-func (m *mcpServer) handleEncodeHTML(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	input := req.GetString("input", "")
-	if input == "" {
-		return errorResult("input is required"), nil
-	}
-
-	decode := req.GetBool("decode", false)
-
-	var result string
-	if decode {
-		result = html.UnescapeString(input)
-	} else {
-		result = html.EscapeString(input)
+	result, err := encoding.Decode(input, req.GetString("type", ""))
+	if err != nil {
+		return errorResult(err.Error()), nil
 	}
 
 	return mcp.NewToolResultText(result), nil

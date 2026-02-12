@@ -19,7 +19,9 @@ func (m *mcpServer) oastCreateTool() mcp.Tool {
 
 Returns {oast_id, domain} for blind out-of-band detection (DNS/HTTP/SMTP).
 Workflow: create -> inject domain in payload -> trigger target -> oast_poll -> oast_get for details.
-Use cases: blind SSRF, blind XXE, DNS exfiltration, email verification bypass.`),
+Use cases: blind SSRF, blind XXE, DNS exfiltration, email verification bypass.
+
+Prefer OAST domains over invented random strings. They double as unique tokens with built-in callback detection.`),
 		mcp.WithString("label", mcp.Description("Optional unique label for this session")),
 	)
 }
