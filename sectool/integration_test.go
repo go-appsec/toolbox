@@ -391,7 +391,7 @@ func TestIntegration_ProxyGet(t *testing.T) {
 		flowID := listResp.Flows[0].FlowID
 
 		t.Run("valid_flow_id", func(t *testing.T) {
-			resp, err := client.ProxyGet(t.Context(), flowID)
+			resp, err := client.ProxyGet(t.Context(), flowID, mcpclient.ProxyGetOpts{})
 			require.NoError(t, err)
 
 			assert.Equal(t, flowID, resp.FlowID)
@@ -405,7 +405,7 @@ func TestIntegration_ProxyGet(t *testing.T) {
 		})
 
 		t.Run("invalid_flow_id", func(t *testing.T) {
-			_, err := client.ProxyGet(t.Context(), "nonexistent")
+			_, err := client.ProxyGet(t.Context(), "nonexistent", mcpclient.ProxyGetOpts{})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "not found")
 		})
@@ -1015,7 +1015,7 @@ func TestIntegration_HTTPSProxy(t *testing.T) {
 		flowID := listResp.Flows[0].FlowID
 
 		// Get the full URL which includes the https:// scheme
-		flowDetails, err := mcpClient.ProxyGet(t.Context(), flowID)
+		flowDetails, err := mcpClient.ProxyGet(t.Context(), flowID, mcpclient.ProxyGetOpts{})
 		require.NoError(t, err)
 
 		// Pass the target URL explicitly to preserve HTTPS scheme
@@ -1704,7 +1704,7 @@ func TestIntegration_HTTP2Proxy(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, listResp.Flows, 1)
 
-		flowResp, err := client.ProxyGet(t.Context(), listResp.Flows[0].FlowID)
+		flowResp, err := client.ProxyGet(t.Context(), listResp.Flows[0].FlowID, mcpclient.ProxyGetOpts{})
 		require.NoError(t, err)
 
 		assert.Equal(t, "GET", flowResp.Method)
@@ -2043,7 +2043,7 @@ func TestIntegration_ChunkedEncoding(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, listResp.Flows, 1)
 
-			flowResp, err := env.mcpClient.ProxyGet(t.Context(), listResp.Flows[0].FlowID)
+			flowResp, err := env.mcpClient.ProxyGet(t.Context(), listResp.Flows[0].FlowID, mcpclient.ProxyGetOpts{})
 			require.NoError(t, err)
 			assert.Equal(t, 200, flowResp.Status)
 		})
@@ -3477,7 +3477,7 @@ func TestIntegration_HTTP2Replay(t *testing.T) {
 	flowID := listResp.Flows[0].FlowID
 
 	// Get full flow details to get the target URL
-	flowDetails, err := client.ProxyGet(t.Context(), flowID)
+	flowDetails, err := client.ProxyGet(t.Context(), flowID, mcpclient.ProxyGetOpts{})
 	require.NoError(t, err)
 
 	t.Run("h2_request_replayed_as_h2", func(t *testing.T) {

@@ -27,11 +27,11 @@ func (c *Client) ProxyPoll(ctx context.Context, opts ProxyPollOpts) (*protocol.P
 	if opts.Status != "" {
 		args["status"] = opts.Status
 	}
-	if opts.Contains != "" {
-		args["contains"] = opts.Contains
+	if opts.SearchHeader != "" {
+		args["search_header"] = opts.SearchHeader
 	}
-	if opts.ContainsBody != "" {
-		args["contains_body"] = opts.ContainsBody
+	if opts.SearchBody != "" {
+		args["search_body"] = opts.SearchBody
 	}
 	if opts.Since != "" {
 		args["since"] = opts.Since
@@ -57,8 +57,17 @@ func (c *Client) ProxyPoll(ctx context.Context, opts ProxyPollOpts) (*protocol.P
 }
 
 // ProxyGet calls proxy_get and returns full request/response data.
-func (c *Client) ProxyGet(ctx context.Context, flowID string) (*protocol.ProxyGetResponse, error) {
-	args := map[string]interface{}{"flow_id": flowID, "full_body": true}
+func (c *Client) ProxyGet(ctx context.Context, flowID string, opts ProxyGetOpts) (*protocol.ProxyGetResponse, error) {
+	args := map[string]interface{}{"flow_id": flowID}
+	if opts.FullBody {
+		args["full_body"] = true
+	}
+	if opts.Scope != "" {
+		args["scope"] = opts.Scope
+	}
+	if opts.Pattern != "" {
+		args["pattern"] = opts.Pattern
+	}
 	var resp protocol.ProxyGetResponse
 	if err := c.CallToolJSON(ctx, "proxy_get", args, &resp); err != nil {
 		return nil, err
@@ -410,11 +419,11 @@ func (c *Client) CrawlPoll(ctx context.Context, sessionID string, opts CrawlPoll
 	if opts.Status != "" {
 		args["status"] = opts.Status
 	}
-	if opts.Contains != "" {
-		args["contains"] = opts.Contains
+	if opts.SearchHeader != "" {
+		args["search_header"] = opts.SearchHeader
 	}
-	if opts.ContainsBody != "" {
-		args["contains_body"] = opts.ContainsBody
+	if opts.SearchBody != "" {
+		args["search_body"] = opts.SearchBody
 	}
 	if opts.ExcludeHost != "" {
 		args["exclude_host"] = opts.ExcludeHost
@@ -478,8 +487,17 @@ func (c *Client) DiffFlow(ctx context.Context, opts DiffFlowOpts) (*protocol.Dif
 }
 
 // CrawlGet calls crawl_get and returns full flow data.
-func (c *Client) CrawlGet(ctx context.Context, flowID string) (*protocol.CrawlGetResponse, error) {
-	args := map[string]interface{}{"flow_id": flowID, "full_body": true}
+func (c *Client) CrawlGet(ctx context.Context, flowID string, opts CrawlGetOpts) (*protocol.CrawlGetResponse, error) {
+	args := map[string]interface{}{"flow_id": flowID}
+	if opts.FullBody {
+		args["full_body"] = true
+	}
+	if opts.Scope != "" {
+		args["scope"] = opts.Scope
+	}
+	if opts.Pattern != "" {
+		args["pattern"] = opts.Pattern
+	}
 	var resp protocol.CrawlGetResponse
 	if err := c.CallToolJSON(ctx, "crawl_get", args, &resp); err != nil {
 		return nil, err

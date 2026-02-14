@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -32,16 +33,16 @@ Output modes:
 
 Sources: Results include both proxy-captured traffic (source=proxy) and replay-sent traffic (source=replay) in chronological order.
 Filters: host/path/exclude_host/exclude_path use glob (*, ?). method/status are comma-separated (status supports ranges like 2XX).
-Search: contains searches URL+headers; contains_body searches bodies.
+Search: search_header/search_body use regex; literal if invalid.
 Incremental: since accepts flow_id or "last" (cursor). Flows mode only: pagination with limit/offset.`),
 		mcp.WithString("output_mode", mcp.Description("Output mode: 'summary' (default) or 'flows'")),
 		mcp.WithString("source", mcp.Description("Filter by source: 'proxy', 'replay', or empty for both")),
 		mcp.WithString("host", mcp.Description("Filter by host (glob pattern, e.g., '*.example.com')")),
-		mcp.WithString("path", mcp.Description("Filter by path (glob pattern, e.g., '/api/*')")),
+		mcp.WithString("path", mcp.Description("Filter by path+query (glob pattern, e.g., '/api/*')")),
 		mcp.WithString("method", mcp.Description("Filter by HTTP method(s), comma-separated (e.g., 'GET,POST')")),
 		mcp.WithString("status", mcp.Description("Filter by status code(s) or ranges (e.g., '200,302' or '2XX,4XX')")),
-		mcp.WithString("contains", mcp.Description("Filter by text in URL or headers (does not search body)")),
-		mcp.WithString("contains_body", mcp.Description("Filter by text in request or response body")),
+		mcp.WithString("search_header", mcp.Description("Search request/response headers by regex (RE2); literal if invalid")),
+		mcp.WithString("search_body", mcp.Description("Search request/response body by regex (RE2, use (?i) for case-insensitive); literal if invalid")),
 		mcp.WithString("since", mcp.Description("Entries after flow_id, or 'last' (cursor)")),
 		mcp.WithString("exclude_host", mcp.Description("Exclude hosts matching glob pattern")),
 		mcp.WithString("exclude_path", mcp.Description("Exclude paths matching glob pattern")),
@@ -55,8 +56,13 @@ func (m *mcpServer) proxyGetTool() mcp.Tool {
 		mcp.WithDescription(`Get full request and response data for a proxy history entry.
 
 Returns headers and body for both request and response. Binary bodies are returned as "<BINARY:N Bytes>" placeholder.
-Use flow_id from proxy_poll (output_mode=list) to identify the entry.`),
+Use flow_id from proxy_poll (output_mode=flows) to identify the entry.
+
+Scope: Sections to return (comma-separated): request_headers, request_body, response_headers, response_body, all (default).
+Pattern: Regex search within scoped sections; returns match context instead of full content. Sections without matches are omitted.`),
 		mcp.WithString("flow_id", mcp.Required(), mcp.Description("Flow ID from proxy_poll")),
+		mcp.WithString("scope", mcp.Description("Sections to return (comma-separated): request_headers, request_body, response_headers, response_body, all (default)")),
+		mcp.WithString("pattern", mcp.Description("Regex (RE2) search within scoped sections; returns match context instead of full content")),
 	)
 }
 
@@ -81,7 +87,7 @@ Regex: is_regex=true (RE2 regex). Labels must be unique.`),
 		mcp.WithString("match", mcp.Description("Pattern to find")),
 		mcp.WithString("replace", mcp.Description("Replacement text")),
 		mcp.WithString("label", mcp.Description("Optional unique label (usable as rule_id)")),
-		mcp.WithBoolean("is_regex", mcp.Description("Treat match as regex pattern (RE2 syntax)")),
+		mcp.WithBoolean("is_regex", mcp.Description("Treat match as regex pattern (RE2)")),
 	)
 }
 
@@ -94,7 +100,7 @@ Requires at least match or replace. To rename label only, resend existing values
 		mcp.WithString("match", mcp.Description("Pattern to match")),
 		mcp.WithString("replace", mcp.Description("Replacement text")),
 		mcp.WithString("label", mcp.Description("Optional new label (unique); omit to keep existing")),
-		mcp.WithBoolean("is_regex", mcp.Description("Treat match as regex pattern (RE2 syntax)")),
+		mcp.WithBoolean("is_regex", mcp.Description("Treat match as regex pattern (RE2)")),
 	)
 }
 
@@ -255,8 +261,8 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 		Path:         req.GetString("path", ""),
 		Method:       req.GetString("method", ""),
 		Status:       req.GetString("status", ""),
-		Contains:     req.GetString("contains", ""),
-		ContainsBody: req.GetString("contains_body", ""),
+		SearchHeader: req.GetString("search_header", ""),
+		SearchBody:   req.GetString("search_body", ""),
 		Since:        req.GetString("since", ""),
 		ExcludeHost:  req.GetString("exclude_host", ""),
 		ExcludePath:  req.GetString("exclude_path", ""),
@@ -266,13 +272,31 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 	}
 
 	// Flows mode requires at least one filter
-	if outputMode == "flows" && !listReq.HasFilters() {
+	if outputMode == OutputModeFlows && !listReq.HasFilters() {
 		return errorResult("flows mode requires at least one filter or limit; use output_mode=summary first to see available traffic"), nil
 	}
 
 	log.Printf("proxy/poll: mode=%s host=%q path=%q method=%q status=%q", outputMode, listReq.Host, listReq.Path, listReq.Method, listReq.Status)
 
-	needsFullText := listReq.Contains != "" || listReq.ContainsBody != ""
+	// Compile search patterns once
+	var searchHeaderRe, searchBodyRe *regexp.Regexp
+	var notes []string
+	if listReq.SearchHeader != "" {
+		re, note := compileSearchPattern(listReq.SearchHeader, true)
+		searchHeaderRe = re
+		if note != "" {
+			notes = append(notes, note)
+		}
+	}
+	if listReq.SearchBody != "" {
+		re, note := compileSearchPattern(listReq.SearchBody, false)
+		searchBodyRe = re
+		if note != "" {
+			notes = append(notes, note)
+		}
+	}
+
+	needsFullText := listReq.SearchHeader != "" || listReq.SearchBody != ""
 	allEntries, err := m.service.fetchAllProxyEntries(ctx, needsFullText)
 	if err != nil {
 		return errorResultFromErr("failed to fetch proxy history: ", err), nil
@@ -292,10 +316,15 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 	if v := m.service.lastFlowID.Load(); v != nil {
 		lastFlowID = v.(string)
 	}
-	filtered := applyProxyFilters(allEntries, listReq, m.service.proxyIndex, m.service.replayHistoryStore, lastFlowID)
+	// Early termination: in flows mode, cap scan at offset+limit matches
+	var maxResults int
+	if outputMode == OutputModeFlows && listReq.Limit > 0 {
+		maxResults = listReq.Offset + listReq.Limit
+	}
+	filtered := applyProxyFilters(allEntries, listReq, m.service.proxyIndex, m.service.replayHistoryStore, lastFlowID, searchHeaderRe, searchBodyRe, maxResults)
 
 	switch outputMode {
-	case "flows":
+	case OutputModeFlows:
 		// Apply offset after filtering
 		if listReq.Offset > 0 && listReq.Offset < len(filtered) {
 			filtered = filtered[listReq.Offset:]
@@ -350,7 +379,8 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 			m.service.lastFlowID.Store(flows[len(flows)-1].FlowID)
 		}
 
-		return jsonResult(&protocol.ProxyPollResponse{Flows: flows})
+		noteStr := strings.Join(notes, "; ")
+		return jsonResult(&protocol.ProxyPollResponse{Flows: flows, Note: noteStr})
 
 	default: // summary
 		agg := aggregateByTuple(filtered, func(e flowEntry) (string, string, string, int) {
@@ -358,7 +388,8 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 		})
 		log.Printf("proxy/poll: returning %d aggregates from %d entries", len(agg), len(filtered))
 
-		return jsonResult(&protocol.ProxyPollResponse{Aggregates: agg})
+		noteStr := strings.Join(notes, "; ")
+		return jsonResult(&protocol.ProxyPollResponse{Aggregates: agg, Note: noteStr})
 	}
 }
 
@@ -374,6 +405,26 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 
 	// Hidden parameter for CLI: returns full base64-encoded bodies instead of previews
 	fullBody := req.GetBool("full_body", false)
+	scopeStr := req.GetString("scope", "")
+	patternStr := req.GetString("pattern", "")
+
+	// pattern takes precedence over full_body
+	if patternStr != "" {
+		fullBody = false
+	}
+
+	scopeSet, err := parseScopeSet(scopeStr)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
+	var patternRe *regexp.Regexp
+	var noteStr string
+	if patternStr != "" {
+		re, note := compileSearchPattern(patternStr, false)
+		patternRe = re
+		noteStr = note
+	}
 
 	resolved, errResult := m.resolveFlow(ctx, flowID)
 	if errResult != nil {
@@ -408,36 +459,82 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 
 	log.Printf("mcp/proxy_get: flow=%s method=%s url=%s source=%s", flowID, method, fullURL, source)
 
-	// Decompress bodies for display (gzip/deflate) - applies to both modes
-	displayReqBody, _ := decompressForDisplay(reqBody, string(reqHeaders))
-	displayRespBody, _ := decompressForDisplay(respBody, string(respHeaders))
-
-	// Format bodies based on full_body flag
-	var reqBodyStr, respBodyStr string
-	if fullBody { // Full body mode: base64-encode the decompressed content
-		reqBodyStr = base64.StdEncoding.EncodeToString(displayReqBody)
-		respBodyStr = base64.StdEncoding.EncodeToString(displayRespBody)
-	} else { // Preview mode: truncated text preview
-		reqBodyStr = previewBody(displayReqBody, fullBodyMaxSize)
-		respBodyStr = previewBody(displayRespBody, fullBodyMaxSize)
+	// Decompress bodies lazily: only when scope/pattern needs them
+	needsReqBody := scopeSet["request_body"]
+	needsRespBody := scopeSet["response_body"]
+	var displayReqBody, displayRespBody []byte
+	if needsReqBody {
+		displayReqBody, _ = decompressForDisplay(reqBody, string(reqHeaders))
+	}
+	if needsRespBody {
+		displayRespBody, _ = decompressForDisplay(respBody, string(respHeaders))
 	}
 
-	return jsonResult(protocol.ProxyGetResponse{
-		FlowID:            flowID,
-		Method:            method,
-		URL:               fullURL,
-		ReqHeaders:        string(reqHeaders),
-		ReqHeadersParsed:  parseHeadersToMap(string(reqHeaders)),
-		ReqLine:           &protocol.RequestLine{Path: path, Version: version},
-		ReqBody:           reqBodyStr,
-		ReqSize:           len(reqBody),
-		Status:            respCode,
-		StatusLine:        respStatusLine,
-		RespHeaders:       string(respHeaders),
-		RespHeadersParsed: parseHeadersToMap(string(respHeaders)),
-		RespBody:          respBodyStr,
-		RespSize:          len(respBody),
-	})
+	// Build response map: always include metadata
+	result := map[string]interface{}{
+		"flow_id":       flowID,
+		"method":        method,
+		"url":           fullURL,
+		"status":        respCode,
+		"status_line":   respStatusLine,
+		"request_size":  len(reqBody),
+		"response_size": len(respBody),
+	}
+
+	if patternRe != nil {
+		// Pattern mode: grep-like context output
+		if scopeSet["request_headers"] {
+			if match := extractMatchContext(patternRe, reqHeaders, maxMatchesPerSection); match != "" {
+				result["request_headers"] = match
+			}
+		}
+		if needsReqBody {
+			if match := extractMatchContext(patternRe, displayReqBody, maxMatchesPerSection); match != "" {
+				result["request_body"] = match
+			}
+		}
+		if scopeSet["response_headers"] {
+			if match := extractMatchContext(patternRe, respHeaders, maxMatchesPerSection); match != "" {
+				result["response_headers"] = match
+			}
+		}
+		if needsRespBody {
+			if match := extractMatchContext(patternRe, displayRespBody, maxMatchesPerSection); match != "" {
+				result["response_body"] = match
+			}
+		}
+	} else {
+		// Standard mode: full content based on scope
+		if scopeSet["request_headers"] {
+			result["request_headers"] = string(reqHeaders)
+			result["request_headers_parsed"] = parseHeadersToMap(string(reqHeaders))
+			result["request_line"] = &protocol.RequestLine{Path: path, Version: version}
+		}
+		if needsReqBody {
+			if fullBody {
+				result["request_body"] = base64.StdEncoding.EncodeToString(displayReqBody)
+			} else {
+				result["request_body"] = previewBody(displayReqBody, fullBodyMaxSize)
+			}
+		}
+		if scopeSet["response_headers"] {
+			result["response_headers"] = string(respHeaders)
+			result["response_headers_parsed"] = parseHeadersToMap(string(respHeaders))
+		}
+		if needsRespBody {
+			if fullBody {
+				result["response_body"] = base64.StdEncoding.EncodeToString(displayRespBody)
+			} else {
+				result["response_body"] = previewBody(displayRespBody, fullBodyMaxSize)
+			}
+		}
+	}
+
+	if noteStr != "" {
+		result["note"] = noteStr
+	}
+
+	return jsonResult(result)
 }
 
 func (m *mcpServer) handleProxyRuleList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -609,7 +706,7 @@ type flowEntry struct {
 
 // fetchAllProxyEntries retrieves all proxy history entries and replay entries, merged in chronological order.
 // When needsFullText is false, uses metadata-only APIs (avoids deserializing full request/response bodies).
-// When needsFullText is true, loads full entries for contains/contains_body filters.
+// When needsFullText is true, loads full entries for search_header/search_body filters.
 func (s *Server) fetchAllProxyEntries(ctx context.Context, needsFullText bool) ([]flowEntry, error) {
 	var allEntries []flowEntry
 	var maxProxyOffset uint32
@@ -780,7 +877,8 @@ func effectivePosition(e flowEntry) float64 {
 }
 
 // applyProxyFilters applies client-side filters to proxy history entries.
-func applyProxyFilters(entries []flowEntry, req *ProxyListRequest, proxyIndex *store.ProxyIndex, replayHistoryStore *store.ReplayHistoryStore, lastFlowID string) []flowEntry {
+// When maxResults > 0, stops after collecting that many matches (early termination for offset+limit).
+func applyProxyFilters(entries []flowEntry, req *ProxyListRequest, proxyIndex *store.ProxyIndex, replayHistoryStore *store.ReplayHistoryStore, lastFlowID string, searchHeaderRe, searchBodyRe *regexp.Regexp, maxResults int) []flowEntry {
 	if !req.HasFilters() {
 		return entries
 	}
@@ -816,66 +914,52 @@ func applyProxyFilters(entries []flowEntry, req *ProxyListRequest, proxyIndex *s
 		}
 	}
 
-	return bulk.SliceFilterInPlace(func(e flowEntry) bool {
-		// Source filter
+	result := entries[:0]
+	for _, e := range entries {
+		if maxResults > 0 && len(result) >= maxResults {
+			break
+		}
 		if req.Source != "" && req.Source != e.source {
-			return false
+			continue
 		}
 		// Since filter: compare effective position for both proxy and replay
 		if hasSince {
 			ePos := effectivePosition(e)
 			if ePos < sincePosition {
-				return false // Definitely before, exclude
+				continue
 			}
-			// ePos >= sincePosition: need to check edge cases
 			if ePos == sincePosition {
-				// Same position - only possible when both are replays with same ReferenceOffset
+				// Same position: replays at same ReferenceOffset use timestamp
 				if sinceIsReplay && e.source == SourceReplay {
-					// Multiple replays at same ReferenceOffset: use timestamp to order
-					// Exclude if this entry was created at or before the "since" replay
 					if !e.timestamp.After(sinceTimestamp) {
-						return false
+						continue
 					}
 				} else {
-					// Proxy at same position (the "since" entry itself), exclude
-					return false
+					continue
 				}
 			}
-			// ePos > sincePosition: include (after the "since" entry)
 		}
 		if len(methods) > 0 && !slices.Contains(methods, e.method) {
-			return false // Method filter
+			continue
 		} else if !statuses.Empty() && !statuses.Matches(e.status) {
-			return false // Status filter
+			continue
 		} else if req.Host != "" && !matchesGlob(e.host, req.Host) {
-			return false // Host filter (if using client-side filtering)
+			continue
 		} else if req.Path != "" && !matchesGlob(e.path, req.Path) && !matchesGlob(proxy.PathWithoutQuery(e.path), req.Path) {
-			return false
+			continue
 		} else if req.ExcludeHost != "" && matchesGlob(e.host, req.ExcludeHost) {
-			return false // Exclude host
+			continue
 		} else if req.ExcludePath != "" && matchesGlob(e.path, req.ExcludePath) {
-			return false // Exclude path
+			continue
 		}
-		if req.Contains != "" {
-			// Search URL and headers only (not body)
-			reqHeaders, _ := splitHeadersBody([]byte(e.request))
-			respHeaders, _ := splitHeadersBody([]byte(e.response))
-			combined := string(reqHeaders) + string(respHeaders)
-			if !strings.Contains(combined, req.Contains) {
-				return false
+		if searchHeaderRe != nil || searchBodyRe != nil {
+			if !matchesFlowSearch([]byte(e.request), []byte(e.response), searchHeaderRe, searchBodyRe) {
+				continue
 			}
 		}
-		if req.ContainsBody != "" {
-			_, reqBody := splitHeadersBody([]byte(e.request))
-			_, respBody := splitHeadersBody([]byte(e.response))
-			combined := string(reqBody) + string(respBody)
-			if !strings.Contains(combined, req.ContainsBody) {
-				return false // Contains body filter
-			}
-		}
-
-		return true
-	}, entries)
+		result = append(result, e)
+	}
+	return result
 }
 
 var validRuleTypes = map[string]bool{

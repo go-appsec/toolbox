@@ -451,6 +451,75 @@ func TestDiffBodies_Binary(t *testing.T) {
 	assert.Equal(t, 5, result.BSize)
 }
 
+func TestHandleDiffFlow_JSONBodyWithTextContentType(t *testing.T) {
+	t.Parallel()
+
+	_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+	mockMCP.AddProxyEntry(
+		"GET /api HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n"+`{"user":"alice","role":"admin"}`,
+		"",
+	)
+	mockMCP.AddProxyEntry(
+		"GET /api HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n"+`{"user":"alice","role":"viewer"}`,
+		"",
+	)
+
+	listResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+		"output_mode": "flows",
+		"host":        "example.com",
+	})
+	require.Len(t, listResp.Flows, 2)
+
+	resp := CallMCPToolJSONOK[protocol.DiffFlowResponse](t, mcpClient, "diff_flow", map[string]interface{}{
+		"flow_a": listResp.Flows[0].FlowID,
+		"flow_b": listResp.Flows[1].FlowID,
+		"scope":  "response_body",
+	})
+
+	assert.False(t, resp.Same)
+	require.NotNil(t, resp.Response)
+	require.NotNil(t, resp.Response.Body)
+	assert.Equal(t, "json", resp.Response.Body.Format)
+
+	var foundRoleChange bool
+	for _, c := range resp.Response.Body.Changed {
+		if c.Path == "role" {
+			foundRoleChange = true
+			assert.Equal(t, "admin", c.A)
+			assert.Equal(t, "viewer", c.B)
+		}
+	}
+	assert.True(t, foundRoleChange)
+}
+
+func TestLooksLikeJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		data string
+		want bool
+	}{
+		{"object", `{"key": "value"}`, true},
+		{"array", `[1, 2, 3]`, true},
+		{"whitespace_object", "  \t\n{\"key\": 1}", true},
+		{"whitespace_array", "  \n[1]", true},
+		{"html", "<html>hello</html>", false},
+		{"text", "plain text", false},
+		{"empty", "", false},
+		{"whitespace_only", "   ", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, looksLikeJSON([]byte(tt.data)))
+		})
+	}
+}
+
 func TestDiffBodies_Identical(t *testing.T) {
 	t.Parallel()
 

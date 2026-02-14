@@ -12,7 +12,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/protocol"
 )
 
-func summary(mcpURL string, source, host, path, method, status, contains, containsBody, excludeHost, excludePath string) error {
+func summary(mcpURL string, source, host, path, method, status, searchHeader, searchBody, excludeHost, excludePath string) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -28,8 +28,8 @@ func summary(mcpURL string, source, host, path, method, status, contains, contai
 		Path:         path,
 		Method:       method,
 		Status:       status,
-		Contains:     contains,
-		ContainsBody: containsBody,
+		SearchHeader: searchHeader,
+		SearchBody:   searchBody,
 		ExcludeHost:  excludeHost,
 		ExcludePath:  excludePath,
 	})
@@ -43,10 +43,15 @@ func summary(mcpURL string, source, host, path, method, status, contains, contai
 		cliutil.NoResults(os.Stdout, "No matching entries found.")
 	}
 
+	if resp.Note != "" {
+		fmt.Println()
+		fmt.Println(cliutil.Muted("Note: " + resp.Note))
+	}
+
 	return nil
 }
 
-func list(mcpURL string, source, host, path, method, status, contains, containsBody, since, excludeHost, excludePath string, limit, offset int) error {
+func list(mcpURL string, source, host, path, method, status, searchHeader, searchBody, since, excludeHost, excludePath string, limit, offset int) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -62,8 +67,8 @@ func list(mcpURL string, source, host, path, method, status, contains, containsB
 		Path:         path,
 		Method:       method,
 		Status:       status,
-		Contains:     contains,
-		ContainsBody: containsBody,
+		SearchHeader: searchHeader,
+		SearchBody:   searchBody,
 		Since:        since,
 		ExcludeHost:  excludeHost,
 		ExcludePath:  excludePath,
@@ -78,6 +83,62 @@ func list(mcpURL string, source, host, path, method, status, contains, containsB
 		printFlowTable(resp.Flows)
 	} else {
 		cliutil.NoResults(os.Stdout, "No matching entries found.")
+	}
+
+	if resp.Note != "" {
+		fmt.Println()
+		fmt.Println(cliutil.Muted("Note: " + resp.Note))
+	}
+
+	return nil
+}
+
+func get(mcpURL string, flowID, scope, pattern string) error {
+	ctx := context.Background()
+
+	client, err := mcpclient.Connect(ctx, mcpURL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.ProxyGet(ctx, flowID, mcpclient.ProxyGetOpts{
+		Scope:   scope,
+		Pattern: pattern,
+	})
+	if err != nil {
+		return fmt.Errorf("proxy get failed: %w", err)
+	}
+
+	fmt.Printf("%s\n\n", cliutil.Bold("Flow Details"))
+	fmt.Printf("Flow: %s\n", cliutil.ID(resp.FlowID))
+	fmt.Printf("Method: %s\n", resp.Method)
+	fmt.Printf("URL: %s\n", resp.URL)
+	fmt.Printf("Status: %s %s\n", cliutil.FormatStatus(resp.Status), resp.StatusLine)
+	fmt.Printf("Request Size: %d bytes\n", resp.ReqSize)
+	fmt.Printf("Response Size: %d bytes\n", resp.RespSize)
+
+	if resp.ReqHeaders != "" {
+		fmt.Println()
+		fmt.Println(cliutil.Bold("Request Headers"))
+		fmt.Println(resp.ReqHeaders)
+	}
+	if resp.ReqBody != "" {
+		fmt.Println(cliutil.Bold("Request Body"))
+		fmt.Println(resp.ReqBody)
+	}
+	if resp.RespHeaders != "" {
+		fmt.Println()
+		fmt.Println(cliutil.Bold("Response Headers"))
+		fmt.Println(resp.RespHeaders)
+	}
+	if resp.RespBody != "" {
+		fmt.Println(cliutil.Bold("Response Body"))
+		fmt.Println(resp.RespBody)
+	}
+	if resp.Note != "" {
+		fmt.Println()
+		fmt.Println(cliutil.Muted("Note: " + resp.Note))
 	}
 
 	return nil

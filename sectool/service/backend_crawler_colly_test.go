@@ -2,10 +2,16 @@ package service
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"regexp"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/go-appsec/toolbox/sectool/config"
 )
 
 func TestIsTextContentType(t *testing.T) {
@@ -288,4 +294,182 @@ func TestReadBodyLimited(t *testing.T) {
 			assert.Equal(t, tt.wantTruncated, truncated)
 		})
 	}
+}
+
+// newTestCollySession creates a CollyBackend with a pre-populated session for unit testing.
+// Returns the backend and session ID.
+func newTestCollySession(t *testing.T, flows []*CrawlFlow) (*CollyBackend, string) {
+	t.Helper()
+
+	cfg := config.DefaultConfig()
+	b := NewCollyBackend(cfg, nil, nil)
+	t.Cleanup(func() { _ = b.Close() })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	sessionID := "test-session"
+	sess := &crawlSession{
+		info:      CrawlSessionInfo{ID: sessionID, State: crawlStateRunning, CreatedAt: time.Now()},
+		startedAt: time.Now(),
+		flowsByID: make(map[string]*CrawlFlow),
+		urlsSeen:  make(map[string]bool),
+		ctx:       ctx,
+		cancel:    cancel,
+	}
+	for _, f := range flows {
+		f.SessionID = sessionID
+		sess.flowsByID[f.ID] = f
+		sess.flowsOrdered = append(sess.flowsOrdered, f)
+	}
+
+	b.sessions[sessionID] = sess
+	return b, sessionID
+}
+
+func TestCollyBackend_ListFlows_since_last_with_search(t *testing.T) {
+	t.Parallel()
+
+	// Create 4 flows: only flow-1 and flow-3 have "SECRET" in the request header
+	flows := []*CrawlFlow{
+		{ID: "flow-0", Host: "a.com", Path: "/0", Method: "GET", StatusCode: 200,
+			Request: []byte("GET /0 HTTP/1.1\r\nHost: a.com\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nok")},
+		{ID: "flow-1", Host: "a.com", Path: "/1", Method: "GET", StatusCode: 200,
+			Request: []byte("GET /1 HTTP/1.1\r\nHost: a.com\r\nX-Secret: yes\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nok")},
+		{ID: "flow-2", Host: "a.com", Path: "/2", Method: "GET", StatusCode: 200,
+			Request: []byte("GET /2 HTTP/1.1\r\nHost: a.com\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nok")},
+		{ID: "flow-3", Host: "a.com", Path: "/3", Method: "GET", StatusCode: 200,
+			Request: []byte("GET /3 HTTP/1.1\r\nHost: a.com\r\nX-Secret: yes\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nok")},
+	}
+	b, sessionID := newTestCollySession(t, flows)
+
+	ctx := t.Context()
+	secretRe := regexp.MustCompile(`X-Secret`)
+
+	// 1. Poll with search: should return flow-1 and flow-3, cursor at index 4
+	got, err := b.ListFlows(ctx, sessionID, CrawlListOptions{SearchHeaderRe: secretRe})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "flow-1", got[0].ID)
+	assert.Equal(t, "flow-3", got[1].ID)
+
+	// Cursor should be at index 4 (after flow-3 at index 3)
+	sess := b.sessions[sessionID]
+	sess.mu.RLock()
+	cursor := sess.lastReturnedIdx
+	sess.mu.RUnlock()
+	assert.Equal(t, 4, cursor)
+
+	// 2. Poll with since=last (no search): flow-0 and flow-2 are before the cursor,
+	// so nothing is returned. This is correct: the search advanced past them.
+	got, err = b.ListFlows(ctx, sessionID, CrawlListOptions{Since: sinceLast})
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	// 3. Add a new flow after the cursor
+	sess.mu.Lock()
+	newFlow := &CrawlFlow{ID: "flow-4", SessionID: sessionID, Host: "a.com", Path: "/4",
+		Method: "GET", StatusCode: 200,
+		Request: []byte("GET /4 HTTP/1.1\r\nHost: a.com\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nnew")}
+	sess.flowsByID["flow-4"] = newFlow
+	sess.flowsOrdered = append(sess.flowsOrdered, newFlow)
+	sess.mu.Unlock()
+
+	// 4. Poll with since=last: new flow is returned
+	got, err = b.ListFlows(ctx, sessionID, CrawlListOptions{Since: sinceLast})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "flow-4", got[0].ID)
+}
+
+func TestCollyBackend_ListFlows_search_cursor_not_past_results(t *testing.T) {
+	t.Parallel()
+
+	// Regression test: search cursor must only advance to the last matching
+	// flow, not to the end of the full flow list.
+	// flow-0: no match, flow-1: match, flow-2: no match, flow-3: no match
+	flows := []*CrawlFlow{
+		{ID: "flow-0", Host: "a.com", Path: "/0", Method: "GET", StatusCode: 200,
+			Request: []byte("GET /0 HTTP/1.1\r\nHost: a.com\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nok")},
+		{ID: "flow-1", Host: "a.com", Path: "/1", Method: "GET", StatusCode: 200,
+			Request: []byte("GET /1 HTTP/1.1\r\nHost: a.com\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nSECRET")},
+		{ID: "flow-2", Host: "a.com", Path: "/2", Method: "GET", StatusCode: 200,
+			Request: []byte("GET /2 HTTP/1.1\r\nHost: a.com\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nok")},
+		{ID: "flow-3", Host: "a.com", Path: "/3", Method: "GET", StatusCode: 200,
+			Request: []byte("GET /3 HTTP/1.1\r\nHost: a.com\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nok")},
+	}
+	b, sessionID := newTestCollySession(t, flows)
+
+	ctx := t.Context()
+	secretRe := regexp.MustCompile(`SECRET`)
+
+	// Search matches only flow-1 (index 1). Cursor should advance to 2, not 4.
+	got, err := b.ListFlows(ctx, sessionID, CrawlListOptions{SearchBodyRe: secretRe})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "flow-1", got[0].ID)
+
+	sess := b.sessions[sessionID]
+	sess.mu.RLock()
+	cursor := sess.lastReturnedIdx
+	sess.mu.RUnlock()
+	assert.Equal(t, 2, cursor, "cursor should be at index 2 (after flow-1), not at the end")
+
+	// since=last without search: should return flow-2 and flow-3
+	got, err = b.ListFlows(ctx, sessionID, CrawlListOptions{Since: sinceLast})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "flow-2", got[0].ID)
+	assert.Equal(t, "flow-3", got[1].ID)
+}
+
+func TestCollyBackend_ListFlows_search_with_limit(t *testing.T) {
+	t.Parallel()
+
+	// 6 flows: matches at indices 0, 2, 4 (even indices have X-Tag header)
+	flows := make([]*CrawlFlow, 6)
+	for i := range flows {
+		hdr := "GET /%d HTTP/1.1\r\nHost: a.com\r\n"
+		if i%2 == 0 {
+			hdr += "X-Tag: yes\r\n"
+		}
+		flows[i] = &CrawlFlow{
+			ID: fmt.Sprintf("flow-%d", i), Host: "a.com", Path: fmt.Sprintf("/%d", i),
+			Method: "GET", StatusCode: 200,
+			Request:  []byte(fmt.Sprintf(hdr+"\r\n", i)),
+			Response: []byte("HTTP/1.1 200 OK\r\n\r\nok"),
+		}
+	}
+	b, sessionID := newTestCollySession(t, flows)
+
+	ctx := t.Context()
+	tagRe := regexp.MustCompile(`X-Tag`)
+
+	// limit=2 with search: should return flow-0 and flow-2, stop early
+	got, err := b.ListFlows(ctx, sessionID, CrawlListOptions{
+		SearchHeaderRe: tagRe, Limit: 2,
+	})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, "flow-0", got[0].ID)
+	assert.Equal(t, "flow-2", got[1].ID)
+
+	// Cursor should be at 3 (after flow-2 at index 2), not at 5
+	sess := b.sessions[sessionID]
+	sess.mu.RLock()
+	cursor := sess.lastReturnedIdx
+	sess.mu.RUnlock()
+	assert.Equal(t, 3, cursor)
+
+	// since=last with same search: should return flow-4 (the remaining match)
+	got, err = b.ListFlows(ctx, sessionID, CrawlListOptions{
+		Since: sinceLast, SearchHeaderRe: tagRe,
+	})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "flow-4", got[0].ID)
+
+	// since=last without search: returns flow-5 (only remaining unseen flow)
+	got, err = b.ListFlows(ctx, sessionID, CrawlListOptions{Since: sinceLast})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "flow-5", got[0].ID)
 }

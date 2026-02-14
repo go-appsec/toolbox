@@ -284,10 +284,30 @@ func diffBodies(bodyA, bodyB []byte, contentType string, maxLines int) *protocol
 
 	if isDiffJSONContentType(contentType) {
 		return diffJSONBodies(bodyA, bodyB, maxLines)
+	}
+	// Heuristic: try JSON diff when both bodies look like JSON regardless of Content-Type.
+	// Safe because diffJSONBodies falls back to text diff on parse failure.
+	if looksLikeJSON(bodyA) && looksLikeJSON(bodyB) {
+		return diffJSONBodies(bodyA, bodyB, maxLines)
 	} else if isDiffTextContentType(contentType) || (utf8.Valid(bodyA) && utf8.Valid(bodyB)) {
 		return diffTextBodies(bodyA, bodyB, maxLines)
 	}
 	return diffBinaryBodies(bodyA, bodyB)
+}
+
+// looksLikeJSON returns true if the first non-whitespace byte is { or [.
+func looksLikeJSON(data []byte) bool {
+	for _, b := range data {
+		switch b {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case '{', '[':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func isDiffJSONContentType(ct string) bool {

@@ -10,7 +10,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/cliutil"
 )
 
-var proxySubcommands = []string{"summary", "list", "cookies", "export", "rule", "help"}
+var proxySubcommands = []string{"summary", "list", "get", "cookies", "export", "rule", "help"}
 
 func Parse(args []string, mcpURL string) error {
 	if len(args) < 1 {
@@ -23,6 +23,8 @@ func Parse(args []string, mcpURL string) error {
 		return parseSummary(args[1:], mcpURL)
 	case "list":
 		return parseList(args[1:], mcpURL)
+	case "get":
+		return parseGet(args[1:], mcpURL)
 	case "cookies":
 		return parseCookies(args[1:], mcpURL)
 	case "export":
@@ -52,15 +54,15 @@ proxy summary [options]
   Use this first to understand available traffic before using proxy list.
 
   Options:
-    --source <type>         filter by source: 'proxy', 'replay', or empty for both
-    --host <pattern>        host glob pattern (*, ?)
-    --path <pattern>        path glob pattern (*, ?)
-    --method <list>         comma-separated methods (POST,PUT)
-    --status <list>         comma-separated status codes (200,404)
-    --contains <text>       search URL and headers
-    --contains-body <text>  search request/response body
-    --exclude-host <pat>    exclude matching hosts
-    --exclude-path <pat>    exclude matching paths
+    --source <type>           filter by source: 'proxy', 'replay', or empty for both
+    --host <pattern>          host glob pattern (*, ?)
+    --path <pattern>          path glob pattern (*, ?)
+    --method <list>           comma-separated methods (POST,PUT)
+    --status <list>           comma-separated status codes (200,404)
+    --search-header <regex>   regex search in request/response headers (RE2)
+    --search-body <regex>     regex search in request/response body (RE2)
+    --exclude-host <pat>      exclude matching hosts
+    --exclude-path <pat>      exclude matching paths
 
   Examples:
     sectool proxy summary                                 # full summary
@@ -77,18 +79,18 @@ proxy list [options]
   List individual flows with flow_id for export or replay.
 
   Options:
-    --source <type>         filter by source: 'proxy', 'replay', or empty for both
-    --host <pattern>        host glob pattern (*, ?)
-    --path <pattern>        path glob pattern (*, ?)
-    --method <list>         comma-separated methods (POST,PUT)
-    --status <list>         comma-separated status codes (200,404)
-    --contains <text>       search URL and headers
-    --contains-body <text>  search request/response body
-    --since <id>            flows after flow_id
-    --exclude-host <pat>    exclude matching hosts
-    --exclude-path <pat>    exclude matching paths
-    --limit <n>             maximum number of flows to return
-    --offset <n>            skip first N results (applied after filtering)
+    --source <type>           filter by source: 'proxy', 'replay', or empty for both
+    --host <pattern>          host glob pattern (*, ?)
+    --path <pattern>          path glob pattern (*, ?)
+    --method <list>           comma-separated methods (POST,PUT)
+    --status <list>           comma-separated status codes (200,404)
+    --search-header <regex>   regex search in request/response headers (RE2)
+    --search-body <regex>     regex search in request/response body (RE2)
+    --since <id>              flows after flow_id
+    --exclude-host <pat>      exclude matching hosts
+    --exclude-path <pat>      exclude matching paths
+    --limit <n>               maximum number of flows to return
+    --offset <n>              skip first N results (applied after filtering)
 
   Examples:
     sectool proxy list --host api.example.com             # flows for host
@@ -98,6 +100,26 @@ proxy list [options]
     sectool proxy list --source replay --limit 10         # recent replay requests
 
   Output: Markdown table with flow_id, method, host, path, status, size
+
+---
+
+proxy get <flow_id> [options]
+
+  Get full request and response data for a flow.
+
+  Options:
+    --scope <sections>        sections to include (comma-separated):
+                              request_headers, request_body, response_headers,
+                              response_body, all (default)
+    --pattern <regex>         regex search within scoped sections (RE2);
+                              returns matching snippets instead of full content
+
+  Examples:
+    sectool proxy get f7k2x                                   # full flow
+    sectool proxy get f7k2x --scope response_body             # response body only
+    sectool proxy get f7k2x --scope response_body --pattern "token=[a-f0-9]+"
+
+  Output: Request/response headers and body for the specified sections
 
 ---
 
@@ -187,15 +209,14 @@ proxy rule update <rule_id> [options] [match] [replace]
   Searches both HTTP and WebSocket rules automatically.
 
   Options:
-    --type <type>           Rule type (required)
     --match <pattern>       Pattern to match
     --replace <string>      Replacement string
     --regex                 Treat match as regex pattern
     --label <name>          New label for the rule
 
   Examples:
-    sectool proxy rule update abc123 --type request_header "X-New: value"
-    sectool proxy rule update my-rule --type request_body "updated" "value"
+    sectool proxy rule update abc123 "X-New: value"
+    sectool proxy rule update my-rule "updated" "value"
 
 proxy rule delete <rule_id>
 
@@ -211,15 +232,15 @@ proxy rule delete <rule_id>
 func parseSummary(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("proxy summary", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
-	var host, path, method, status, contains, containsBody, excludeHost, excludePath, source string
+	var host, path, method, status, searchHeader, searchBody, excludeHost, excludePath, source string
 
 	fs.StringVar(&source, "source", "", "filter by source: 'proxy', 'replay', or empty for both")
 	fs.StringVar(&host, "host", "", "filter by host pattern (glob: *, ?)")
 	fs.StringVar(&path, "path", "", "filter by path pattern (glob: *, ?)")
 	fs.StringVar(&method, "method", "", "filter by HTTP method (comma-separated)")
 	fs.StringVar(&status, "status", "", "filter by status code (e.g., 200,4XX)")
-	fs.StringVar(&contains, "contains", "", "search in URL and headers")
-	fs.StringVar(&containsBody, "contains-body", "", "search in request/response body")
+	fs.StringVar(&searchHeader, "search-header", "", "regex search in request/response headers (RE2)")
+	fs.StringVar(&searchBody, "search-body", "", "regex search in request/response body (RE2)")
 	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")
 	fs.StringVar(&excludePath, "exclude-path", "", "exclude paths matching pattern")
 
@@ -245,22 +266,22 @@ Options:
 		return err
 	}
 
-	return summary(mcpURL, source, host, path, method, status, contains, containsBody, excludeHost, excludePath)
+	return summary(mcpURL, source, host, path, method, status, searchHeader, searchBody, excludeHost, excludePath)
 }
 
 func parseList(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("proxy list", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	var limit, offset int
-	var host, path, method, status, contains, containsBody, since, excludeHost, excludePath, source string
+	var host, path, method, status, searchHeader, searchBody, since, excludeHost, excludePath, source string
 
 	fs.StringVar(&source, "source", "", "filter by source: 'proxy', 'replay', or empty for both")
 	fs.StringVar(&host, "host", "", "filter by host pattern (glob: *, ?)")
 	fs.StringVar(&path, "path", "", "filter by path pattern (glob: *, ?)")
 	fs.StringVar(&method, "method", "", "filter by HTTP method (comma-separated)")
 	fs.StringVar(&status, "status", "", "filter by status code (e.g., 200,4XX)")
-	fs.StringVar(&contains, "contains", "", "search in URL and headers")
-	fs.StringVar(&containsBody, "contains-body", "", "search in request/response body")
+	fs.StringVar(&searchHeader, "search-header", "", "regex search in request/response headers (RE2)")
+	fs.StringVar(&searchBody, "search-body", "", "regex search in request/response body (RE2)")
 	fs.StringVar(&since, "since", "", "filter since flow_id or 'last'")
 	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")
 	fs.StringVar(&excludePath, "exclude-path", "", "exclude paths matching pattern")
@@ -294,11 +315,39 @@ Options:
 	}
 
 	// Auto-set large limit if no filters provided (MCP refuses list with no limits or filters)
-	if limit == 0 && source == "" && host == "" && path == "" && method == "" && status == "" && contains == "" && containsBody == "" && since == "" && excludeHost == "" && excludePath == "" {
+	if limit == 0 && source == "" && host == "" && path == "" && method == "" && status == "" && searchHeader == "" && searchBody == "" && since == "" && excludeHost == "" && excludePath == "" {
 		limit = 1_000_000_000
 	}
 
-	return list(mcpURL, source, host, path, method, status, contains, containsBody, since, excludeHost, excludePath, limit, offset)
+	return list(mcpURL, source, host, path, method, status, searchHeader, searchBody, since, excludeHost, excludePath, limit, offset)
+}
+
+func parseGet(args []string, mcpURL string) error {
+	fs := pflag.NewFlagSet("proxy get", pflag.ContinueOnError)
+	fs.SetInterspersed(true)
+	var scope, pattern string
+
+	fs.StringVar(&scope, "scope", "", "sections to include (comma-separated): request_headers, request_body, response_headers, response_body, all")
+	fs.StringVar(&pattern, "pattern", "", "regex pattern to search within scoped sections (RE2)")
+
+	fs.Usage = func() {
+		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool proxy get <flow_id> [options]
+
+Get full request and response data for a flow.
+
+Options:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	} else if len(fs.Args()) < 1 {
+		fs.Usage()
+		return errors.New("flow_id required (get from 'sectool proxy list' with filters)")
+	}
+
+	return get(mcpURL, fs.Args()[0], scope, pattern)
 }
 
 func parseExport(args []string, mcpURL string) error {

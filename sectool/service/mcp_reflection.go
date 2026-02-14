@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-analyze/bulk"
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
@@ -213,29 +212,43 @@ func extractParams(rawReq []byte) []protocol.Reflection {
 	return params
 }
 
+// encodedVariant pairs an encoded string with its encoding label.
+type encodedVariant struct {
+	encoded  string
+	encoding string
+}
+
 // encodingVariants generates encoded forms of a value for reflection matching.
-func encodingVariants(value string) []string {
-	variants := map[string]bool{value: true}
-	add := func(s string) {
-		variants[s] = true
+func encodingVariants(value string) []encodedVariant {
+	seen := map[string]bool{value: true}
+	variants := []encodedVariant{{encoded: value, encoding: "raw"}}
+	add := func(encoded, encoding string) {
+		if !seen[encoded] {
+			seen[encoded] = true
+			variants = append(variants, encodedVariant{encoded: encoded, encoding: encoding})
+		}
 	}
 
-	add(url.QueryEscape(value))
-	add(url.PathEscape(value))
-	add(html.EscapeString(value))
+	add(url.QueryEscape(value), "url_query")
+	add(url.PathEscape(value), "url_path")
+	add(html.EscapeString(value), "html_entity")
 
 	if !strings.ContainsAny(value, `<>&'"/`) {
-		return bulk.MapKeysSlice(variants)
+		return variants
 	}
 
-	encoders := []func(rune) string{
-		func(r rune) string { return fmt.Sprintf("\\u%04x", r) },
-		func(r rune) string { return fmt.Sprintf("\\u%04X", r) },
-		func(r rune) string { return fmt.Sprintf("\\x%02x", r) },
-		func(r rune) string { return fmt.Sprintf("\\x%02X", r) },
-		func(r rune) string { return fmt.Sprintf("&#%d;", r) },
-		func(r rune) string { return fmt.Sprintf("&#x%x;", r) },
-		func(r rune) string { return fmt.Sprintf("&#x%X;", r) },
+	type labeledEncoder struct {
+		label string
+		fn    func(rune) string
+	}
+	encoders := []labeledEncoder{
+		{"js_unicode", func(r rune) string { return fmt.Sprintf("\\u%04x", r) }},
+		{"js_unicode", func(r rune) string { return fmt.Sprintf("\\u%04X", r) }},
+		{"js_hex", func(r rune) string { return fmt.Sprintf("\\x%02x", r) }},
+		{"js_hex", func(r rune) string { return fmt.Sprintf("\\x%02X", r) }},
+		{"html_decimal", func(r rune) string { return fmt.Sprintf("&#%d;", r) }},
+		{"html_hex", func(r rune) string { return fmt.Sprintf("&#x%x;", r) }},
+		{"html_hex", func(r rune) string { return fmt.Sprintf("&#x%X;", r) }},
 	}
 
 	for _, enc := range encoders {
@@ -243,15 +256,15 @@ func encodingVariants(value string) []string {
 		for _, r := range value {
 			switch r {
 			case '<', '>', '&', '\'', '"', '/':
-				b.WriteString(enc(r))
+				b.WriteString(enc.fn(r))
 			default:
 				b.WriteRune(r)
 			}
 		}
-		add(b.String())
+		add(b.String(), enc.label)
 	}
 
-	return bulk.MapKeysSlice(variants)
+	return variants
 }
 
 // findReflections checks each parameter value against the response body and headers.
@@ -270,17 +283,27 @@ func findReflections(params []protocol.Reflection, rawResp []byte) []protocol.Re
 		variants := encodingVariants(p.Value)
 
 		var locations []string
+		var contexts []protocol.ReflectionContext
 
-		for _, variant := range variants {
-			if strings.Contains(respBodyStr, variant) {
-				locations = append(locations, "body")
-				break
+		for _, v := range variants {
+			idx := strings.Index(respBodyStr, v.encoded)
+			if idx >= 0 {
+				if len(contexts) == 0 {
+					locations = append(locations, "body")
+				}
+				ctx := classifyReflectionContext(respBodyStr, idx)
+				sample := extractSample(respBodyStr, idx, idx+len(v.encoded))
+				contexts = append(contexts, protocol.ReflectionContext{
+					Context:  ctx,
+					Encoding: v.encoding,
+					Sample:   sample,
+				})
 			}
 		}
 
 		for headerName, headerVals := range respHeaderMap {
 			for _, hv := range headerVals {
-				if slices.ContainsFunc(variants, func(s string) bool { return strings.Contains(hv, s) }) {
+				if slices.ContainsFunc(variants, func(v encodedVariant) bool { return strings.Contains(hv, v.encoded) }) {
 					locations = append(locations, "header:"+headerName)
 					break
 				}
@@ -290,6 +313,7 @@ func findReflections(params []protocol.Reflection, rawResp []byte) []protocol.Re
 		if len(locations) > 0 {
 			sort.Strings(locations)
 			p.Locations = locations
+			p.Contexts = contexts
 			reflections = append(reflections, p)
 		}
 	}
@@ -302,4 +326,84 @@ func findReflections(params []protocol.Reflection, rawResp []byte) []protocol.Re
 	})
 
 	return reflections
+}
+
+// classifyReflectionContext determines the HTML/JS/CSS context at a match position.
+func classifyReflectionContext(body string, matchStart int) string {
+	before := body[:matchStart]
+
+	// Check for HTML comment context
+	commentOpen := strings.LastIndex(before, "<!--")
+	if commentOpen >= 0 {
+		commentClose := strings.LastIndex(before[commentOpen:], "-->")
+		if commentClose < 0 {
+			return "html_comment"
+		}
+	}
+
+	// Check for <script> context
+	scriptOpen := strings.LastIndex(strings.ToLower(before), "<script")
+	if scriptOpen >= 0 {
+		scriptClose := strings.LastIndex(strings.ToLower(before[scriptOpen:]), "</script")
+		if scriptClose < 0 {
+			return "script"
+		}
+	}
+
+	// Check for <style> context
+	styleOpen := strings.LastIndex(strings.ToLower(before), "<style")
+	if styleOpen >= 0 {
+		styleClose := strings.LastIndex(strings.ToLower(before[styleOpen:]), "</style")
+		if styleClose < 0 {
+			return "css"
+		}
+	}
+
+	// Check if inside a tag (< more recent than >)
+	lastLT := strings.LastIndex(before, "<")
+	lastGT := strings.LastIndex(before, ">")
+	if lastLT >= 0 && lastLT > lastGT {
+		// Inside a tag — check for URL attributes
+		tagContent := strings.ToLower(before[lastLT:])
+		for _, attr := range []string{"href=", "src=", "action=", "formaction="} {
+			if strings.Contains(tagContent, attr) {
+				return "url"
+			}
+		}
+		return "html_attribute"
+	}
+
+	// Check for JSON-like context
+	lastBrace := strings.LastIndex(before, "{")
+	if lastBrace >= 0 {
+		segment := before[lastBrace:]
+		if strings.Contains(segment, ":") && !strings.Contains(segment, "}") {
+			return "json"
+		}
+	}
+
+	return "html_text"
+}
+
+// extractSample returns ~80 chars around the match for context display.
+func extractSample(body string, matchStart, matchEnd int) string {
+	const pad = 40
+	start := matchStart - pad
+	if start < 0 {
+		start = 0
+	}
+	end := matchEnd + pad
+	if end > len(body) {
+		end = len(body)
+	}
+
+	var b strings.Builder
+	if start > 0 {
+		b.WriteString("...")
+	}
+	b.WriteString(body[start:end])
+	if end < len(body) {
+		b.WriteString("...")
+	}
+	return b.String()
 }

@@ -361,9 +361,13 @@ func (b *mockCrawlerBackend) ListFlows(ctx context.Context, sessionID string, op
 		return nil, err
 	}
 
+	hasSearch := opts.SearchHeaderRe != nil || opts.SearchBodyRe != nil
 	flows := make([]CrawlFlow, 0, len(b.flows))
 	for _, flow := range b.flows {
 		if flow.SessionID != sess.ID {
+			continue
+		}
+		if hasSearch && !matchesFlowSearch(flow.Request, flow.Response, opts.SearchHeaderRe, opts.SearchBodyRe) {
 			continue
 		}
 		flows = append(flows, *flow)

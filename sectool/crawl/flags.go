@@ -16,7 +16,7 @@ const (
 	subcmdErrors = "errors"
 )
 
-var crawlSubcommands = []string{"create", "seed", "status", "summary", "list", subcmdForms, subcmdErrors, "sessions", "stop", "export", "help"}
+var crawlSubcommands = []string{"create", "seed", "status", "summary", "list", "get", subcmdForms, subcmdErrors, "sessions", "stop", "export", "help"}
 
 func Parse(args []string, mcpURL string) error {
 	if len(args) < 1 {
@@ -35,6 +35,8 @@ func Parse(args []string, mcpURL string) error {
 		return parseSummary(args[1:], mcpURL)
 	case "list":
 		return parseList(args[1:], mcpURL)
+	case "get":
+		return parseGet(args[1:], mcpURL)
 	case subcmdForms:
 		return parseForms(args[1:], mcpURL)
 	case subcmdErrors:
@@ -100,10 +102,19 @@ crawl status <session_id>
 
 ---
 
-crawl summary <session_id>
+crawl summary <session_id> [options]
 
   Get aggregated summary grouped by host/path/method/status.
-  Same format as 'proxy summary' for consistency.
+
+  Options:
+    --host <pattern>          filter by host pattern (glob: *, ?)
+    --path <pattern>          filter by path pattern (glob: *, ?)
+    --method <list>           filter by HTTP method (comma-separated)
+    --status <list>           filter by status codes (comma-separated, e.g., 200,4XX)
+    --search-header <regex>   regex search in request/response headers (RE2)
+    --search-body <regex>     regex search in request/response body (RE2)
+    --exclude-host <pat>      exclude hosts matching pattern
+    --exclude-path <pat>      exclude paths matching pattern
 
   Output: Markdown table with host, path, method, status, count
 
@@ -114,19 +125,33 @@ crawl list <session_id> [options]
   List crawled URLs from a session.
 
   Options:
-    --host <pattern>       filter by host pattern (glob: *, ?)
-    --path <pattern>       filter by path pattern (glob: *, ?)
-    --method <list>        filter by HTTP method (comma-separated)
-    --status <list>        filter by status codes (comma-separated, e.g., 200,4XX)
-    --contains <text>      search URL and headers
-    --contains-body <text> search request/response body
-    --exclude-host <pat>   exclude hosts matching pattern
-    --exclude-path <pat>   exclude paths matching pattern
-    --since <val>          flows after: flow_id, timestamp, or 'last'
-    --limit <n>            maximum result count
-    --offset <n>           skip first N results
+    --host <pattern>          filter by host pattern (glob: *, ?)
+    --path <pattern>          filter by path pattern (glob: *, ?)
+    --method <list>           filter by HTTP method (comma-separated)
+    --status <list>           filter by status codes (comma-separated, e.g., 200,4XX)
+    --search-header <regex>   regex search in request/response headers (RE2)
+    --search-body <regex>     regex search in request/response body (RE2)
+    --exclude-host <pat>      exclude hosts matching pattern
+    --exclude-path <pat>      exclude paths matching pattern
+    --since <val>             flows after: flow_id, timestamp, or 'last'
+    --limit <n>               maximum result count
+    --offset <n>              skip first N results
 
   Output: Markdown table with flow_id, method, host, path, status, size
+
+---
+
+crawl get <flow_id> [options]
+
+  Get full request and response data for a crawled flow.
+
+  Options:
+    --scope <sections>        sections to include (comma-separated):
+                              request_headers, request_body, response_headers,
+                              response_body, all (default)
+    --pattern <regex>         regex search within scoped sections (RE2)
+
+  Output: Request/response headers and body for the specified sections
 
 ---
 
@@ -277,6 +302,16 @@ Options:
 func parseSummary(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("crawl summary", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
+	var host, path, method, status, searchHeader, searchBody, excludeHost, excludePath string
+
+	fs.StringVar(&host, "host", "", "filter by host pattern (glob: *, ?)")
+	fs.StringVar(&path, "path", "", "filter by path pattern (glob: *, ?)")
+	fs.StringVar(&method, "method", "", "filter by HTTP method (comma-separated)")
+	fs.StringVar(&status, "status", "", "filter by status code (e.g., 200,4XX)")
+	fs.StringVar(&searchHeader, "search-header", "", "regex search in request/response headers (RE2)")
+	fs.StringVar(&searchBody, "search-body", "", "regex search in request/response body (RE2)")
+	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")
+	fs.StringVar(&excludePath, "exclude-path", "", "exclude paths matching pattern")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool crawl summary <session_id> [options]
@@ -295,21 +330,21 @@ Options:
 		return errors.New("session_id required")
 	}
 
-	return summary(mcpURL, fs.Args()[0])
+	return summary(mcpURL, fs.Args()[0], host, path, method, status, searchHeader, searchBody, excludeHost, excludePath)
 }
 
 func parseList(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("crawl list", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
-	var host, path, method, status, contains, containsBody, excludeHost, excludePath, since string
+	var host, path, method, status, searchHeader, searchBody, excludeHost, excludePath, since string
 	var limit, offset int
 
 	fs.StringVar(&host, "host", "", "filter by host pattern (glob: *, ?)")
 	fs.StringVar(&path, "path", "", "filter by path pattern (glob: *, ?)")
 	fs.StringVar(&method, "method", "", "filter by HTTP method (comma-separated)")
 	fs.StringVar(&status, "status", "", "filter by status codes (e.g., 200,4XX)")
-	fs.StringVar(&contains, "contains", "", "search in URL and headers")
-	fs.StringVar(&containsBody, "contains-body", "", "search in request/response body")
+	fs.StringVar(&searchHeader, "search-header", "", "regex search in request/response headers (RE2)")
+	fs.StringVar(&searchBody, "search-body", "", "regex search in request/response body (RE2)")
 	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")
 	fs.StringVar(&excludePath, "exclude-path", "", "exclude paths matching pattern")
 	fs.StringVar(&since, "since", "", "flows after flow_id or timestamp")
@@ -334,11 +369,39 @@ Options:
 	}
 
 	// Auto-set large limit if no filters provided (MCP refuses list with no limits or filters)
-	if limit == 0 && host == "" && path == "" && method == "" && status == "" && contains == "" && containsBody == "" && excludeHost == "" && excludePath == "" && since == "" {
+	if limit == 0 && host == "" && path == "" && method == "" && status == "" && searchHeader == "" && searchBody == "" && excludeHost == "" && excludePath == "" && since == "" {
 		limit = 1_000_000_000
 	}
 
-	return list(mcpURL, fs.Args()[0], "urls", host, path, method, status, contains, containsBody, excludeHost, excludePath, since, limit, offset)
+	return list(mcpURL, fs.Args()[0], "urls", host, path, method, status, searchHeader, searchBody, excludeHost, excludePath, since, limit, offset)
+}
+
+func parseGet(args []string, mcpURL string) error {
+	fs := pflag.NewFlagSet("crawl get", pflag.ContinueOnError)
+	fs.SetInterspersed(true)
+	var scope, pattern string
+
+	fs.StringVar(&scope, "scope", "", "sections to include (comma-separated): request_headers, request_body, response_headers, response_body, all")
+	fs.StringVar(&pattern, "pattern", "", "regex pattern to search within scoped sections (RE2)")
+
+	fs.Usage = func() {
+		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool crawl get <flow_id> [options]
+
+Get full request and response data for a crawled flow.
+
+Options:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	} else if len(fs.Args()) < 1 {
+		fs.Usage()
+		return errors.New("flow_id required (get from 'sectool crawl list')")
+	}
+
+	return get(mcpURL, fs.Args()[0], scope, pattern)
 }
 
 func parseForms(args []string, mcpURL string) error {

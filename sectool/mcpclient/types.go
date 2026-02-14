@@ -12,13 +12,20 @@ type ProxyPollOpts struct {
 	Path         string
 	Method       string
 	Status       string
-	Contains     string
-	ContainsBody string
+	SearchHeader string
+	SearchBody   string
 	Since        string // list mode
 	ExcludeHost  string
 	ExcludePath  string
 	Limit        int // list mode
 	Offset       int // list mode
+}
+
+// ProxyGetOpts are options for ProxyGet.
+type ProxyGetOpts struct {
+	Scope    string
+	Pattern  string
+	FullBody bool // base64-encoded for exact export
 }
 
 // RuleAddOpts are options for ProxyRuleAdd.
@@ -95,13 +102,20 @@ type CrawlPollOpts struct {
 	Path         string
 	Method       string
 	Status       string
-	Contains     string
-	ContainsBody string
+	SearchHeader string
+	SearchBody   string
 	ExcludeHost  string
 	ExcludePath  string
 	Since        string // flows mode
 	Limit        int
 	Offset       int
+}
+
+// CrawlGetOpts are options for CrawlGet.
+type CrawlGetOpts struct {
+	Scope    string
+	Pattern  string
+	FullBody bool // base64-encoded
 }
 
 // CookieJarOpts are options for CookieJar.

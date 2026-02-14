@@ -685,7 +685,13 @@ func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts Cra
 		}
 	}
 
-	// Filter and collect matching flows with their original indices
+	// Filter and collect matching flows with their original indices.
+	// When offset+limit is known, stop scanning once we have enough matches.
+	hasSearch := opts.SearchHeaderRe != nil || opts.SearchBodyRe != nil
+	var maxCollect int
+	if opts.Limit > 0 {
+		maxCollect = opts.Offset + opts.Limit
+	}
 	type indexedFlow struct {
 		flow *CrawlFlow
 		idx  int // original index in flowsOrdered
@@ -697,8 +703,14 @@ func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts Cra
 		if useSinceTime && !flow.DiscoveredAt.After(sinceTime) {
 			continue
 		}
-		if matchesFlowFilters(flow, opts) {
-			filtered = append(filtered, indexedFlow{flow: flow, idx: i})
+		if !matchesFlowFilters(flow, opts) {
+			continue
+		} else if hasSearch && !matchesFlowSearch(flow.Request, flow.Response, opts.SearchHeaderRe, opts.SearchBodyRe) {
+			continue
+		}
+		filtered = append(filtered, indexedFlow{flow: flow, idx: i})
+		if maxCollect > 0 && len(filtered) >= maxCollect {
+			break
 		}
 	}
 
@@ -1040,24 +1052,6 @@ func matchesFlowFilters(flow *CrawlFlow, opts CrawlListOptions) bool {
 		return false
 	} else if opts.ExcludePath != "" && matchesGlob(flow.Path, opts.ExcludePath) {
 		return false
-	}
-
-	if opts.Contains != "" {
-		reqHeaders, _ := splitHeadersBody(flow.Request)
-		respHeaders, _ := splitHeadersBody(flow.Response)
-		combined := flow.URL + string(reqHeaders) + string(respHeaders)
-		if !strings.Contains(combined, opts.Contains) {
-			return false
-		}
-	}
-
-	if opts.ContainsBody != "" {
-		_, reqBody := splitHeadersBody(flow.Request)
-		_, respBody := splitHeadersBody(flow.Response)
-		combined := string(reqBody) + string(respBody)
-		if !strings.Contains(combined, opts.ContainsBody) {
-			return false
-		}
 	}
 
 	return true

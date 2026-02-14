@@ -157,13 +157,18 @@ func TestMCP_ProxyListWithMock(t *testing.T) {
 		statusMax int
 	}{
 		{
-			name:         "with_contains_header",
-			args:         map[string]interface{}{"output_mode": "flows", "contains": "searchme"},
+			name:         "search_header",
+			args:         map[string]interface{}{"output_mode": "flows", "search_header": "searchme"},
 			wantNonEmpty: true,
 		},
 		{
-			name:         "with_contains_body",
-			args:         map[string]interface{}{"output_mode": "flows", "contains_body": "bodysearch"},
+			name:         "search_body",
+			args:         map[string]interface{}{"output_mode": "flows", "search_body": "bodysearch"},
+			wantNonEmpty: true,
+		},
+		{
+			name:         "search_header_regex",
+			args:         map[string]interface{}{"output_mode": "flows", "search_header": "X-Custom:\\s+search.*"},
 			wantNonEmpty: true,
 		},
 		{
@@ -474,6 +479,108 @@ func TestMCP_ProxyGetFullBodyReturnsBase64(t *testing.T) {
 	decodedBody, err := base64.StdEncoding.DecodeString(getResp.RespBody)
 	require.NoError(t, err)
 	assert.Equal(t, "plain text response body", string(decodedBody))
+}
+
+func TestMCP_ProxyPollSearchFallbackNote(t *testing.T) {
+	t.Parallel()
+
+	_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+	mockMCP.AddProxyEntry(
+		"GET / HTTP/1.1\r\nHost: test.com\r\n\r\n",
+		"HTTP/1.1 200 OK\r\n\r\nsome [invalid regex",
+		"",
+	)
+
+	resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+		"output_mode": "flows",
+		"search_body": "[invalid",
+	})
+	assert.NotEmpty(t, resp.Note)
+	assert.Contains(t, resp.Note, "treated as literal")
+	require.NotEmpty(t, resp.Flows)
+}
+
+func TestMCP_ProxyGetWithScope(t *testing.T) {
+	t.Parallel()
+
+	_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
+
+	mockMCP.AddProxyEntry(
+		"GET /scoped HTTP/1.1\r\nHost: scope.com\r\n\r\nreq body here",
+		"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nresp body here",
+		"",
+	)
+
+	listResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+		"output_mode": "flows",
+		"host":        "scope.com",
+	})
+	require.NotEmpty(t, listResp.Flows)
+	flowID := listResp.Flows[0].FlowID
+
+	t.Run("response_body_only", func(t *testing.T) {
+		var raw map[string]interface{}
+		text := CallMCPToolTextOK(t, mcpClient, "proxy_get", map[string]interface{}{
+			"flow_id": flowID,
+			"scope":   "response_body",
+		})
+		require.NoError(t, json.Unmarshal([]byte(text), &raw))
+		assert.Contains(t, raw, "response_body")
+		assert.NotContains(t, raw, "request_headers")
+		assert.NotContains(t, raw, "request_body")
+		assert.NotContains(t, raw, "response_headers")
+		// Metadata always present
+		assert.Contains(t, raw, "flow_id")
+		assert.Contains(t, raw, "method")
+	})
+
+	t.Run("request_headers_with_parsed", func(t *testing.T) {
+		var raw map[string]interface{}
+		text := CallMCPToolTextOK(t, mcpClient, "proxy_get", map[string]interface{}{
+			"flow_id": flowID,
+			"scope":   "request_headers",
+		})
+		require.NoError(t, json.Unmarshal([]byte(text), &raw))
+		assert.Contains(t, raw, "request_headers")
+		assert.Contains(t, raw, "request_headers_parsed")
+		assert.NotContains(t, raw, "response_body")
+	})
+
+	t.Run("pattern_matches", func(t *testing.T) {
+		var raw map[string]interface{}
+		text := CallMCPToolTextOK(t, mcpClient, "proxy_get", map[string]interface{}{
+			"flow_id": flowID,
+			"scope":   "response_body",
+			"pattern": "resp.*here",
+		})
+		require.NoError(t, json.Unmarshal([]byte(text), &raw))
+		assert.Contains(t, raw, "response_body")
+		respBody, ok := raw["response_body"].(string)
+		require.True(t, ok)
+		assert.Contains(t, respBody, "resp body here")
+		// Pattern mode excludes parsed fields
+		assert.NotContains(t, raw, "response_headers_parsed")
+	})
+
+	t.Run("pattern_no_match_omits", func(t *testing.T) {
+		var raw map[string]interface{}
+		text := CallMCPToolTextOK(t, mcpClient, "proxy_get", map[string]interface{}{
+			"flow_id": flowID,
+			"scope":   "response_body",
+			"pattern": "NOMATCH_xyz",
+		})
+		require.NoError(t, json.Unmarshal([]byte(text), &raw))
+		assert.NotContains(t, raw, "response_body")
+	})
+
+	t.Run("invalid_scope", func(t *testing.T) {
+		result := CallMCPTool(t, mcpClient, "proxy_get", map[string]interface{}{
+			"flow_id": flowID,
+			"scope":   "bogus",
+		})
+		assert.True(t, result.IsError)
+		assert.Contains(t, ExtractMCPText(t, result), "invalid scope")
+	})
 }
 
 // Note: Gzip decompression for full_body is tested via TestMCP_CrawlGetDecompressesGzipBody

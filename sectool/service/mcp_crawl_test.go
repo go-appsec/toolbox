@@ -439,3 +439,125 @@ func TestMCP_CrawlValidation(t *testing.T) {
 		assert.Contains(t, ExtractMCPText(t, result), "not running")
 	})
 }
+
+func TestMCP_CrawlPollSearch(t *testing.T) {
+	t.Parallel()
+
+	_, mcpClient, _, _, mockCrawler := setupMockMCPServer(t)
+
+	createResp := CallMCPToolJSONOK[protocol.CrawlCreateResponse](t, mcpClient, "crawl_create", map[string]interface{}{
+		"seed_urls": "https://example.com",
+	})
+
+	// Add a flow with searchable content
+	require.NoError(t, mockCrawler.AddFlow(createResp.SessionID, CrawlFlow{
+		ID:         "search-flow",
+		SessionID:  createResp.SessionID,
+		URL:        "https://example.com/api",
+		Host:       "example.com",
+		Path:       "/api",
+		Method:     "GET",
+		StatusCode: 200,
+		Request:    []byte("GET /api HTTP/1.1\r\nHost: example.com\r\nX-Token: secret123\r\n\r\n"),
+		Response:   []byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nfound_keyword_here"),
+		Duration:   5 * time.Millisecond,
+	}))
+
+	t.Run("search_header_regex", func(t *testing.T) {
+		resp := CallMCPToolJSONOK[protocol.CrawlPollResponse](t, mcpClient, "crawl_poll", map[string]interface{}{
+			"session_id":    createResp.SessionID,
+			"output_mode":   "flows",
+			"search_header": "X-Token:\\s+secret.*",
+		})
+		require.NotEmpty(t, resp.Flows)
+		assert.Equal(t, "search-flow", resp.Flows[0].FlowID)
+	})
+
+	t.Run("search_body", func(t *testing.T) {
+		resp := CallMCPToolJSONOK[protocol.CrawlPollResponse](t, mcpClient, "crawl_poll", map[string]interface{}{
+			"session_id":  createResp.SessionID,
+			"output_mode": "flows",
+			"search_body": "found_keyword",
+		})
+		require.NotEmpty(t, resp.Flows)
+	})
+
+	t.Run("search_no_match", func(t *testing.T) {
+		resp := CallMCPToolJSONOK[protocol.CrawlPollResponse](t, mcpClient, "crawl_poll", map[string]interface{}{
+			"session_id":  createResp.SessionID,
+			"output_mode": "flows",
+			"search_body": "NONEXISTENT_xyz",
+		})
+		assert.Empty(t, resp.Flows)
+	})
+
+	t.Run("search_fallback_note", func(t *testing.T) {
+		resp := CallMCPToolJSONOK[protocol.CrawlPollResponse](t, mcpClient, "crawl_poll", map[string]interface{}{
+			"session_id":    createResp.SessionID,
+			"output_mode":   "flows",
+			"search_header": "[invalid",
+		})
+		assert.NotEmpty(t, resp.Note)
+		assert.Contains(t, resp.Note, "treated as literal")
+	})
+}
+
+func TestMCP_CrawlGetWithScope(t *testing.T) {
+	t.Parallel()
+
+	_, mcpClient, _, _, mockCrawler := setupMockMCPServer(t)
+
+	createResp := CallMCPToolJSONOK[protocol.CrawlCreateResponse](t, mcpClient, "crawl_create", map[string]interface{}{
+		"seed_urls": "https://example.com",
+	})
+
+	require.NoError(t, mockCrawler.AddFlow(createResp.SessionID, CrawlFlow{
+		ID:         "scope-flow",
+		SessionID:  createResp.SessionID,
+		URL:        "https://example.com/scoped",
+		Host:       "example.com",
+		Path:       "/scoped",
+		Method:     "GET",
+		StatusCode: 200,
+		Request:    []byte("GET /scoped HTTP/1.1\r\nHost: example.com\r\n\r\nreq body"),
+		Response:   []byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nresp body content"),
+		Duration:   5 * time.Millisecond,
+	}))
+
+	t.Run("response_body_only", func(t *testing.T) {
+		var raw map[string]interface{}
+		text := CallMCPToolTextOK(t, mcpClient, "crawl_get", map[string]interface{}{
+			"flow_id": "scope-flow",
+			"scope":   "response_body",
+		})
+		require.NoError(t, json.Unmarshal([]byte(text), &raw))
+		assert.Contains(t, raw, "response_body")
+		assert.NotContains(t, raw, "request_headers")
+		assert.Contains(t, raw, "flow_id")
+	})
+
+	t.Run("pattern_matches", func(t *testing.T) {
+		var raw map[string]interface{}
+		text := CallMCPToolTextOK(t, mcpClient, "crawl_get", map[string]interface{}{
+			"flow_id": "scope-flow",
+			"scope":   "response_body",
+			"pattern": "resp.*content",
+		})
+		require.NoError(t, json.Unmarshal([]byte(text), &raw))
+		assert.Contains(t, raw, "response_body")
+		respBody, ok := raw["response_body"].(string)
+		require.True(t, ok)
+		assert.Contains(t, respBody, "resp body content")
+	})
+
+	t.Run("pattern_no_match_omits", func(t *testing.T) {
+		var raw map[string]interface{}
+		text := CallMCPToolTextOK(t, mcpClient, "crawl_get", map[string]interface{}{
+			"flow_id": "scope-flow",
+			"scope":   "response_body",
+			"pattern": "NONEXISTENT_xyz",
+		})
+		require.NoError(t, json.Unmarshal([]byte(text), &raw))
+		assert.NotContains(t, raw, "response_body")
+	})
+}

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,6 +89,9 @@ func TestHandleFindReflected(t *testing.T) {
 		require.NotNil(t, qRef)
 		assert.Equal(t, "query", qRef.Source)
 		assert.Contains(t, qRef.Locations, "body")
+		require.NotEmpty(t, qRef.Contexts)
+		assert.Equal(t, "html_text", qRef.Contexts[0].Context)
+		assert.Equal(t, "html_entity", qRef.Contexts[0].Encoding)
 
 		// redirect should be reflected in Location header
 		redirectRef := findReflectionByName(resp.Reflections, "redirect")
@@ -179,6 +183,8 @@ func TestHandleFindReflected(t *testing.T) {
 		require.NotNil(t, callbackRef)
 		assert.Equal(t, "query", callbackRef.Source)
 		assert.Contains(t, callbackRef.Locations, "body")
+		require.NotEmpty(t, callbackRef.Contexts)
+		assert.Equal(t, "js_unicode", callbackRef.Contexts[0].Encoding)
 	})
 
 	t.Run("missing_flow_id", func(t *testing.T) {
@@ -348,6 +354,9 @@ func TestFindReflections(t *testing.T) {
 		require.Len(t, reflections, 1)
 		assert.Equal(t, "q", reflections[0].Name)
 		assert.Contains(t, reflections[0].Locations, "body")
+		require.NotEmpty(t, reflections[0].Contexts)
+		assert.Equal(t, "raw", reflections[0].Contexts[0].Encoding)
+		assert.Equal(t, "html_text", reflections[0].Contexts[0].Context)
 	})
 
 	t.Run("html_encoded_match", func(t *testing.T) {
@@ -358,6 +367,8 @@ func TestFindReflections(t *testing.T) {
 		reflections := findReflections(params, resp)
 		require.Len(t, reflections, 1)
 		assert.Contains(t, reflections[0].Locations, "body")
+		require.NotEmpty(t, reflections[0].Contexts)
+		assert.Equal(t, "html_entity", reflections[0].Contexts[0].Encoding)
 	})
 
 	t.Run("url_encoded_match", func(t *testing.T) {
@@ -376,6 +387,8 @@ func TestFindReflections(t *testing.T) {
 		reflections := findReflections(params, resp)
 		require.Len(t, reflections, 1)
 		assert.Contains(t, reflections[0].Locations, "body")
+		require.NotEmpty(t, reflections[0].Contexts)
+		assert.Equal(t, "js_unicode", reflections[0].Contexts[0].Encoding)
 	})
 
 	t.Run("js_unicode_uppercase_match", func(t *testing.T) {
@@ -443,6 +456,26 @@ func TestFindReflections(t *testing.T) {
 		assert.Contains(t, reflections[0].Locations, "header:X-Echo")
 	})
 
+	t.Run("multiple_body_contexts", func(t *testing.T) {
+		// Raw value in script, HTML-encoded in text — both should appear in contexts
+		params := []protocol.Reflection{{Name: "q", Source: "query", Value: "<img src=x>"}}
+		resp := []byte("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" +
+			"<script>var x = '<img src=x>';</script>" +
+			"<p>&lt;img src=x&gt;</p>")
+
+		reflections := findReflections(params, resp)
+		require.Len(t, reflections, 1)
+		assert.Contains(t, reflections[0].Locations, "body")
+		require.GreaterOrEqual(t, len(reflections[0].Contexts), 2)
+
+		encodings := make(map[string]bool)
+		for _, c := range reflections[0].Contexts {
+			encodings[c.Encoding] = true
+		}
+		assert.True(t, encodings["raw"])
+		assert.True(t, encodings["html_entity"])
+	})
+
 	t.Run("short_values_skipped", func(t *testing.T) {
 		params := []protocol.Reflection{
 			{Name: "a", Source: "query", Value: "ab"},
@@ -479,6 +512,121 @@ func TestFindReflections(t *testing.T) {
 		assert.Equal(t, "query", reflections[1].Source)
 		assert.Equal(t, "a_param", reflections[1].Name)
 		assert.Equal(t, "z_param", reflections[2].Name)
+	})
+}
+
+func TestClassifyReflectionContext(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		body   string
+		offset int // offset of the "MATCH" marker
+		want   string
+	}{
+		{
+			name: "html_text",
+			body: "<p>MATCH</p>",
+			want: "html_text",
+		},
+		{
+			name: "html_attribute",
+			body: `<div class="MATCH">`,
+			want: "html_attribute",
+		},
+		{
+			name: "url_attribute",
+			body: `<a href="MATCH">link</a>`,
+			want: "url",
+		},
+		{
+			name: "src_attribute",
+			body: `<img src="MATCH">`,
+			want: "url",
+		},
+		{
+			name: "action_attribute",
+			body: `<form action="MATCH">`,
+			want: "url",
+		},
+		{
+			name: "script_block",
+			body: `<script>var x = "MATCH";</script>`,
+			want: "script",
+		},
+		{
+			name: "css_block",
+			body: `<style>.cls { background: MATCH; }</style>`,
+			want: "css",
+		},
+		{
+			name: "html_comment",
+			body: `<!-- MATCH -->`,
+			want: "html_comment",
+		},
+		{
+			name: "json_context",
+			body: `{"key": "MATCH`,
+			want: "json",
+		},
+		{
+			name: "closed_script",
+			body: `<script>var a=1;</script><p>MATCH</p>`,
+			want: "html_text",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idx := strings.Index(tt.body, "MATCH")
+			require.GreaterOrEqual(t, idx, 0)
+			if tt.offset > 0 {
+				idx = tt.offset
+			}
+			assert.Equal(t, tt.want, classifyReflectionContext(tt.body, idx))
+		})
+	}
+}
+
+func TestEncodingVariants(t *testing.T) {
+	t.Parallel()
+
+	t.Run("plain_value", func(t *testing.T) {
+		variants := encodingVariants("hello")
+		// Should have raw + url_query + url_path + html_entity (most deduplicate for plain values)
+		labels := make([]string, 0, len(variants))
+		for _, v := range variants {
+			labels = append(labels, v.encoding)
+		}
+		assert.Contains(t, labels, "raw")
+		// Verify the raw value is correct
+		for _, v := range variants {
+			if v.encoding == "raw" {
+				assert.Equal(t, "hello", v.encoded)
+			}
+		}
+	})
+
+	t.Run("special_chars", func(t *testing.T) {
+		variants := encodingVariants("<script>")
+		labelSet := make(map[string]bool)
+		for _, v := range variants {
+			labelSet[v.encoding] = true
+		}
+		assert.True(t, labelSet["raw"])
+		assert.True(t, labelSet["html_entity"])
+		assert.True(t, labelSet["url_query"])
+		assert.True(t, labelSet["js_unicode"])
+		assert.True(t, labelSet["js_hex"])
+		assert.True(t, labelSet["html_decimal"])
+		assert.True(t, labelSet["html_hex"])
+	})
+
+	t.Run("raw_is_first", func(t *testing.T) {
+		variants := encodingVariants("test<value>")
+		require.NotEmpty(t, variants)
+		assert.Equal(t, "raw", variants[0].encoding)
+		assert.Equal(t, "test<value>", variants[0].encoded)
 	})
 }
 

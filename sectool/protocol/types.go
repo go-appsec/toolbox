@@ -38,6 +38,7 @@ type RequestLine struct {
 type ProxyPollResponse struct {
 	Aggregates []SummaryEntry `json:"aggregates,omitempty"` // summary mode
 	Flows      []FlowEntry    `json:"flows,omitempty"`      // list mode
+	Note       string         `json:"note,omitempty"`
 }
 
 // ProxyGetResponse is the response for proxy_get.
@@ -56,6 +57,7 @@ type ProxyGetResponse struct {
 	RespHeadersParsed map[string][]string `json:"response_headers_parsed,omitempty"`
 	RespBody          string              `json:"response_body"`
 	RespSize          int                 `json:"response_size"`
+	Note              string              `json:"note,omitempty"`
 }
 
 // =============================================================================
@@ -210,6 +212,7 @@ type CrawlPollResponse struct {
 	Flows      []CrawlFlow    `json:"flows,omitempty"`
 	Forms      []CrawlForm    `json:"forms,omitempty"`
 	Errors     []CrawlError   `json:"errors,omitempty"`
+	Note       string         `json:"note,omitempty"`
 }
 
 // CrawlFlow is a crawled request/response summary.
@@ -281,6 +284,7 @@ type CrawlGetResponse struct {
 	RespSize          int                 `json:"response_size"`
 	Truncated         bool                `json:"truncated,omitempty"`
 	Duration          string              `json:"duration"`
+	Note              string              `json:"note,omitempty"`
 }
 
 // =============================================================================
@@ -419,8 +423,16 @@ type FindReflectedResponse struct {
 
 // Reflection represents a request parameter value found in the response.
 type Reflection struct {
-	Name      string   `json:"name"`
-	Source    string   `json:"source"`
-	Value     string   `json:"value"`
-	Locations []string `json:"locations"`
+	Name      string              `json:"name"`
+	Source    string              `json:"source"`
+	Value     string              `json:"value"`
+	Locations []string            `json:"locations"`
+	Contexts  []ReflectionContext `json:"contexts,omitempty"`
+}
+
+// ReflectionContext describes where and how a reflected value appears.
+type ReflectionContext struct {
+	Context  string `json:"context"`          // html_text, html_attribute, script, json, url, css, html_comment
+	Encoding string `json:"encoding"`         // raw, html_entity, url_query, url_path, js_unicode, js_hex, html_decimal, html_hex
+	Sample   string `json:"sample,omitempty"` // ~80 chars around match
 }

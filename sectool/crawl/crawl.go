@@ -118,7 +118,7 @@ func status(mcpURL string, sessionID string) error {
 	return nil
 }
 
-func summary(mcpURL string, sessionID string) error {
+func summary(mcpURL string, sessionID, host, path, method, status, searchHeader, searchBody, excludeHost, excludePath string) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -128,7 +128,15 @@ func summary(mcpURL string, sessionID string) error {
 	defer func() { _ = client.Close() }()
 
 	resp, err := client.CrawlPoll(ctx, sessionID, mcpclient.CrawlPollOpts{
-		OutputMode: "summary",
+		OutputMode:   "summary",
+		Host:         host,
+		Path:         path,
+		Method:       method,
+		Status:       status,
+		SearchHeader: searchHeader,
+		SearchBody:   searchBody,
+		ExcludeHost:  excludeHost,
+		ExcludePath:  excludePath,
 	})
 	if err != nil {
 		return fmt.Errorf("crawl summary failed: %w", err)
@@ -154,10 +162,15 @@ func summary(mcpURL string, sessionID string) error {
 	t.Render()
 	cliutil.Summary(os.Stdout, len(resp.Aggregates), "unique request pattern", "unique request patterns")
 
+	if resp.Note != "" {
+		fmt.Println()
+		fmt.Println(cliutil.Muted("Note: " + resp.Note))
+	}
+
 	return nil
 }
 
-func list(mcpURL string, sessionID, listType, host, path, method, status, contains, containsBody, excludeHost, excludePath, since string, limit, offset int) error {
+func list(mcpURL string, sessionID, listType, host, path, method, status, searchHeader, searchBody, excludeHost, excludePath, since string, limit, offset int) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -181,8 +194,8 @@ func list(mcpURL string, sessionID, listType, host, path, method, status, contai
 		Path:         path,
 		Method:       method,
 		Status:       status,
-		Contains:     contains,
-		ContainsBody: containsBody,
+		SearchHeader: searchHeader,
+		SearchBody:   searchBody,
 		ExcludeHost:  excludeHost,
 		ExcludePath:  excludePath,
 		Since:        since,
@@ -265,6 +278,11 @@ func list(mcpURL string, sessionID, listType, host, path, method, status, contai
 		cliutil.HintCommand(os.Stdout, "To export for editing/replay", "sectool crawl export <flow_id>")
 	}
 
+	if resp.Note != "" {
+		fmt.Println()
+		fmt.Println(cliutil.Muted("Note: " + resp.Note))
+	}
+
 	return nil
 }
 
@@ -329,6 +347,61 @@ func stop(mcpURL string, sessionID string) error {
 	return nil
 }
 
+func get(mcpURL string, flowID, scope, pattern string) error {
+	ctx := context.Background()
+
+	client, err := mcpclient.Connect(ctx, mcpURL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.CrawlGet(ctx, flowID, mcpclient.CrawlGetOpts{
+		Scope:   scope,
+		Pattern: pattern,
+	})
+	if err != nil {
+		return fmt.Errorf("crawl get failed: %w", err)
+	}
+
+	fmt.Printf("%s\n\n", cliutil.Bold("Flow Details"))
+	fmt.Printf("Flow: %s\n", cliutil.ID(resp.FlowID))
+	fmt.Printf("Method: %s\n", resp.Method)
+	fmt.Printf("URL: %s\n", resp.URL)
+	fmt.Printf("Status: %s %s\n", cliutil.FormatStatus(resp.Status), resp.StatusLine)
+	fmt.Printf("Duration: %s\n", resp.Duration)
+	if resp.FoundOn != "" {
+		fmt.Printf("Found On: %s\n", resp.FoundOn)
+	}
+	fmt.Printf("Request Size: %d bytes\n", resp.ReqSize)
+	fmt.Printf("Response Size: %d bytes\n", resp.RespSize)
+
+	if resp.ReqHeaders != "" {
+		fmt.Println()
+		fmt.Println(cliutil.Bold("Request Headers"))
+		fmt.Println(resp.ReqHeaders)
+	}
+	if resp.ReqBody != "" {
+		fmt.Println(cliutil.Bold("Request Body"))
+		fmt.Println(resp.ReqBody)
+	}
+	if resp.RespHeaders != "" {
+		fmt.Println()
+		fmt.Println(cliutil.Bold("Response Headers"))
+		fmt.Println(resp.RespHeaders)
+	}
+	if resp.RespBody != "" {
+		fmt.Println(cliutil.Bold("Response Body"))
+		fmt.Println(resp.RespBody)
+	}
+	if resp.Note != "" {
+		fmt.Println()
+		fmt.Println(cliutil.Muted("Note: " + resp.Note))
+	}
+
+	return nil
+}
+
 func export(mcpURL string, flowID string) error {
 	ctx := context.Background()
 
@@ -338,7 +411,7 @@ func export(mcpURL string, flowID string) error {
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.CrawlGet(ctx, flowID)
+	resp, err := client.CrawlGet(ctx, flowID, mcpclient.CrawlGetOpts{FullBody: true})
 	if err != nil {
 		return fmt.Errorf("get flow: %w", err)
 	}

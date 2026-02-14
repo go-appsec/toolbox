@@ -34,7 +34,11 @@ func run(mcpURL, flowID string) error {
 	for _, r := range resp.Reflections {
 		fmt.Printf("  %s %s (%s)\n", cliutil.Warning("→"), cliutil.Bold(r.Name), r.Source)
 		fmt.Printf("    Value: %s\n", r.Value)
-		fmt.Printf("    Found in: %s\n\n", strings.Join(r.Locations, ", "))
+		fmt.Printf("    Found in: %s\n", strings.Join(r.Locations, ", "))
+		for _, c := range r.Contexts {
+			fmt.Printf("    Context: %s (encoding: %s)\n", c.Context, c.Encoding)
+		}
+		fmt.Println()
 	}
 
 	return nil

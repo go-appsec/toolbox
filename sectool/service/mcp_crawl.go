@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"log"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -207,15 +209,16 @@ Output modes:
 - "errors": Returns errors encountered during crawling.
 
 Filters apply to summary and flows modes: host/path/exclude_host/exclude_path use glob (*, ?). method/status are comma-separated (status supports ranges like 2XX).
+Search: search_header/search_body use regex; literal if invalid.
 Incremental (summary/flows): since accepts flow_id or "last" (cursor). Flows mode only: pagination with limit/offset.`),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session ID or label")),
 		mcp.WithString("output_mode", mcp.Description("Output mode: 'summary' (default), 'flows', 'forms', or 'errors'")),
 		mcp.WithString("host", mcp.Description("Filter by host glob pattern (e.g., '*.example.com')")),
-		mcp.WithString("path", mcp.Description("Filter by path glob pattern (e.g., '/api/*')")),
+		mcp.WithString("path", mcp.Description("Filter by path+query glob pattern (e.g., '/api/*')")),
 		mcp.WithString("method", mcp.Description("Filter by HTTP method (comma-separated)")),
 		mcp.WithString("status", mcp.Description("Filter by status codes or ranges (e.g., '200,404' or '2XX,4XX')")),
-		mcp.WithString("contains", mcp.Description("Search in URL and headers")),
-		mcp.WithString("contains_body", mcp.Description("Search in request/response body")),
+		mcp.WithString("search_header", mcp.Description("Search request/response headers by regex (RE2); literal if invalid")),
+		mcp.WithString("search_body", mcp.Description("Search request/response body by regex (RE2, use (?i) for case-insensitive); literal if invalid")),
 		mcp.WithString("exclude_host", mcp.Description("Exclude hosts matching glob pattern")),
 		mcp.WithString("exclude_path", mcp.Description("Exclude paths matching glob pattern")),
 		mcp.WithString("since", mcp.Description("flow_id or 'last' (cursor)")),
@@ -240,7 +243,7 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 	log.Printf("mcp/crawl_poll: mode=%s session=%s (limit=%d)", outputMode, sessionID, limit)
 
 	switch outputMode {
-	case "forms":
+	case OutputModeForms:
 		forms, err := m.service.crawlerBackend.ListForms(ctx, sessionID, limit)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
@@ -251,7 +254,7 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 
 		return jsonResult(protocol.CrawlPollResponse{SessionID: sessionID, Forms: formsToAPI(forms)})
 
-	case "errors":
+	case OutputModeErrors:
 		errs, err := m.service.crawlerBackend.ListErrors(ctx, sessionID, limit)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
@@ -270,19 +273,38 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 		}
 		return jsonResult(protocol.CrawlPollResponse{SessionID: sessionID, Errors: apiErrors})
 
-	case "flows":
+	case OutputModeFlows:
+		searchHeader := req.GetString("search_header", "")
+		searchBody := req.GetString("search_body", "")
+		offset := req.GetInt("offset", 0)
+
+		var notes []string
 		opts := CrawlListOptions{
-			Host:         req.GetString("host", ""),
-			PathPattern:  req.GetString("path", ""),
-			StatusCodes:  parseStatusFilter(req.GetString("status", "")),
-			Methods:      parseCommaSeparated(req.GetString("method", "")),
-			Contains:     req.GetString("contains", ""),
-			ContainsBody: req.GetString("contains_body", ""),
-			ExcludeHost:  req.GetString("exclude_host", ""),
-			ExcludePath:  req.GetString("exclude_path", ""),
-			Since:        req.GetString("since", ""),
-			Limit:        limit,
-			Offset:       req.GetInt("offset", 0),
+			Host:        req.GetString("host", ""),
+			PathPattern: req.GetString("path", ""),
+			StatusCodes: parseStatusFilter(req.GetString("status", "")),
+			Methods:     parseCommaSeparated(req.GetString("method", "")),
+			ExcludeHost: req.GetString("exclude_host", ""),
+			ExcludePath: req.GetString("exclude_path", ""),
+			Since:       req.GetString("since", ""),
+			Limit:       limit,
+			Offset:      offset,
+		}
+
+		// Pass compiled search regexes to backend for integrated filtering
+		if searchHeader != "" {
+			re, note := compileSearchPattern(searchHeader, true)
+			opts.SearchHeaderRe = re
+			if note != "" {
+				notes = append(notes, note)
+			}
+		}
+		if searchBody != "" {
+			re, note := compileSearchPattern(searchBody, false)
+			opts.SearchBodyRe = re
+			if note != "" {
+				notes = append(notes, note)
+			}
 		}
 
 		flows, err := m.service.crawlerBackend.ListFlows(ctx, sessionID, opts)
@@ -306,7 +328,8 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 				FoundOn:        f.FoundOn,
 			})
 		}
-		return jsonResult(protocol.CrawlPollResponse{SessionID: sessionID, Flows: apiFlows})
+		noteStr := strings.Join(notes, "; ")
+		return jsonResult(protocol.CrawlPollResponse{SessionID: sessionID, Flows: apiFlows, Note: noteStr})
 
 	default: // summary
 		// Get status for state and duration
@@ -318,18 +341,36 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 			return errorResultFromErr("failed to get status: ", err), nil
 		}
 
+		searchHeader := req.GetString("search_header", "")
+		searchBody := req.GetString("search_body", "")
+
+		var notes []string
 		// Use ListFlows with filters (no limit) to get filtered flows, then aggregate
 		opts := CrawlListOptions{
-			Host:         req.GetString("host", ""),
-			PathPattern:  req.GetString("path", ""),
-			StatusCodes:  parseStatusFilter(req.GetString("status", "")),
-			Methods:      parseCommaSeparated(req.GetString("method", "")),
-			Contains:     req.GetString("contains", ""),
-			ContainsBody: req.GetString("contains_body", ""),
-			ExcludeHost:  req.GetString("exclude_host", ""),
-			ExcludePath:  req.GetString("exclude_path", ""),
-			Since:        req.GetString("since", ""),
-			Limit:        0, // no limit for summary
+			Host:        req.GetString("host", ""),
+			PathPattern: req.GetString("path", ""),
+			StatusCodes: parseStatusFilter(req.GetString("status", "")),
+			Methods:     parseCommaSeparated(req.GetString("method", "")),
+			ExcludeHost: req.GetString("exclude_host", ""),
+			ExcludePath: req.GetString("exclude_path", ""),
+			Since:       req.GetString("since", ""),
+			Limit:       0, // no limit for summary
+		}
+
+		// Pass compiled search regexes to backend for integrated filtering
+		if searchHeader != "" {
+			re, note := compileSearchPattern(searchHeader, true)
+			opts.SearchHeaderRe = re
+			if note != "" {
+				notes = append(notes, note)
+			}
+		}
+		if searchBody != "" {
+			re, note := compileSearchPattern(searchBody, false)
+			opts.SearchBodyRe = re
+			if note != "" {
+				notes = append(notes, note)
+			}
 		}
 
 		flows, err := m.service.crawlerBackend.ListFlows(ctx, sessionID, opts)
@@ -341,11 +382,13 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 			return f.Host, f.Path, f.Method, f.StatusCode
 		})
 
+		noteStr := strings.Join(notes, "; ")
 		return jsonResult(protocol.CrawlPollResponse{
 			SessionID:  sessionID,
 			State:      status.State,
 			Duration:   status.Duration.Round(time.Millisecond).String(),
 			Aggregates: aggregates,
+			Note:       noteStr,
 		})
 	}
 }
@@ -421,8 +464,13 @@ func (m *mcpServer) crawlGetTool() mcp.Tool {
 	return mcp.NewTool("crawl_get",
 		mcp.WithDescription(`Get full details of a crawl flow.
 
-Returns the complete request and response for a flow captured during crawling.`),
+Returns the complete request and response for a flow captured during crawling.
+
+Scope: Sections to return (comma-separated): request_headers, request_body, response_headers, response_body, all (default).
+Pattern: Regex search within scoped sections; returns match context instead of full content. Sections without matches are omitted.`),
 		mcp.WithString("flow_id", mcp.Required(), mcp.Description("The flow_id from crawl_poll (output_mode=flows)")),
+		mcp.WithString("scope", mcp.Description("Sections to return (comma-separated): request_headers, request_body, response_headers, response_body, all (default)")),
+		mcp.WithString("pattern", mcp.Description("Regex (RE2) search within scoped sections; returns match context instead of full content")),
 	)
 }
 
@@ -438,6 +486,26 @@ func (m *mcpServer) handleCrawlGet(ctx context.Context, req mcp.CallToolRequest)
 
 	// Hidden parameter for CLI: returns full base64-encoded bodies instead of previews
 	fullBody := req.GetBool("full_body", false)
+	scopeStr := req.GetString("scope", "")
+	patternStr := req.GetString("pattern", "")
+
+	// pattern takes precedence over full_body
+	if patternStr != "" {
+		fullBody = false
+	}
+
+	scopeSet, err := parseScopeSet(scopeStr)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
+	var patternRe *regexp.Regexp
+	var noteStr string
+	if patternStr != "" {
+		re, note := compileSearchPattern(patternStr, false)
+		patternRe = re
+		noteStr = note
+	}
 
 	log.Printf("mcp/crawl_get: getting flow %s", flowID)
 
@@ -454,39 +522,89 @@ func (m *mcpServer) handleCrawlGet(ctx context.Context, req mcp.CallToolRequest)
 	respHeaders, respBody := splitHeadersBody(flow.Response)
 	statusCode, statusLine := parseResponseStatus(respHeaders)
 
-	// Decompress bodies for display (gzip/deflate) - applies to both modes
-	displayReqBody, _ := decompressForDisplay(reqBody, string(reqHeaders))
-	displayRespBody, _ := decompressForDisplay(respBody, string(respHeaders))
-
-	// Format bodies based on full_body flag
-	var reqBodyStr, respBodyStr string
-	if fullBody {
-		// Full body mode: base64-encode the decompressed content
-		reqBodyStr = base64.StdEncoding.EncodeToString(displayReqBody)
-		respBodyStr = base64.StdEncoding.EncodeToString(displayRespBody)
-	} else {
-		// Preview mode: truncated text preview
-		reqBodyStr = previewBody(displayReqBody, fullBodyMaxSize)
-		respBodyStr = previewBody(displayRespBody, fullBodyMaxSize)
+	// Decompress bodies lazily: only when scope/pattern needs them
+	needsReqBody := scopeSet["request_body"]
+	needsRespBody := scopeSet["response_body"]
+	var displayReqBody, displayRespBody []byte
+	if needsReqBody {
+		displayReqBody, _ = decompressForDisplay(reqBody, string(reqHeaders))
+	}
+	if needsRespBody {
+		displayRespBody, _ = decompressForDisplay(respBody, string(respHeaders))
 	}
 
-	return jsonResult(protocol.CrawlGetResponse{
-		FlowID:            flow.ID,
-		Method:            flow.Method,
-		URL:               flow.URL,
-		FoundOn:           flow.FoundOn,
-		Depth:             flow.Depth,
-		ReqHeaders:        string(reqHeaders),
-		ReqHeadersParsed:  parseHeadersToMap(string(reqHeaders)),
-		ReqBody:           reqBodyStr,
-		ReqSize:           len(reqBody),
-		Status:            statusCode,
-		StatusLine:        statusLine,
-		RespHeaders:       string(respHeaders),
-		RespHeadersParsed: parseHeadersToMap(string(respHeaders)),
-		RespBody:          respBodyStr,
-		RespSize:          len(respBody),
-		Truncated:         flow.Truncated,
-		Duration:          flow.Duration.Round(time.Millisecond).String(),
-	})
+	// Build response map: always include metadata
+	result := map[string]interface{}{
+		"flow_id":       flow.ID,
+		"method":        flow.Method,
+		"url":           flow.URL,
+		"status":        statusCode,
+		"status_line":   statusLine,
+		"request_size":  len(reqBody),
+		"response_size": len(respBody),
+		"duration":      flow.Duration.Round(time.Millisecond).String(),
+	}
+	if flow.FoundOn != "" {
+		result["found_on"] = flow.FoundOn
+	}
+	if flow.Depth > 0 {
+		result["depth"] = flow.Depth
+	}
+	if flow.Truncated {
+		result["truncated"] = true
+	}
+
+	if patternRe != nil {
+		// Pattern mode: grep-like context output
+		if scopeSet["request_headers"] {
+			if match := extractMatchContext(patternRe, reqHeaders, maxMatchesPerSection); match != "" {
+				result["request_headers"] = match
+			}
+		}
+		if needsReqBody {
+			if match := extractMatchContext(patternRe, displayReqBody, maxMatchesPerSection); match != "" {
+				result["request_body"] = match
+			}
+		}
+		if scopeSet["response_headers"] {
+			if match := extractMatchContext(patternRe, respHeaders, maxMatchesPerSection); match != "" {
+				result["response_headers"] = match
+			}
+		}
+		if needsRespBody {
+			if match := extractMatchContext(patternRe, displayRespBody, maxMatchesPerSection); match != "" {
+				result["response_body"] = match
+			}
+		}
+	} else {
+		// Standard mode: full content based on scope
+		if scopeSet["request_headers"] {
+			result["request_headers"] = string(reqHeaders)
+			result["request_headers_parsed"] = parseHeadersToMap(string(reqHeaders))
+		}
+		if needsReqBody {
+			if fullBody {
+				result["request_body"] = base64.StdEncoding.EncodeToString(displayReqBody)
+			} else {
+				result["request_body"] = previewBody(displayReqBody, fullBodyMaxSize)
+			}
+		}
+		if scopeSet["response_headers"] {
+			result["response_headers"] = string(respHeaders)
+			result["response_headers_parsed"] = parseHeadersToMap(string(respHeaders))
+		}
+		if needsRespBody {
+			if fullBody {
+				result["response_body"] = base64.StdEncoding.EncodeToString(displayRespBody)
+			} else {
+				result["response_body"] = previewBody(displayRespBody, fullBodyMaxSize)
+			}
+		}
+	}
+
+	if noteStr != "" {
+		result["note"] = noteStr
+	}
+
+	return jsonResult(result)
 }

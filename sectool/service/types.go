@@ -15,6 +15,14 @@ const (
 	SourceReplay = "replay"
 )
 
+// Output mode constants for poll tools.
+const (
+	OutputModeFlows   = "flows"
+	OutputModeSummary = "summary"
+	OutputModeForms   = "forms"
+	OutputModeErrors  = "errors"
+)
+
 // HealthMetricProvider is a function that returns a metric value for a given key.
 type HealthMetricProvider func() string
 
@@ -44,8 +52,8 @@ type ProxyListRequest struct {
 	Path         string `json:"path,omitempty"`
 	Method       string `json:"method,omitempty"`
 	Status       string `json:"status,omitempty"`
-	Contains     string `json:"contains,omitempty"`
-	ContainsBody string `json:"contains_body,omitempty"`
+	SearchHeader string `json:"search_header,omitempty"`
+	SearchBody   string `json:"search_body,omitempty"`
 	Since        string `json:"since,omitempty"`
 	ExcludeHost  string `json:"exclude_host,omitempty"`
 	ExcludePath  string `json:"exclude_path,omitempty"`
@@ -57,7 +65,7 @@ type ProxyListRequest struct {
 // HasFilters returns true if any filter is set.
 func (r *ProxyListRequest) HasFilters() bool {
 	return r.Host != "" || r.Path != "" || r.Method != "" || r.Status != "" ||
-		r.Contains != "" || r.ContainsBody != "" || r.Since != "" ||
+		r.SearchHeader != "" || r.SearchBody != "" || r.Since != "" ||
 		r.ExcludeHost != "" || r.ExcludePath != "" || r.Limit > 0 ||
 		r.Source != ""
 }
