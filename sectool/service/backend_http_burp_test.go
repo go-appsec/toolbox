@@ -161,86 +161,6 @@ func TestBurpBackendRules(t *testing.T) {
 				assert.Contains(t, err.Error(), "already exists")
 			})
 
-			t.Run("update_to_duplicate_label", func(t *testing.T) {
-				// Try to update test-regex rule to have test-add's label
-				_, err := backend.UpdateRule(t.Context(), createdRuleIDs[1], ProxyRuleInput{
-					Label: "test-add",
-				})
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), "already exists")
-			})
-
-			t.Run("update_by_id", func(t *testing.T) {
-				updated, err := backend.UpdateRule(t.Context(), createdRuleIDs[0], ProxyRuleInput{
-					Label:   "test-updated",
-					IsRegex: boolPtr(true),
-					Match:   "old",
-					Replace: "new",
-				})
-				require.NoError(t, err)
-
-				assert.Equal(t, createdRuleIDs[0], updated.RuleID)
-				assert.Equal(t, "test-updated", updated.Label)
-				assert.Equal(t, tc.ruleType1, updated.Type)
-				assert.True(t, updated.IsRegex)
-			})
-
-			t.Run("update_by_label", func(t *testing.T) {
-				updated, err := backend.UpdateRule(t.Context(), "test-regex", ProxyRuleInput{
-					Label:   "test-regex-updated",
-					IsRegex: boolPtr(false),
-					Match:   "find",
-					Replace: "replace",
-				})
-				require.NoError(t, err)
-				assert.Equal(t, "test-regex-updated", updated.Label)
-			})
-
-			t.Run("update_preserves_label", func(t *testing.T) {
-				// Add a rule with a label
-				rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
-					Label:   "preserved-label",
-					Type:    tc.ruleType1,
-					Replace: "X-Original: value",
-				})
-				require.NoError(t, err)
-
-				// Update the rule without providing a label (empty string)
-				updated, err := backend.UpdateRule(t.Context(), rule.RuleID, ProxyRuleInput{
-					Replace: "X-Updated: value",
-				})
-				require.NoError(t, err)
-
-				// Label should be preserved
-				assert.Equal(t, "preserved-label", updated.Label)
-				assert.Equal(t, "X-Updated: value", updated.Replace)
-
-				// Verify we can still find by label
-				rules, err := backend.ListRules(t.Context(), tc.websocket)
-				require.NoError(t, err)
-				var found bool
-				for _, r := range rules {
-					if r.RuleID == rule.RuleID {
-						assert.Equal(t, "preserved-label", r.Label)
-						found = true
-						break
-					}
-				}
-				assert.True(t, found, "rule should be found in list")
-
-				// Verify delete by label still works after update
-				err = backend.DeleteRule(t.Context(), "preserved-label")
-				require.NoError(t, err)
-			})
-
-			t.Run("update_not_found", func(t *testing.T) {
-				_, err := backend.UpdateRule(t.Context(), "nonexistent", ProxyRuleInput{
-					Replace: "X-Test: value",
-				})
-				require.Error(t, err)
-				assert.ErrorIs(t, err, ErrNotFound)
-			})
-
 			t.Run("delete_by_id", func(t *testing.T) {
 				rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
 					Label: "to-delete-by-id",
@@ -363,49 +283,6 @@ func TestBurpBackendRuleIsolation(t *testing.T) {
 	require.Len(t, wsRules, 1)
 	assert.Equal(t, wsRule.RuleID, wsRules[0].RuleID)
 	assert.Equal(t, "ws:both", wsRules[0].Type)
-}
-
-func TestBurpBackendUpdateTypeMismatch(t *testing.T) {
-	t.Parallel()
-
-	mockServer := NewTestMCPServer(t)
-	client := mcp.New(mockServer.URL())
-	require.NoError(t, client.Connect(t.Context()))
-	t.Cleanup(func() { _ = client.Close() })
-
-	backend := &BurpBackend{client: client}
-
-	// Add HTTP rule
-	httpRule, err := backend.AddRule(t.Context(), ProxyRuleInput{
-		Label: "http-rule",
-		Type:  mcp.RuleTypeRequestHeader,
-	})
-	require.NoError(t, err)
-
-	// Add WS rule
-	wsRule, err := backend.AddRule(t.Context(), ProxyRuleInput{
-		Label: "ws-rule",
-		Type:  "ws:both",
-	})
-	require.NoError(t, err)
-
-	t.Run("http_with_ws_type", func(t *testing.T) {
-		_, err := backend.UpdateRule(t.Context(), httpRule.RuleID, ProxyRuleInput{
-			Type:    "ws:to-server",
-			Replace: "test",
-		})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot update HTTP rule with WebSocket type")
-	})
-
-	t.Run("ws_with_http_type", func(t *testing.T) {
-		_, err := backend.UpdateRule(t.Context(), wsRule.RuleID, ProxyRuleInput{
-			Type:    mcp.RuleTypeRequestHeader,
-			Replace: "test",
-		})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot update WebSocket rule with HTTP type")
-	})
 }
 
 func newTestBurpBackend(t *testing.T) (*BurpBackend, *TestMCPServer) {

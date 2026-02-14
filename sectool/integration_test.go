@@ -466,31 +466,6 @@ func TestIntegration_ProxyRules(t *testing.T) {
 			assert.True(t, found)
 		})
 
-		t.Run("update_rule", func(t *testing.T) {
-			rule, err := client.ProxyRuleUpdate(t.Context(), createdRuleID, mcpclient.RuleUpdateOpts{
-				Label:   testLabel + "-updated",
-				Match:   "old-value",
-				Replace: "new-value",
-			})
-			require.NoError(t, err)
-
-			assert.Equal(t, createdRuleID, rule.RuleID)
-			assert.Equal(t, testLabel+"-updated", rule.Label)
-			assert.Equal(t, service.RuleTypeRequestHeader, rule.Type)
-			assert.Equal(t, "old-value", rule.Match)
-			assert.Equal(t, "new-value", rule.Replace)
-		})
-
-		t.Run("update_by_label", func(t *testing.T) {
-			rule, err := client.ProxyRuleUpdate(t.Context(), testLabel+"-updated", mcpclient.RuleUpdateOpts{
-				Replace: "X-Modified: true",
-			})
-			require.NoError(t, err)
-
-			assert.Equal(t, createdRuleID, rule.RuleID)
-			assert.Equal(t, service.RuleTypeRequestHeader, rule.Type)
-		})
-
 		t.Run("add_regex_rule", func(t *testing.T) {
 			regexLabel := testLabel + "-regex"
 			rule, err := client.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{

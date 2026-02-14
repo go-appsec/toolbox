@@ -117,31 +117,6 @@ func (c *Client) ProxyRuleAdd(ctx context.Context, opts RuleAddOpts) (*protocol.
 	return &resp, nil
 }
 
-// ProxyRuleUpdate calls proxy_rule_update and returns the updated rule.
-func (c *Client) ProxyRuleUpdate(ctx context.Context, ruleID string, opts RuleUpdateOpts) (*protocol.RuleEntry, error) {
-	args := map[string]interface{}{
-		"rule_id": ruleID,
-	}
-	if opts.Match != "" {
-		args["match"] = opts.Match
-	}
-	if opts.Replace != "" {
-		args["replace"] = opts.Replace
-	}
-	if opts.Label != "" {
-		args["label"] = opts.Label
-	}
-	if opts.IsRegex != nil {
-		args["is_regex"] = *opts.IsRegex
-	}
-
-	var resp protocol.RuleEntry
-	if err := c.CallToolJSON(ctx, "proxy_rule_update", args, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
 // ProxyRuleDelete calls proxy_rule_delete.
 func (c *Client) ProxyRuleDelete(ctx context.Context, ruleID string) error {
 	_, err := c.CallTool(ctx, "proxy_rule_delete", map[string]interface{}{"rule_id": ruleID})

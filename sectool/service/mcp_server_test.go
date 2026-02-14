@@ -112,7 +112,6 @@ func TestMCP_ListTools(t *testing.T) {
 		"cookie_jar",
 		"proxy_rule_list",
 		"proxy_rule_add",
-		"proxy_rule_update",
 		"proxy_rule_delete",
 		"replay_send",
 		"replay_get",

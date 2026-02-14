@@ -37,14 +37,6 @@ type RuleAddOpts struct {
 	IsRegex bool
 }
 
-// RuleUpdateOpts are options for ProxyRuleUpdate.
-type RuleUpdateOpts struct {
-	Match   string
-	Replace string
-	Label   string
-	IsRegex *bool // nil = preserve existing, non-nil = set to value
-}
-
 // =============================================================================
 // Replay Options
 // =============================================================================

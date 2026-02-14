@@ -168,11 +168,11 @@ proxy rule <command> [options]
 
   Manage match and replace rules for request/response modification.
   Rules are applied by the proxy to all traffic flowing through it.
+  To modify a rule, delete it and recreate with the new values.
 
   Commands:
     list       List configured rules
     add        Add a new rule
-    update     Modify an existing rule
     delete     Remove a rule
 
   Types:
@@ -202,21 +202,6 @@ proxy rule add [options] [match] [replace]
     sectool proxy rule add --type response_header "X-Frame-Options: DENY"
     sectool proxy rule add --regex "^User-Agent.*$" "User-Agent: Custom"
     sectool proxy rule add --type ws:both "old" "new"
-
-proxy rule update <rule_id> [options] [match] [replace]
-
-  Update an existing rule. Lookup by rule_id or label.
-  Searches both HTTP and WebSocket rules automatically.
-
-  Options:
-    --match <pattern>       Pattern to match
-    --replace <string>      Replacement string
-    --regex                 Treat match as regex pattern
-    --label <name>          New label for the rule
-
-  Examples:
-    sectool proxy rule update abc123 "X-New: value"
-    sectool proxy rule update my-rule "updated" "value"
 
 proxy rule delete <rule_id>
 
@@ -393,7 +378,7 @@ Options:
 	return export(mcpURL, fs.Args()[0])
 }
 
-var ruleSubcommands = []string{"list", "add", "update", "delete", "help"}
+var ruleSubcommands = []string{"list", "add", "delete", "help"}
 
 func parseRule(args []string, mcpURL string) error {
 	if len(args) < 1 {
@@ -406,8 +391,6 @@ func parseRule(args []string, mcpURL string) error {
 		return parseRuleList(args[1:], mcpURL)
 	case "add":
 		return parseRuleAdd(args[1:], mcpURL)
-	case "update":
-		return parseRuleUpdate(args[1:], mcpURL)
 	case "delete":
 		return parseRuleDelete(args[1:], mcpURL)
 	case "help", "--help", "-h":
@@ -422,11 +405,11 @@ func printRuleUsage() {
 	_, _ = fmt.Fprint(os.Stderr, `Usage: sectool proxy rule <command> [options]
 
 Manage match and replace rules for request/response modification.
+To modify a rule, delete it and recreate with the new values.
 
 Commands:
   list       List configured rules
   add        Add a new rule
-  update     Modify an existing rule
   delete     Remove a rule
 
 Use "sectool proxy rule <command> --help" for more information.
@@ -516,64 +499,6 @@ Options:
 	}
 
 	return ruleAdd(mcpURL, ruleType, match, replace, label, isRegex)
-}
-
-func parseRuleUpdate(args []string, mcpURL string) error {
-	fs := pflag.NewFlagSet("proxy rule update", pflag.ContinueOnError)
-	fs.SetInterspersed(true)
-	var isRegex bool
-	var label, name, match, replace string
-
-	fs.BoolVar(&isRegex, "regex", false, "treat match as regex pattern")
-	fs.StringVar(&label, "label", "", "new label for the rule")
-	fs.StringVar(&name, "name", "", "alias for --label")
-	fs.StringVar(&match, "match", "", "pattern to match")
-	fs.StringVar(&replace, "replace", "", "replacement string")
-	_ = fs.MarkHidden("name")
-
-	fs.Usage = func() {
-		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool proxy rule update <rule_id> [options] [match] [replace]
-
-Update an existing rule. Lookup by rule_id or label.
-Searches both HTTP and WebSocket rules automatically.
-
-Options:
-`)
-		fs.PrintDefaults()
-	}
-
-	if err := fs.Parse(args); err != nil {
-		return err
-	} else if len(fs.Args()) < 1 {
-		fs.Usage()
-		return errors.New("rule_id required")
-	}
-
-	if name != "" && label == "" {
-		label = name
-	}
-
-	ruleID := fs.Args()[0]
-
-	// Positional args override empty flags
-	posArgs := fs.Args()[1:]
-	if match == "" && replace == "" {
-		switch len(posArgs) {
-		case 1:
-			replace = posArgs[0]
-		case 2:
-			match = posArgs[0]
-			replace = posArgs[1]
-		}
-	}
-
-	// Only pass isRegex if explicitly set by user
-	var isRegexPtr *bool
-	if fs.Changed("regex") {
-		isRegexPtr = &isRegex
-	}
-
-	return ruleUpdate(mcpURL, ruleID, match, replace, label, isRegexPtr)
 }
 
 func parseRuleDelete(args []string, mcpURL string) error {

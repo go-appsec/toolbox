@@ -182,7 +182,6 @@ func (m *mcpServer) addProxyTools() {
 	m.server.AddTool(m.cookieJarTool(), m.handleCookieJar)
 	m.server.AddTool(m.proxyRuleListTool(), m.handleProxyRuleList)
 	m.server.AddTool(m.proxyRuleAddTool(), m.handleProxyRuleAdd)
-	m.server.AddTool(m.proxyRuleUpdateTool(), m.handleProxyRuleUpdate)
 	m.server.AddTool(m.proxyRuleDeleteTool(), m.handleProxyRuleDelete)
 }
 

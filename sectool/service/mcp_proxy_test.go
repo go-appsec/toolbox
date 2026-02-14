@@ -390,17 +390,6 @@ func TestMCP_ProxyRulesCRUDWithMock(t *testing.T) {
 		assert.LessOrEqual(t, len(resp.Rules), 1)
 	})
 
-	t.Run("update_rule", func(t *testing.T) {
-		rule := CallMCPToolJSONOK[protocol.RuleEntry](t, mcpClient, "proxy_rule_update", map[string]interface{}{
-			"rule_id": ruleID,
-			"label":   "mock-test-updated",
-			"match":   "old",
-			"replace": "new",
-		})
-		assert.Equal(t, "mock-test-updated", rule.Label)
-		assert.Equal(t, RuleTypeRequestHeader, rule.Type)
-	})
-
 	t.Run("delete_rule", func(t *testing.T) {
 		_ = CallMCPToolTextOK(t, mcpClient, "proxy_rule_delete", map[string]interface{}{
 			"rule_id": ruleID,
@@ -633,7 +622,9 @@ func TestMCP_ProxyRuleValidation(t *testing.T) {
 			"replace": "X-Test: value2",
 		})
 		assert.True(t, result.IsError)
-		assert.Contains(t, ExtractMCPText(t, result), "label already exists")
+		text := ExtractMCPText(t, result)
+		assert.Contains(t, text, "label already exists")
+		assert.Contains(t, text, "delete")
 	})
 
 	t.Run("list_invalid_type_filter", func(t *testing.T) {
@@ -642,31 +633,6 @@ func TestMCP_ProxyRuleValidation(t *testing.T) {
 		})
 		assert.True(t, result.IsError)
 		assert.Contains(t, ExtractMCPText(t, result), "invalid type_filter")
-	})
-
-	t.Run("update_missing_rule_id", func(t *testing.T) {
-		result := CallMCPTool(t, mcpClient, "proxy_rule_update", map[string]interface{}{
-			"type": RuleTypeRequestHeader,
-		})
-		assert.True(t, result.IsError)
-		assert.Contains(t, ExtractMCPText(t, result), "rule_id is required")
-	})
-
-	t.Run("update_missing_match_and_replace", func(t *testing.T) {
-		result := CallMCPTool(t, mcpClient, "proxy_rule_update", map[string]interface{}{
-			"rule_id": "some-id",
-		})
-		assert.True(t, result.IsError)
-		assert.Contains(t, ExtractMCPText(t, result), "match or replace is required")
-	})
-
-	t.Run("update_invalid_rule_id", func(t *testing.T) {
-		result := CallMCPTool(t, mcpClient, "proxy_rule_update", map[string]interface{}{
-			"rule_id": "nonexistent",
-			"replace": "X-Test: value",
-		})
-		assert.True(t, result.IsError)
-		assert.Contains(t, ExtractMCPText(t, result), "not found")
 	})
 
 	t.Run("delete_missing_rule_id", func(t *testing.T) {

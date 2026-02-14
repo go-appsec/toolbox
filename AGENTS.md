@@ -173,7 +173,6 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 - `cookie_jar` - extract and deduplicate cookies; overview without filters, full values and JWT decode with name/domain filter
 - `proxy_rule_list` - list match/replace rules
 - `proxy_rule_add` - add match/replace rule
-- `proxy_rule_update` - update existing rule
 - `proxy_rule_delete` - delete rule
 - `crawl_create` - start crawl from URLs or proxy flow seeds
 - `crawl_seed` - add seeds to running crawl
@@ -201,7 +200,7 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 
 CLI requires a running MCP server. Maps to MCP tools via `sectool <module> <sub>` pattern.
 
-- `proxy`: `summary`, `list`, `cookies`, `export`, `rule {add,update,delete,list}`
+- `proxy`: `summary`, `list`, `cookies`, `export`, `rule {add,delete,list}`
 - `crawl`: `create`, `seed`, `status`, `summary`, `list`, `export`, `sessions`, `stop`
 - `replay`: `send`, `get`
 - `oast`: `create`, `summary`, `poll`, `list`, `delete`

@@ -63,10 +63,6 @@ type HttpBackend interface {
 	// Returns the created rule with assigned ID.
 	AddRule(ctx context.Context, rule ProxyRuleInput) (*protocol.RuleEntry, error)
 
-	// UpdateRule modifies an existing rule by ID or label.
-	// Searches both HTTP and WebSocket rules automatically.
-	UpdateRule(ctx context.Context, idOrLabel string, rule ProxyRuleInput) (*protocol.RuleEntry, error)
-
 	// DeleteRule removes a rule by ID or label.
 	// Searches both HTTP and WebSocket rules automatically.
 	DeleteRule(ctx context.Context, idOrLabel string) error
@@ -84,11 +80,11 @@ type ProxyEntryMeta struct {
 	ContentType string
 }
 
-// ProxyRuleInput contains parameters for creating/updating a rule.
+// ProxyRuleInput contains parameters for creating a rule.
 type ProxyRuleInput struct {
 	Label   string // Optional label for easier reference
-	Type    string // Required on add; ignored on update (type is immutable)
-	IsRegex *bool  // nil = preserve existing, non-nil = set to value
+	Type    string // Required on add
+	IsRegex *bool
 	Match   string
 	Replace string
 }

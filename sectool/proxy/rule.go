@@ -114,42 +114,6 @@ func ruleAdd(mcpURL string, ruleType, match, replace, label string, isRegex bool
 	return nil
 }
 
-func ruleUpdate(mcpURL string, ruleID, match, replace, label string, isRegex *bool) error {
-	ctx := context.Background()
-
-	client, err := mcpclient.Connect(ctx, mcpURL)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = client.Close() }()
-
-	resp, err := client.ProxyRuleUpdate(ctx, ruleID, mcpclient.RuleUpdateOpts{
-		Label:   label,
-		IsRegex: isRegex,
-		Match:   match,
-		Replace: replace,
-	})
-	if err != nil {
-		return fmt.Errorf("rule update failed: %w", err)
-	}
-
-	fmt.Printf("Updated rule `%s`\n", resp.RuleID)
-	if resp.Label != "" {
-		fmt.Printf("Label: %s\n", resp.Label)
-	}
-	fmt.Printf("Type: %s\n", resp.Type)
-	if resp.IsRegex {
-		fmt.Println("Mode: regex")
-	}
-	if resp.Match != "" {
-		fmt.Printf("Match: `%s`\n", resp.Match)
-	}
-	if resp.Replace != "" {
-		fmt.Printf("Replace: `%s`\n", resp.Replace)
-	}
-	return nil
-}
-
 func ruleDelete(mcpURL string, ruleID string) error {
 	ctx := context.Background()
 

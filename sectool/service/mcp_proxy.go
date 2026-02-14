@@ -82,24 +82,12 @@ Types:
   HTTP:      request_header (default), request_body, response_header, response_body
   WebSocket: ws:to-server, ws:to-client, ws:both
 
-Regex: is_regex=true (RE2 regex). Labels must be unique.`),
+Regex: is_regex=true (RE2 regex). Labels must be unique.
+To modify a rule, delete it with proxy_rule_delete and recreate.`),
 		mcp.WithString("type", mcp.Required(), mcp.Description("Rule type: request_header, request_body, response_header, response_body, ws:to-server, ws:to-client, ws:both")),
 		mcp.WithString("match", mcp.Description("Pattern to find")),
 		mcp.WithString("replace", mcp.Description("Replacement text")),
 		mcp.WithString("label", mcp.Description("Optional unique label (usable as rule_id)")),
-		mcp.WithBoolean("is_regex", mcp.Description("Treat match as regex pattern (RE2)")),
-	)
-}
-
-func (m *mcpServer) proxyRuleUpdateTool() mcp.Tool {
-	return mcp.NewTool("proxy_rule_update",
-		mcp.WithDescription(`Update a proxy match/replace rule by rule_id or label (searches HTTP+WS).
-
-Requires at least match or replace. To rename label only, resend existing values with new label.`),
-		mcp.WithString("rule_id", mcp.Required(), mcp.Description("Rule ID or label to update")),
-		mcp.WithString("match", mcp.Description("Pattern to match")),
-		mcp.WithString("replace", mcp.Description("Replacement text")),
-		mcp.WithString("label", mcp.Description("Optional new label (unique); omit to keep existing")),
 		mcp.WithBoolean("is_regex", mcp.Description("Treat match as regex pattern (RE2)")),
 	)
 }
@@ -612,63 +600,12 @@ func (m *mcpServer) handleProxyRuleAdd(ctx context.Context, req mcp.CallToolRequ
 	})
 	if err != nil {
 		if errors.Is(err, ErrLabelExists) {
-			return errorResult("label already exists: " + err.Error()), nil
+			return errorResult("label already exists: delete the existing rule first with proxy_rule_delete, or use a different label"), nil
 		}
 		return errorResultFromErr("failed to add rule: ", err), nil
 	}
 
 	log.Printf("mcp/proxy_rule_add: created %s type=%s label=%q", rule.RuleID, ruleType, label)
-	return jsonResult(rule)
-}
-
-func (m *mcpServer) handleProxyRuleUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := m.requireWorkflow(); err != nil {
-		return err, nil
-	}
-
-	ruleID := req.GetString("rule_id", "")
-	if ruleID == "" {
-		return errorResult("rule_id is required"), nil
-	}
-
-	match := req.GetString("match", "")
-	replace := req.GetString("replace", "")
-	if match == "" && replace == "" {
-		return errorResult("match or replace is required"), nil
-	}
-
-	// Only set IsRegex if explicitly provided in request
-	var isRegex *bool
-	if args := req.GetArguments(); args != nil {
-		if _, ok := args["is_regex"]; ok {
-			v := req.GetBool("is_regex", false)
-			isRegex = &v
-		}
-	}
-
-	if isRegex != nil && *isRegex {
-		if fixed := unDoubleEscapeRegex(match); fixed != match {
-			match = fixed
-		}
-	}
-
-	rule, err := m.service.httpBackend.UpdateRule(ctx, ruleID, ProxyRuleInput{
-		Label:   req.GetString("label", ""),
-		IsRegex: isRegex,
-		Match:   match,
-		Replace: replace,
-	})
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return errorResult("rule not found"), nil
-		}
-		if errors.Is(err, ErrLabelExists) {
-			return errorResult("label already exists: " + err.Error()), nil
-		}
-		return errorResultFromErr("failed to update rule: ", err), nil
-	}
-
-	log.Printf("mcp/proxy_rule_update: updated rule %s", rule.RuleID)
 	return jsonResult(rule)
 }
 

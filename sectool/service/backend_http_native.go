@@ -317,90 +317,6 @@ func (b *NativeProxyBackend) AddRule(ctx context.Context, input ProxyRuleInput) 
 	}, nil
 }
 
-func (b *NativeProxyBackend) UpdateRule(ctx context.Context, idOrLabel string, input ProxyRuleInput) (*protocol.RuleEntry, error) {
-	b.rulesMu.Lock()
-	defer b.rulesMu.Unlock()
-
-	idx, isWS := b.findRule(idOrLabel)
-	if idx < 0 {
-		return nil, ErrNotFound
-	}
-
-	target := &b.httpRules
-	key := ruleKeyHTTP
-	if isWS {
-		target = &b.wsRules
-		key = ruleKeyWS
-	}
-	current := (*target)[idx]
-
-	// Validate type if explicitly provided (type is immutable via MCP)
-	if input.Type != "" {
-		if isWSType(input.Type) != isWS {
-			if isWS {
-				return nil, fmt.Errorf("cannot update WebSocket rule with HTTP type %q", input.Type)
-			}
-			return nil, fmt.Errorf("cannot update HTTP rule with WebSocket type %q", input.Type)
-		}
-		if !validRuleTypes[input.Type] {
-			return nil, fmt.Errorf("invalid rule type: %q", input.Type)
-		}
-	}
-
-	// Check label uniqueness if changing
-	if input.Label != "" && input.Label != current.Label {
-		if b.labelExistsExcluding(input.Label, current.ID) {
-			return nil, fmt.Errorf("%w: %s", ErrLabelExists, input.Label)
-		}
-	}
-
-	// Determine new regex state
-	newIsRegex := current.IsRegex
-	if input.IsRegex != nil {
-		newIsRegex = *input.IsRegex
-	}
-
-	// Recompile regex if needed
-	var compiled *regexp.Regexp
-	if newIsRegex {
-		var err error
-		compiled, err = regexp.Compile(input.Match)
-		if err != nil {
-			return nil, fmt.Errorf("invalid regex pattern: %w", err)
-		}
-	}
-
-	// Build updated rule
-	rule := current
-	if input.Label != "" && input.Label != current.Label {
-		rule.Label = input.Label
-	}
-	if input.Type != "" {
-		rule.Type = input.Type
-	}
-	rule.Match = input.Match
-	rule.Replace = input.Replace
-	rule.IsRegex = newIsRegex
-	rule.compiled = compiled
-
-	// Save to storage (source of truth), then update cache
-	updated := slices.Clone(*target)
-	updated[idx] = rule
-	if err := b.saveRules(key, updated); err != nil {
-		return nil, fmt.Errorf("persist rule: %w", err)
-	}
-	*target = updated
-
-	return &protocol.RuleEntry{
-		RuleID:  rule.ID,
-		Label:   rule.Label,
-		Type:    rule.Type,
-		IsRegex: rule.IsRegex,
-		Match:   rule.Match,
-		Replace: rule.Replace,
-	}, nil
-}
-
 func (b *NativeProxyBackend) DeleteRule(ctx context.Context, idOrLabel string) error {
 	b.rulesMu.Lock()
 	defer b.rulesMu.Unlock()
@@ -428,22 +344,6 @@ func (b *NativeProxyBackend) DeleteRule(ctx context.Context, idOrLabel string) e
 	return ErrNotFound
 }
 
-// findRule finds a rule by ID or label, returning the cache index and whether it's a WebSocket rule.
-// Returns -1 if not found. Caller must hold rulesMu.
-func (b *NativeProxyBackend) findRule(idOrLabel string) (int, bool) {
-	for i := range b.httpRules {
-		if b.httpRules[i].ID == idOrLabel || b.httpRules[i].Label == idOrLabel {
-			return i, false
-		}
-	}
-	for i := range b.wsRules {
-		if b.wsRules[i].ID == idOrLabel || b.wsRules[i].Label == idOrLabel {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
 // labelExists checks if a label is already in use. Caller must hold rulesMu.
 func (b *NativeProxyBackend) labelExists(label string) bool {
 	for _, r := range b.httpRules {
@@ -453,22 +353,6 @@ func (b *NativeProxyBackend) labelExists(label string) bool {
 	}
 	for _, r := range b.wsRules {
 		if r.Label == label {
-			return true
-		}
-	}
-	return false
-}
-
-// labelExistsExcluding checks if a label is in use by a rule other than excludeID.
-// Caller must hold rulesMu.
-func (b *NativeProxyBackend) labelExistsExcluding(label, excludeID string) bool {
-	for _, r := range b.httpRules {
-		if r.Label == label && r.ID != excludeID {
-			return true
-		}
-	}
-	for _, r := range b.wsRules {
-		if r.Label == label && r.ID != excludeID {
 			return true
 		}
 	}
