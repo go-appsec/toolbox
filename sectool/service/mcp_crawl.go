@@ -89,9 +89,6 @@ func (m *mcpServer) handleCrawlCreate(ctx context.Context, req mcp.CallToolReque
 		// SubmitForms and ExtractForms left unset to use config defaults
 	}
 
-	log.Printf("mcp/crawl_create: creating session (label=%q, seeds=%d, domains=%d)",
-		opts.Label, len(seeds), len(domains))
-
 	sess, err := m.service.crawlerBackend.CreateSession(ctx, opts)
 	if err != nil {
 		if errors.Is(err, ErrLabelExists) {

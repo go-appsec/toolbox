@@ -131,8 +131,6 @@ func (m *mcpServer) handleCookieJar(ctx context.Context, req mcp.CallToolRequest
 	// Detail mode: include values and JWT decode when any filter is applied
 	detailMode := nameFilter != "" || domainFilter != ""
 
-	log.Printf("mcp/cookie_jar: name=%q domain=%q detail=%v", nameFilter, domainFilter, detailMode)
-
 	// Fetch all proxy+replay entries with full response data
 	allEntries, err := m.service.fetchAllProxyEntries(ctx, true)
 	if err != nil {
@@ -245,7 +243,7 @@ func (m *mcpServer) handleCookieJar(ctx context.Context, req mcp.CallToolRequest
 		cookies = append(cookies, seen[key])
 	}
 
-	log.Printf("mcp/cookie_jar: returning %d cookies", len(cookies))
+	log.Printf("mcp/cookie_jar: %d cookies (name=%q domain=%q)", len(cookies), nameFilter, domainFilter)
 	return jsonResult(&protocol.CookieJarResponse{Cookies: cookies})
 }
 
@@ -275,8 +273,6 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 	if outputMode == OutputModeFlows && !listReq.HasFilters() {
 		return errorResult("flows mode requires at least one filter or limit; use output_mode=summary first to see available traffic"), nil
 	}
-
-	log.Printf("proxy/poll: mode=%s host=%q path=%q method=%q status=%q", outputMode, listReq.Host, listReq.Path, listReq.Method, listReq.Status)
 
 	// Compile search patterns once
 	var searchHeaderRe, searchBodyRe *regexp.Regexp
@@ -369,7 +365,7 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 				Source:         entry.source,
 			})
 		}
-		log.Printf("proxy/poll: returning %d flows", len(flows))
+		log.Printf("proxy/poll: %d flows (host=%q path=%q method=%q status=%q)", len(flows), listReq.Host, listReq.Path, listReq.Method, listReq.Status)
 
 		// Update tracking for "since=last" cursor
 		if maxOffset > m.service.proxyLastOffset.Load() {
@@ -386,7 +382,7 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 		agg := aggregateByTuple(filtered, func(e flowEntry) (string, string, string, int) {
 			return e.host, e.path, e.method, e.status
 		})
-		log.Printf("proxy/poll: returning %d aggregates from %d entries", len(agg), len(filtered))
+		log.Printf("proxy/poll: %d aggregates from %d entries (host=%q path=%q method=%q status=%q)", len(agg), len(filtered), listReq.Host, listReq.Path, listReq.Method, listReq.Status)
 
 		noteStr := strings.Join(notes, "; ")
 		return jsonResult(&protocol.ProxyPollResponse{Aggregates: agg, Note: noteStr})
@@ -601,8 +597,6 @@ func (m *mcpServer) handleProxyRuleAdd(ctx context.Context, req mcp.CallToolRequ
 	}
 	label := req.GetString("label", "")
 
-	log.Printf("mcp/proxy_rule_add: type=%s label=%q", ruleType, label)
-
 	isRegex := req.GetBool("is_regex", false)
 	rule, err := m.service.httpBackend.AddRule(ctx, ProxyRuleInput{
 		Label:   label,
@@ -618,7 +612,7 @@ func (m *mcpServer) handleProxyRuleAdd(ctx context.Context, req mcp.CallToolRequ
 		return errorResultFromErr("failed to add rule: ", err), nil
 	}
 
-	log.Printf("mcp/proxy_rule_add: created rule %s", rule.RuleID)
+	log.Printf("mcp/proxy_rule_add: created %s type=%s label=%q", rule.RuleID, ruleType, label)
 	return jsonResult(rule)
 }
 

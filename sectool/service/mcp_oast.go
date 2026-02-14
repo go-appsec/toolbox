@@ -84,7 +84,6 @@ func (m *mcpServer) handleOastCreate(ctx context.Context, req mcp.CallToolReques
 		return errorResultFromErr("failed to create OAST session: ", err), nil
 	}
 
-	log.Printf("mcp/oast_create: created session %s with domain %s (label=%q)", sess.ID, sess.Domain, sess.Label)
 	return jsonResult(protocol.OastCreateResponse{
 		OastID: sess.ID,
 		Domain: sess.Domain,
@@ -120,8 +119,6 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 	eventType := strings.ToLower(req.GetString("type", ""))
 	limit := req.GetInt("limit", 0)
 
-	log.Printf("mcp/oast_poll: mode=%s session=%s (wait=%v since=%q type=%q limit=%d)", outputMode, oastID, wait, since, eventType, limit)
-
 	result, err := m.service.oastBackend.PollSession(ctx, oastID, since, eventType, wait, limit)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -144,7 +141,7 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 			}
 		}
 
-		log.Printf("mcp/oast_poll: session %s returned %d events", oastID, len(events))
+		log.Printf("mcp/oast_poll: session %s %d events (wait=%v since=%q type=%q)", oastID, len(events), wait, since, eventType)
 		return jsonResult(protocol.OastPollResponse{
 			Events:       events,
 			DroppedCount: result.DroppedCount,
@@ -152,7 +149,7 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 
 	default: // summary
 		agg := aggregateOastEvents(result.Events)
-		log.Printf("mcp/oast_poll: session %s returned %d aggregates from %d events", oastID, len(agg), len(result.Events))
+		log.Printf("mcp/oast_poll: session %s %d aggregates from %d events (wait=%v since=%q type=%q)", oastID, len(agg), len(result.Events), wait, since, eventType)
 		return jsonResult(protocol.OastPollResponse{
 			Aggregates:   agg,
 			DroppedCount: result.DroppedCount,

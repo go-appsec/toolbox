@@ -214,8 +214,6 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 	if usesHTTPS {
 		scheme = schemeHTTPS
 	}
-	log.Printf("mcp/replay_send: %s sending to %s://%s:%d (flow=%s)", replayID, scheme, host, port, flowID)
-
 	sendInput := SendRequestInput{
 		RawRequest: rawRequest,
 		Target: Target{
@@ -236,7 +234,7 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 	respHeaders := result.Headers
 	respBody := result.Body
 	respCode, respStatusLine := parseResponseStatus(respHeaders)
-	log.Printf("mcp/replay_send: %s completed in %v (status=%d, size=%d)", replayID, result.Duration, respCode, len(respBody))
+	log.Printf("mcp/replay_send: %s %s://%s:%d status=%d size=%d duration=%v (flow=%s)", replayID, scheme, host, port, respCode, len(respBody), result.Duration, flowID)
 
 	// Store in replay history for proxy_poll visibility
 	method, replayHost, replayPath := extractRequestMeta(string(rawRequest))
@@ -376,8 +374,6 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 	target := targetFromURL(parsedURL)
 	replayID := ids.Generate(ids.DefaultLength)
 
-	log.Printf("mcp/request_send: %s sending to %s", replayID, parsedURL)
-
 	sendInput := SendRequestInput{
 		RawRequest:      rawRequest,
 		Target:          target,
@@ -390,7 +386,7 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 	}
 
 	respCode, respStatusLine := parseResponseStatus(result.Headers)
-	log.Printf("mcp/request_send: %s completed in %v (status=%d, size=%d)", replayID, result.Duration, respCode, len(result.Body))
+	log.Printf("mcp/request_send: %s %s status=%d size=%d duration=%v", replayID, parsedURL, respCode, len(result.Body), result.Duration)
 
 	// Store in replay history for proxy_poll visibility
 	refOffset, _ := m.service.replayHistoryStore.UpdateReferenceOffset(m.service.proxyLastOffset.Load())
