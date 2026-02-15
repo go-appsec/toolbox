@@ -94,63 +94,35 @@ The server exposes two endpoints:
 
 ## CLI Usage
 
-The CLI works with both backends and provides a human-friendly interface for reviewing, replaying, and scripting against the same state the agent operates on.
+The CLI shares state with the agent and provides a human-friendly interface for reviewing, replaying, and scripting. All commands are also available as MCP tools, state shared with the agent.
 
 ```bash
-# Proxy history
-sectool proxy summary              # Aggregated traffic summary
-sectool proxy list --host example  # List flows matching filter
-sectool proxy cookies              # List observed cookies (overview)
-sectool proxy cookies --name sid   # Cookie details with value + JWT decode
-sectool proxy export <flow_id>     # Export flow to ./sectool-requests/<flow_id>/
-sectool proxy rule list            # List match/replace rules
+# Review what the proxy captured while you browsed
+sectool proxy summary
+sectool proxy list --host example.com
+sectool proxy cookies --name session_id
 
-# Crawling
+# Crawl an app to discover endpoints and forms
 sectool crawl create --url https://example.com
-sectool crawl seed <session_id> --url https://example.com/other
-sectool crawl status <session_id>
 sectool crawl summary <session_id>
-sectool crawl list <session_id>
-sectool crawl forms <session_id>
-sectool crawl errors <session_id>
-sectool crawl export <flow_id>
-sectool crawl sessions
-sectool crawl stop <session_id>
 
-# Replay requests
+# Replay a captured request with modifications
 sectool replay send --flow <flow_id> --add-header "X-Test: value"
-sectool replay get <replay_id>
-sectool replay create              # Create request bundle from scratch
 
-# Out-of-band testing
+# Set up out-of-band interaction testing and check for callbacks
 sectool oast create
-sectool oast summary <oast_id>     # Aggregated interaction summary
-sectool oast poll <oast_id>        # List individual events
+sectool oast poll <oast_id>
 sectool oast get <oast_id> <event_id>
-sectool oast list
-sectool oast delete <oast_id>
 
-# Encoding/decoding utilities
-sectool encode url "hello world"
-sectool decode url "hello+world"
-sectool encode base64 "test"
-sectool decode base64 "dGVzdA=="
-sectool encode html "<script>"
-
-# Hashing
-sectool hash "test"                           # SHA-256 (default)
-sectool hash --algorithm md5 "test"
-sectool hash --key "secret" "test"            # HMAC-SHA-256
-
-# JWT inspection
-sectool jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.sig
-
-# Diff flows
+# Compare two flows, detect reflections, inspect JWTs
 sectool diff <flow_a> <flow_b> --scope response
-sectool diff <flow_a> <flow_b> --scope request_headers
-
-# Reflection detection
 sectool reflected <flow_id>
+sectool jwt <token>
+
+# Export a flow, edit it offline, and resend
+sectool proxy export <flow_id>
+# ... edit ./sectool-requests/<flow_id>/request.http ...
+sectool replay send --bundle <flow_id>
 ```
 
 Use `sectool <command> --help` for detailed options.
