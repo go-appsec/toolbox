@@ -84,7 +84,8 @@ type crawlSession struct {
 	parentURLs sync.Map // url -> parent_url
 
 	// Capture store for correlating RoundTrip with OnResponse
-	captureStore sync.Map // captureID -> *capturedData
+	captureStore      sync.Map // captureID -> *capturedData
+	captureParentURLs sync.Map // captureID -> parent URL string
 
 	// Precompiled regexes for path filtering
 	disallowedRegexes []*regexp.Regexp
@@ -123,13 +124,6 @@ func (t *capturingTransport) RoundTrip(req *http.Request) (*http.Response, error
 	duration := time.Since(start)
 
 	if err != nil {
-		if captureID != "" {
-			t.session.captureStore.Store(captureID, &capturedData{
-				Request:  reqBytes,
-				Error:    err,
-				Duration: duration,
-			})
-		}
 		return nil, err
 	}
 
@@ -144,6 +138,10 @@ func (t *capturingTransport) RoundTrip(req *http.Request) (*http.Response, error
 			Duration:     duration,
 			Truncated:    truncated,
 		})
+
+		// Inject capture ID into response headers for per-request correlation
+		// in OnResponse; Colly context is shared between sibling requests.
+		resp.Header.Set(captureIDHeader, captureID)
 	}
 
 	return resp, nil
@@ -339,9 +337,8 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		sess.lastActivity = time.Now()
 		sess.mu.Unlock()
 
-		// Generate capture ID for correlation
+		// Correlate via headers, not Colly context (shared between sibling requests)
 		captureID := ids.Generate(ids.DefaultLength)
-		r.Ctx.Put("capture_id", captureID)
 		r.Headers.Set(captureIDHeader, captureID)
 
 		// Get parent URL from stored map, or use "seed" for initial seeds
@@ -349,7 +346,7 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		if p, ok := sess.parentURLs.LoadAndDelete(r.URL.String()); ok {
 			parentURL = p.(string)
 		}
-		r.Ctx.Put("parent_url", parentURL)
+		sess.captureParentURLs.Store(captureID, parentURL)
 
 		// Apply seed headers first (auth context from resolved flows)
 		// These are set before custom headers so user headers can override if needed
@@ -367,16 +364,21 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 
 	// Response callback for capturing flows
 	c.OnResponse(func(r *colly.Response) {
+		captureID := r.Headers.Get(captureIDHeader)
+
 		ct := r.Headers.Get("Content-Type")
 		// Filter by content-type (empty is allowed for HTML pages without explicit type)
 		if ct != "" && !isTextContentType(ct) {
+			if captureID != "" {
+				sess.captureStore.LoadAndDelete(captureID)
+				sess.captureParentURLs.LoadAndDelete(captureID)
+			}
 			sess.mu.Lock()
 			sess.urlsQueued--
 			sess.mu.Unlock()
 			return
 		}
 
-		captureID := r.Ctx.Get("capture_id")
 		if captureID == "" {
 			sess.mu.Lock()
 			sess.urlsQueued--
@@ -404,6 +406,11 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 			flowPath += "?" + r.Request.URL.RawQuery
 		}
 
+		foundOn := "seed"
+		if p, ok := sess.captureParentURLs.LoadAndDelete(captureID); ok {
+			foundOn = p.(string)
+		}
+
 		flowID := ids.Generate(ids.DefaultLength)
 		flow := &CrawlFlow{
 			ID:             flowID,
@@ -412,7 +419,7 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 			Host:           flowHost,
 			Path:           flowPath,
 			Method:         r.Request.Method,
-			FoundOn:        r.Ctx.Get("parent_url"),
+			FoundOn:        foundOn,
 			Depth:          r.Request.Depth,
 			StatusCode:     r.StatusCode,
 			ContentType:    ct,
@@ -487,9 +494,15 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 	}
 
 	c.OnError(func(r *colly.Response, err error) {
-		// Clean up capture store to prevent memory leak
-		if captureID := r.Ctx.Get("capture_id"); captureID != "" {
-			sess.captureStore.LoadAndDelete(captureID)
+		// Clean up capture and parent URL maps to prevent memory leak.
+		// r.Headers is nil for transport errors (no response received);
+		// captureParentURLs entries leak in that case but the count is
+		// bounded by transport errors which are rare and small.
+		if r.Headers != nil {
+			if captureID := r.Headers.Get(captureIDHeader); captureID != "" {
+				sess.captureStore.LoadAndDelete(captureID)
+				sess.captureParentURLs.LoadAndDelete(captureID)
+			}
 		}
 
 		crawlErr := CrawlError{

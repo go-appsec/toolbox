@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"testing"
 	"time"
@@ -472,4 +474,92 @@ func TestCollyBackend_ListFlows_search_with_limit(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "flow-5", got[0].ID)
+}
+
+func TestCollyBackend_CreateSession_follows_links(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><body>
+			<a href="/page1">Page 1</a>
+			<a href="/page2">Page 2</a>
+		</body></html>`)
+	})
+	mux.HandleFunc("/page1", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><body>
+			<a href="/page3">Page 3</a>
+		</body></html>`)
+	})
+	mux.HandleFunc("/page2", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><body>
+			<p>Page 2 content</p>
+		</body></html>`)
+	})
+	mux.HandleFunc("/page3", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><body>
+			<p>Page 3 content</p>
+		</body></html>`)
+	})
+
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	cfg := config.DefaultConfig()
+	// Speed up crawling for testing
+	cfg.Crawler.DelayMS = 0
+	cfg.Crawler.Parallelism = 4
+
+	b := NewCollyBackend(cfg, nil, nil)
+	t.Cleanup(func() { _ = b.Close() })
+
+	ctx := t.Context()
+
+	info, err := b.CreateSession(ctx, CrawlOptions{
+		Seeds: []CrawlSeed{{URL: ts.URL + "/"}},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, info.ID)
+
+	sessionID := info.ID
+
+	// Poll until completed or timeout
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err := b.GetStatus(ctx, sessionID)
+		require.NoError(t, err)
+		if status.State == crawlStateCompleted {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	status, err := b.GetStatus(ctx, sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, crawlStateCompleted, status.State)
+
+	// Should have visited at least 4 pages: /, /page1, /page2, /page3
+	flows, err := b.ListFlows(ctx, sessionID, CrawlListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, flows, 4)
+
+	// Collect visited paths for verification
+	visitedPaths := make(map[string]bool, len(flows))
+	for _, f := range flows {
+		assert.False(t, visitedPaths[f.Path]) // no duplicate paths
+		visitedPaths[f.Path] = true
+	}
+	assert.Contains(t, visitedPaths, "/")
+	assert.Contains(t, visitedPaths, "/page1")
+	assert.Contains(t, visitedPaths, "/page2")
+	assert.Contains(t, visitedPaths, "/page3")
+
+	// Errors should be empty or minimal
+	crawlErrors, err := b.ListErrors(ctx, sessionID, 0)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(crawlErrors), 1)
 }
