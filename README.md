@@ -58,7 +58,7 @@ Work with the agent to build a test plan and execute it together. The agent can 
 
 **Native (default):** Built-in proxy with wire-fidelity and HTTP/1.1, HTTP/2, and WebSocket support. Designed to be as capable as Burp for MITM testing. A single binary provides the MCP server, proxy, and CLI — fully self-contained and usable in headless environments.
 
-**Burp (optional):** If you prefer a GUI to review the agent's actions or already have Burp running, install the MCP extension from the BApp Store and ensure the MCP server runs on `http://127.0.0.1:9876/sse`.
+**Burp (optional):** If you prefer a GUI to review the agent's actions or already have Burp running, install the MCP extension from the BApp Store and ensure the MCP server runs on `http://127.0.0.1:9876/`.
 
 | Option | Description |
 |--------|-------------|
