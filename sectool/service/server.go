@@ -77,7 +77,6 @@ type Server struct {
 
 	// Shutdown coordination
 	shutdownCh chan struct{}
-	wg         sync.WaitGroup
 }
 
 // NewServer creates a new MCP server instance with optional backends.
@@ -212,9 +211,6 @@ func (s *Server) shutdown() error {
 			log.Printf("MCP server shutdown error: %v", err)
 		}
 	}
-
-	// Wait for any ongoing operations
-	s.wg.Wait()
 
 	// Close backends
 	if s.httpBackend != nil {
