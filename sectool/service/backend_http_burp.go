@@ -52,8 +52,6 @@ func (b *BurpBackend) Close() error {
 }
 
 func (b *BurpBackend) GetProxyHistory(ctx context.Context, count int, offset uint32) ([]ProxyEntry, error) {
-	log.Printf("burp: sending proxy history offset: %d", offset)
-
 	entries, err := b.client.GetProxyHistory(ctx, count, int(offset))
 	if err != nil {
 		return nil, err
@@ -93,13 +91,6 @@ func (b *BurpBackend) GetProxyHistoryMeta(ctx context.Context, count int, offset
 }
 
 func (b *BurpBackend) SendRequest(ctx context.Context, name string, req SendRequestInput) (*SendRequestResult, error) {
-	scheme := schemeHTTP
-	if req.Target.UsesHTTPS {
-		scheme = schemeHTTPS
-	}
-	log.Printf("burp: sending request %s to %s://%s:%d (follow_redirects=%v)",
-		name, scheme, req.Target.Hostname, req.Target.Port, req.FollowRedirects)
-
 	return b.doSendRequest(ctx, name, req)
 }
 

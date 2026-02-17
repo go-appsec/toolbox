@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -26,5 +27,6 @@ func (m *mcpServer) handleJWTDecode(ctx context.Context, req mcp.CallToolRequest
 		return errorResult(err.Error()), nil
 	}
 
+	log.Printf("jwt/decode: algorithm=%s", result.Header["alg"])
 	return jsonResult(result)
 }

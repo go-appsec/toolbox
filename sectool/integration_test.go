@@ -230,6 +230,7 @@ func startMCPServerAndClient(t *testing.T, backendType httpBackendType, httpBack
 
 	srv, err := service.NewServer(flags, httpBackend, nil, nil)
 	require.NoError(t, err)
+	srv.SetQuietLogging()
 
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- srv.Run(t.Context()) }()

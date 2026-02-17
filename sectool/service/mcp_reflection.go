@@ -89,12 +89,12 @@ func (m *mcpServer) handleFindReflected(ctx context.Context, req mcp.CallToolReq
 		return errResult, nil
 	}
 
-	log.Printf("mcp/find_reflected: analyzing %s", flowID)
-
 	params := extractParams(flow.RawRequest)
+	reflections := findReflections(params, flow.RawResponse)
 
+	log.Printf("reflected: flow=%s %d reflections from %d params", flowID, len(reflections), len(params))
 	return jsonResult(&protocol.FindReflectedResponse{
-		Reflections: findReflections(params, flow.RawResponse),
+		Reflections: reflections,
 	})
 }
 

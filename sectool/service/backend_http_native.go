@@ -187,18 +187,11 @@ func (b *NativeProxyBackend) GetProxyHistoryMeta(ctx context.Context, count int,
 }
 
 func (b *NativeProxyBackend) SendRequest(ctx context.Context, name string, req SendRequestInput) (*SendRequestResult, error) {
-	scheme := schemeHTTP
-	if req.Target.UsesHTTPS {
-		scheme = schemeHTTPS
-	}
 	protocol := req.Protocol
 	if protocol == "" {
 		protocol = "http/1.1"
 	}
-	log.Printf("native: sending request %s to %s://%s:%d (protocol=%s, follow_redirects=%v)",
-		name, scheme, req.Target.Hostname, req.Target.Port, protocol, req.FollowRedirects)
 
-	// Build send options using the defaulted protocol for consistency with logging
 	opts := proxy.SendOptions{
 		RawRequest: req.RawRequest,
 		Target: proxy.Target{

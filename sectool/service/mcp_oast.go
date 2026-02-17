@@ -84,6 +84,7 @@ func (m *mcpServer) handleOastCreate(ctx context.Context, req mcp.CallToolReques
 		return errorResultFromErr("failed to create OAST session: ", err), nil
 	}
 
+	log.Printf("oast/create: session %s domain=%s label=%q", sess.ID, sess.Domain, sess.Label)
 	return jsonResult(protocol.OastCreateResponse{
 		OastID: sess.ID,
 		Domain: sess.Domain,
@@ -141,7 +142,7 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 			}
 		}
 
-		log.Printf("mcp/oast_poll: session %s %d events (wait=%v since=%q type=%q)", oastID, len(events), wait, since, eventType)
+		log.Printf("oast/poll: session %s %d events (wait=%v since=%q type=%q)", oastID, len(events), wait, since, eventType)
 		return jsonResult(protocol.OastPollResponse{
 			Events:       events,
 			DroppedCount: result.DroppedCount,
@@ -149,7 +150,7 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 
 	default: // summary
 		agg := aggregateOastEvents(result.Events)
-		log.Printf("mcp/oast_poll: session %s %d aggregates from %d events (wait=%v since=%q type=%q)", oastID, len(agg), len(result.Events), wait, since, eventType)
+		log.Printf("oast/poll: session %s %d aggregates from %d events (wait=%v since=%q type=%q)", oastID, len(agg), len(result.Events), wait, since, eventType)
 		return jsonResult(protocol.OastPollResponse{
 			Aggregates:   agg,
 			DroppedCount: result.DroppedCount,
@@ -203,8 +204,6 @@ func (m *mcpServer) handleOastGet(ctx context.Context, req mcp.CallToolRequest) 
 		return errorResult("event_id is required"), nil
 	}
 
-	log.Printf("mcp/oast_get: getting event %s from session %s", eventID, oastID)
-
 	event, err := m.service.oastBackend.GetEvent(ctx, oastID, eventID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -213,6 +212,7 @@ func (m *mcpServer) handleOastGet(ctx context.Context, req mcp.CallToolRequest) 
 		return errorResultFromErr("failed to get event: ", err), nil
 	}
 
+	log.Printf("oast/get: session %s event %s type=%s", oastID, eventID, event.Type)
 	return jsonResult(protocol.OastGetResponse{
 		EventID:   event.ID,
 		Time:      event.Time.UTC().Format(time.RFC3339),
@@ -254,7 +254,7 @@ func (m *mcpServer) handleOastList(ctx context.Context, req mcp.CallToolRequest)
 		}
 	}
 
-	log.Printf("oast/list: returning %d active sessions", len(apiSessions))
+	log.Printf("oast/list: %d sessions (limit=%d)", len(apiSessions), limit)
 	return jsonResult(&protocol.OastListResponse{Sessions: apiSessions})
 }
 
@@ -268,8 +268,6 @@ func (m *mcpServer) handleOastDelete(ctx context.Context, req mcp.CallToolReques
 		return errorResult("oast_id is required"), nil
 	}
 
-	log.Printf("mcp/oast_delete: deleting session %s", oastID)
-
 	if err := m.service.oastBackend.DeleteSession(ctx, oastID); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return errorResult("session not found"), nil
@@ -277,5 +275,6 @@ func (m *mcpServer) handleOastDelete(ctx context.Context, req mcp.CallToolReques
 		return errorResultFromErr("failed to delete session: ", err), nil
 	}
 
+	log.Printf("oast/delete: deleted session %s", oastID)
 	return jsonResult(OastDeleteResponse{})
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -29,10 +30,12 @@ func (m *mcpServer) handleHash(ctx context.Context, req mcp.CallToolRequest) (*m
 		algorithm = req.GetString("type", "sha256")
 	}
 
-	digest, err := hash.ComputeHash(input, algorithm, req.GetString("key", ""))
+	key := req.GetString("key", "")
+	digest, err := hash.ComputeHash(input, algorithm, key)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
 
+	log.Printf("hash: algorithm=%s hmac=%v", algorithm, key != "")
 	return mcp.NewToolResultText(digest), nil
 }

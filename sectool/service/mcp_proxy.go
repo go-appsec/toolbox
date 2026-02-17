@@ -231,7 +231,7 @@ func (m *mcpServer) handleCookieJar(ctx context.Context, req mcp.CallToolRequest
 		cookies = append(cookies, seen[key])
 	}
 
-	log.Printf("mcp/cookie_jar: %d cookies (name=%q domain=%q)", len(cookies), nameFilter, domainFilter)
+	log.Printf("proxy/cookie_jar: %d cookies (name=%q domain=%q)", len(cookies), nameFilter, domainFilter)
 	return jsonResult(&protocol.CookieJarResponse{Cookies: cookies})
 }
 
@@ -441,7 +441,7 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 	scheme, _, _ := inferSchemeAndPort(host)
 	fullURL := scheme + "://" + host + path
 
-	log.Printf("mcp/proxy_get: flow=%s method=%s url=%s source=%s", flowID, method, fullURL, source)
+	log.Printf("proxy/get: flow=%s method=%s url=%s source=%s", flowID, method, fullURL, source)
 
 	// Decompress bodies lazily: only when scope/pattern needs them
 	needsReqBody := scopeSet["request_body"]
@@ -561,7 +561,7 @@ func (m *mcpServer) handleProxyRuleList(ctx context.Context, req mcp.CallToolReq
 		rules = rules[:limit]
 	}
 
-	log.Printf("mcp/proxy_rule_list: returning %d rules (filter=%s)", len(rules), typeFilter)
+	log.Printf("proxy/rule_list: %d rules (filter=%s)", len(rules), typeFilter)
 	return jsonResult(protocol.RuleListResponse{Rules: rules})
 }
 
@@ -605,7 +605,7 @@ func (m *mcpServer) handleProxyRuleAdd(ctx context.Context, req mcp.CallToolRequ
 		return errorResultFromErr("failed to add rule: ", err), nil
 	}
 
-	log.Printf("mcp/proxy_rule_add: created %s type=%s label=%q", rule.RuleID, ruleType, label)
+	log.Printf("proxy/rule_add: created %s type=%s label=%q", rule.RuleID, ruleType, label)
 	return jsonResult(rule)
 }
 
@@ -626,7 +626,7 @@ func (m *mcpServer) handleProxyRuleDelete(ctx context.Context, req mcp.CallToolR
 		return errorResultFromErr("failed to delete rule: ", err), nil
 	}
 
-	log.Printf("mcp/proxy_rule_delete: deleted rule %s", ruleID)
+	log.Printf("proxy/rule_delete: deleted rule %s", ruleID)
 	return jsonResult(RuleDeleteResponse{})
 }
 

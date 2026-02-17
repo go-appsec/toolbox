@@ -97,6 +97,7 @@ func (m *mcpServer) handleCrawlCreate(ctx context.Context, req mcp.CallToolReque
 		return errorResultFromErr("failed to create crawl session: ", err), nil
 	}
 
+	log.Printf("crawl/create: session %s label=%q seeds=%d", sess.ID, sess.Label, len(seeds))
 	return jsonResult(protocol.CrawlCreateResponse{
 		SessionID: sess.ID,
 		Label:     sess.Label,
@@ -142,8 +143,6 @@ func (m *mcpServer) handleCrawlSeed(ctx context.Context, req mcp.CallToolRequest
 		return errorResult("at least one seed_url or seed_flow is required"), nil
 	}
 
-	log.Printf("mcp/crawl_seed: adding %d seeds to session %s", len(seeds), sessionID)
-
 	if err := m.service.crawlerBackend.AddSeeds(ctx, sessionID, seeds); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return errorResult("session not found"), nil
@@ -151,6 +150,7 @@ func (m *mcpServer) handleCrawlSeed(ctx context.Context, req mcp.CallToolRequest
 		return errorResultFromErr("failed to add seeds: ", err), nil
 	}
 
+	log.Printf("crawl/seed: added %d seeds to session %s", len(seeds), sessionID)
 	return jsonResult(protocol.CrawlSeedResponse{AddedCount: len(seeds)})
 }
 
@@ -173,8 +173,6 @@ func (m *mcpServer) handleCrawlStatus(ctx context.Context, req mcp.CallToolReque
 		return errorResult("session_id is required"), nil
 	}
 
-	log.Printf("mcp/crawl_status: getting status for session %s", sessionID)
-
 	status, err := m.service.crawlerBackend.GetStatus(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -183,6 +181,7 @@ func (m *mcpServer) handleCrawlStatus(ctx context.Context, req mcp.CallToolReque
 		return errorResultFromErr("failed to get status: ", err), nil
 	}
 
+	log.Printf("crawl/status: session %s state=%s visited=%d queued=%d errors=%d", sessionID, status.State, status.URLsVisited, status.URLsQueued, status.URLsErrored)
 	return jsonResult(protocol.CrawlStatusResponse{
 		State:           status.State,
 		URLsQueued:      status.URLsQueued,
@@ -237,8 +236,6 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 	outputMode := req.GetString("output_mode", "summary")
 	limit := req.GetInt("limit", 100)
 
-	log.Printf("mcp/crawl_poll: mode=%s session=%s (limit=%d)", outputMode, sessionID, limit)
-
 	switch outputMode {
 	case OutputModeForms:
 		forms, err := m.service.crawlerBackend.ListForms(ctx, sessionID, limit)
@@ -249,6 +246,7 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 			return errorResultFromErr("failed to list forms: ", err), nil
 		}
 
+		log.Printf("crawl/poll: session %s %d forms (limit=%d)", sessionID, len(forms), limit)
 		return jsonResult(protocol.CrawlPollResponse{SessionID: sessionID, Forms: formsToAPI(forms)})
 
 	case OutputModeErrors:
@@ -268,6 +266,7 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 				Error:  e.Error,
 			})
 		}
+		log.Printf("crawl/poll: session %s %d errors (limit=%d)", sessionID, len(errs), limit)
 		return jsonResult(protocol.CrawlPollResponse{SessionID: sessionID, Errors: apiErrors})
 
 	case OutputModeFlows:
@@ -325,6 +324,7 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 				FoundOn:        f.FoundOn,
 			})
 		}
+		log.Printf("crawl/poll: session %s %d flows (limit=%d)", sessionID, len(flows), limit)
 		noteStr := strings.Join(notes, "; ")
 		return jsonResult(protocol.CrawlPollResponse{SessionID: sessionID, Flows: apiFlows, Note: noteStr})
 
@@ -379,6 +379,7 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 			return f.Host, f.Path, f.Method, f.StatusCode
 		})
 
+		log.Printf("crawl/poll: session %s %d aggregates from %d flows (limit=%d)", sessionID, len(aggregates), len(flows), limit)
 		noteStr := strings.Join(notes, "; ")
 		return jsonResult(protocol.CrawlPollResponse{
 			SessionID:  sessionID,
@@ -406,8 +407,6 @@ func (m *mcpServer) handleCrawlSessions(ctx context.Context, req mcp.CallToolReq
 
 	limit := req.GetInt("limit", 0)
 
-	log.Printf("mcp/crawl_sessions: listing sessions (limit=%d)", limit)
-
 	sessions, err := m.service.crawlerBackend.ListSessions(ctx, limit)
 	if err != nil {
 		return errorResultFromErr("failed to list sessions: ", err), nil
@@ -423,6 +422,7 @@ func (m *mcpServer) handleCrawlSessions(ctx context.Context, req mcp.CallToolReq
 		})
 	}
 
+	log.Printf("crawl/sessions: %d sessions (limit=%d)", len(apiSessions), limit)
 	return jsonResult(protocol.CrawlSessionsResponse{Sessions: apiSessions})
 }
 
@@ -445,8 +445,6 @@ func (m *mcpServer) handleCrawlStop(ctx context.Context, req mcp.CallToolRequest
 		return errorResult("session_id is required"), nil
 	}
 
-	log.Printf("mcp/crawl_stop: stopping session %s", sessionID)
-
 	if err := m.service.crawlerBackend.StopSession(ctx, sessionID); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return errorResult("session not found"), nil
@@ -454,6 +452,7 @@ func (m *mcpServer) handleCrawlStop(ctx context.Context, req mcp.CallToolRequest
 		return errorResultFromErr("failed to stop session: ", err), nil
 	}
 
+	log.Printf("crawl/stop: stopped session %s", sessionID)
 	return jsonResult(CrawlStopResponse{Stopped: true})
 }
 
@@ -504,8 +503,6 @@ func (m *mcpServer) handleCrawlGet(ctx context.Context, req mcp.CallToolRequest)
 		noteStr = note
 	}
 
-	log.Printf("mcp/crawl_get: getting flow %s", flowID)
-
 	flow, err := m.service.crawlerBackend.GetFlow(ctx, flowID)
 	if err != nil {
 		return errorResultFromErr("failed to get flow: ", err), nil
@@ -518,6 +515,7 @@ func (m *mcpServer) handleCrawlGet(ctx context.Context, req mcp.CallToolRequest)
 	reqHeaders, reqBody := splitHeadersBody(flow.Request)
 	respHeaders, respBody := splitHeadersBody(flow.Response)
 	statusCode, statusLine := parseResponseStatus(respHeaders)
+	log.Printf("crawl/get: flow=%s method=%s url=%s status=%d", flowID, flow.Method, flow.URL, statusCode)
 
 	// Decompress bodies lazily: only when scope/pattern needs them
 	needsReqBody := scopeSet["request_body"]

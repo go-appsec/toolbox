@@ -540,8 +540,6 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 	}
 	b.mu.Unlock()
 
-	log.Printf("crawler: created session %s (label=%q) with %d domains", sessionID, opts.Label, len(allowedDomains))
-
 	// Start recon in background if enabled
 	var recon bool
 	if b.config.Crawler.Recon != nil {
@@ -641,7 +639,6 @@ func (b *CollyBackend) AddSeeds(ctx context.Context, sessionID string, seeds []C
 		}
 	}
 
-	log.Printf("crawler: added %d seeds to session %s", len(seedURLs), sessionID)
 	return nil
 }
 
@@ -820,7 +817,6 @@ func (b *CollyBackend) StopSession(ctx context.Context, sessionID string) error 
 	sess.mu.Unlock()
 
 	sess.cancel()
-	log.Printf("crawler: stopped session %s", sessionID)
 	return nil
 }
 
@@ -915,7 +911,7 @@ func (b *CollyBackend) resolveSeeds(ctx context.Context, seeds []CrawlSeed, expl
 			}
 
 			// Extract URL and headers from the request
-			method, host, path := extractRequestMeta(proxyEntries[0].Request)
+			_, host, path := extractRequestMeta(proxyEntries[0].Request)
 			if host == "" {
 				return nil, nil, nil, fmt.Errorf("seed flow %q has no host header", seed.FlowID)
 			}
@@ -936,8 +932,6 @@ func (b *CollyBackend) resolveSeeds(ctx context.Context, seeds []CrawlSeed, expl
 					}
 				}
 			}
-
-			log.Printf("crawler: resolved seed flow %s -> %s %s", seed.FlowID, method, seedURL)
 		}
 	}
 

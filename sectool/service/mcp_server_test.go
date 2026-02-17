@@ -59,6 +59,7 @@ func setupMockMCPServerWithConfig(t *testing.T, cfg *config.Config) (*Server, *m
 		ConfigPath:   configPath,
 	}, nil, mockOast, mockCrawler)
 	require.NoError(t, err)
+	srv.SetQuietLogging()
 
 	serverErr := make(chan error, 1)
 	go func() {

@@ -76,8 +76,6 @@ func (m *mcpServer) handleDiffFlow(ctx context.Context, req mcp.CallToolRequest)
 		return errResult, nil
 	}
 
-	log.Printf("mcp/diff_flow: comparing %s vs %s scope=%s", flowAID, flowBID, scope)
-
 	resp := &protocol.DiffFlowResponse{}
 
 	includeReqHeaders := scope == "request" || scope == "request_headers"
@@ -120,6 +118,7 @@ func (m *mcpServer) handleDiffFlow(ctx context.Context, req mcp.CallToolRequest)
 		resp.Same = true
 	}
 
+	log.Printf("diff/flow: %s vs %s scope=%s same=%v", flowAID, flowBID, scope, resp.Same)
 	return jsonResult(resp)
 }
 

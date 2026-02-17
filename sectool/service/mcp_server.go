@@ -267,7 +267,7 @@ func (m *mcpServer) handleWorkflow(ctx context.Context, req mcp.CallToolRequest)
 	}
 
 	m.workflowInitialized.Store(true)
-	log.Printf("mcp/workflow: initialized with task=%s", task)
+	log.Printf("workflow: initialized task=%s", task)
 
 	return mcp.NewToolResultText(content), nil
 }

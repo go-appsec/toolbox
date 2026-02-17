@@ -77,6 +77,9 @@ type Server struct {
 
 	// Shutdown coordination
 	shutdownCh chan struct{}
+
+	// quietLogging suppresses verbose startup output
+	quietLogging bool
 }
 
 // NewServer creates a new MCP server instance with optional backends.
@@ -135,6 +138,13 @@ func NewServer(flags MCPServerFlags, hb HttpBackend, ob OastBackend, cb CrawlerB
 	return s, nil
 }
 
+// SetQuietLogging suppresses verbose startup output and removes timestamps
+// from log output. Intended for use in tests.
+func (s *Server) SetQuietLogging() {
+	s.quietLogging = true
+	log.SetFlags(0)
+}
+
 // WaitTillStarted blocks until the server has started.
 func (s *Server) WaitTillStarted() {
 	<-s.started
@@ -142,8 +152,6 @@ func (s *Server) WaitTillStarted() {
 
 // Run starts the MCP server and blocks until shutdown.
 func (s *Server) Run(ctx context.Context) error {
-	log.Printf("sectool MCP server starting (version=%s)", config.Version)
-
 	markStarted := sync.OnceFunc(func() {
 		s.startedAt = time.Now()
 		close(s.started)
@@ -183,8 +191,10 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	markStarted()
-	log.Printf("MCP server listening on http://%s/mcp", s.mcpServer.Addr())
-	s.printMCPConfig()
+	log.Printf("MCP server (version=%s) listening on http://%s/mcp", config.Version, s.mcpServer.Addr())
+	if !s.quietLogging {
+		s.printMCPConfig()
+	}
 
 	select {
 	case <-ctx.Done():

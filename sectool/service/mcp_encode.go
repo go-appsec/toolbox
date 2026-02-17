@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -30,11 +31,13 @@ func (m *mcpServer) handleEncode(ctx context.Context, req mcp.CallToolRequest) (
 		return errorResult("input is required"), nil
 	}
 
-	result, err := encoding.Encode(input, req.GetString("type", ""))
+	encType := req.GetString("type", "")
+	result, err := encoding.Encode(input, encType)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
 
+	log.Printf("encode: type=%s len=%d", encType, len(result))
 	return mcp.NewToolResultText(result), nil
 }
 
@@ -44,10 +47,12 @@ func (m *mcpServer) handleDecode(ctx context.Context, req mcp.CallToolRequest) (
 		return errorResult("input is required"), nil
 	}
 
-	result, err := encoding.Decode(input, req.GetString("type", ""))
+	decType := req.GetString("type", "")
+	result, err := encoding.Decode(input, decType)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
 
+	log.Printf("decode: type=%s len=%d", decType, len(result))
 	return mcp.NewToolResultText(result), nil
 }

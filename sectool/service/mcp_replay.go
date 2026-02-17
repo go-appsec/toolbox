@@ -236,7 +236,7 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 	respHeaders := result.Headers
 	respBody := result.Body
 	respCode, respStatusLine := parseResponseStatus(respHeaders)
-	log.Printf("mcp/replay_send: %s %s://%s:%d status=%d size=%d duration=%v (flow=%s)", replayID, scheme, host, port, respCode, len(respBody), result.Duration, flowID)
+	log.Printf("replay/send: %s %s://%s:%d status=%d size=%d duration=%v (flow=%s)", replayID, scheme, host, port, respCode, len(respBody), result.Duration, flowID)
 
 	// Store in replay history for proxy_poll visibility
 	method, replayHost, replayPath := extractRequestMeta(string(rawRequest))
@@ -282,13 +282,13 @@ func (m *mcpServer) handleReplayGet(ctx context.Context, req mcp.CallToolRequest
 	// Hidden parameter for CLI: returns full base64-encoded body instead of preview
 	fullBody := req.GetBool("full_body", false)
 
-	log.Printf("mcp/replay_get: retrieving %s", replayID)
 	result, ok := m.service.replayHistoryStore.Get(replayID)
 	if !ok {
 		return errorResult("replay not found: replay results are ephemeral and cleared on service restart"), nil
 	}
 
 	respCode, respStatusLine := parseResponseStatus(result.RespHeaders)
+	log.Printf("replay/get: %s status=%d size=%d", replayID, respCode, len(result.RespBody))
 
 	// Decompress response for display (gzip/deflate) - applies to both modes
 	displayBody, _ := decompressForDisplay(result.RespBody, string(result.RespHeaders))
@@ -388,7 +388,7 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 	}
 
 	respCode, respStatusLine := parseResponseStatus(result.Headers)
-	log.Printf("mcp/request_send: %s %s status=%d size=%d duration=%v", replayID, parsedURL, respCode, len(result.Body), result.Duration)
+	log.Printf("request/send: %s %s status=%d size=%d duration=%v", replayID, parsedURL, respCode, len(result.Body), result.Duration)
 
 	// Store in replay history for proxy_poll visibility
 	refOffset, _ := m.service.replayHistoryStore.UpdateReferenceOffset(m.service.proxyLastOffset.Load())
