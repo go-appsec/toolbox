@@ -264,7 +264,7 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 			StatusLine:  respStatusLine,
 			RespHeaders: string(respHeaders),
 			RespSize:    len(respBody),
-			RespPreview: previewBody(respBody, responsePreviewSize),
+			RespPreview: previewBody(respBody, responsePreviewSize, extractHeader(string(respHeaders), "Content-Type")),
 		},
 	})
 }
@@ -298,7 +298,7 @@ func (m *mcpServer) handleReplayGet(ctx context.Context, req mcp.CallToolRequest
 	if fullBody { // Full body mode: base64-encode the decompressed content
 		respBodyStr = base64.StdEncoding.EncodeToString(displayBody)
 	} else { // Preview mode: truncated text preview
-		respBodyStr = previewBody(displayBody, fullBodyMaxSize)
+		respBodyStr = previewBody(displayBody, fullBodyMaxSize, extractHeader(string(result.RespHeaders), "Content-Type"))
 	}
 
 	return jsonResult(protocol.ReplayGetResponse{
@@ -415,7 +415,7 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 			StatusLine:  respStatusLine,
 			RespHeaders: string(result.Headers),
 			RespSize:    len(result.Body),
-			RespPreview: previewBody(result.Body, responsePreviewSize),
+			RespPreview: previewBody(result.Body, responsePreviewSize, extractHeader(string(result.Headers), "Content-Type")),
 		},
 	})
 }

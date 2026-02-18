@@ -247,13 +247,91 @@ func compressBody(body []byte, encoding string) ([]byte, bool) {
 	return compressed, false
 }
 
+// binaryContentTypes lists media types that are always binary.
+var binaryContentTypes = []string{
+	"application/octet-stream",
+	"application/pdf",
+	"application/zip",
+	"application/gzip",
+	"application/x-gzip",
+	"application/x-tar",
+	"application/x-protobuf",
+	"application/protobuf",
+	"application/grpc",
+	"application/wasm",
+	"application/x-shockwave-flash",
+}
+
+// binaryContentTypePrefixes lists media type prefixes that are always binary.
+var binaryContentTypePrefixes = []string{
+	"image/",
+	"audio/",
+	"video/",
+	"font/",
+}
+
+// isBinaryContentType returns true if the content type indicates binary content.
+func isBinaryContentType(contentType string) bool {
+	if contentType == "" {
+		return false
+	}
+	// Strip parameters (e.g. "; charset=utf-8")
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	mediaType = strings.TrimSpace(strings.ToLower(mediaType))
+
+	for _, prefix := range binaryContentTypePrefixes {
+		if strings.HasPrefix(mediaType, prefix) {
+			return true
+		}
+	}
+	for _, ct := range binaryContentTypes {
+		if mediaType == ct {
+			return true
+		}
+	}
+	return false
+}
+
+// binarySignatureSampleSize is the number of bytes to sample for binary detection.
+const binarySignatureSampleSize = 512
+
+// hasBinarySignature detects binary content by checking for NUL bytes or a high
+// density of control characters in the first 512 bytes.
+func hasBinarySignature(body []byte) bool {
+	sample := body
+	if len(sample) > binarySignatureSampleSize {
+		sample = sample[:binarySignatureSampleSize]
+	}
+
+	var controlCount int
+	for _, b := range sample {
+		if b == 0x00 {
+			return true // NUL byte is a strong binary indicator
+		}
+		// Control chars excluding TAB (0x09), LF (0x0A), CR (0x0D)
+		if (b >= 0x01 && b <= 0x08) || (b >= 0x0E && b <= 0x1F) || b == 0x7F {
+			controlCount++
+		}
+	}
+
+	// >10% control characters indicates binary
+	return len(sample) > 0 && controlCount*10 > len(sample)
+}
+
 // previewBody returns a UTF-8 safe preview of the body.
-// Returns "<BINARY:N Bytes>" for non-UTF-8 content, truncates at maxLen runes.
-func previewBody(body []byte, maxLen int) string {
+// Returns "<BINARY:N Bytes>" for non-UTF-8 content, binary signatures,
+// or binary content types. Truncates text at maxLen runes.
+func previewBody(body []byte, maxLen int, contentType string) string {
 	if len(body) == 0 {
 		return ""
 	}
 	if !utf8.Valid(body) {
+		return "<BINARY:" + strconv.Itoa(len(body)) + " Bytes>"
+	}
+	if hasBinarySignature(body) {
+		return "<BINARY:" + strconv.Itoa(len(body)) + " Bytes>"
+	}
+	if isBinaryContentType(contentType) {
 		return "<BINARY:" + strconv.Itoa(len(body)) + " Bytes>"
 	}
 	s := string(body)

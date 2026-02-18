@@ -756,27 +756,118 @@ func TestPreviewBody(t *testing.T) {
 	}
 
 	tests := []struct {
-		name   string
-		body   []byte
-		maxLen int
-		want   string
+		name        string
+		body        []byte
+		maxLen      int
+		contentType string
+		want        string
 	}{
-		{"empty", []byte{}, 100, ""},
-		{"utf8_short", []byte("hello world"), 100, "hello world"},
-		{"utf8_truncate", []byte("hello world"), 5, "hello..."},
-		{"binary_small", []byte{0x80, 0x81, 0xff}, 100, "<BINARY:3 Bytes>"},
-		{"binary_large", binaryLarge, 100, "<BINARY:1024 Bytes>"},
-		{"utf8_exact_limit", []byte("hello"), 5, "hello"},
-		{"multibyte_truncate", []byte("hello\u4e16\u754c"), 6, "hello\u4e16..."},
-		{"emoji_truncate", []byte("test\U0001F389\U0001F38A\U0001F381"), 5, "test\U0001F389..."},
-		{"cjk_only", []byte("\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8"), 3, "\u65e5\u672c\u8a9e..."},
+		{"empty", []byte{}, 100, "", ""},
+		{"utf8_short", []byte("hello world"), 100, "", "hello world"},
+		{"utf8_truncate", []byte("hello world"), 5, "", "hello..."},
+		{"binary_small", []byte{0x80, 0x81, 0xff}, 100, "", "<BINARY:3 Bytes>"},
+		{"binary_large", binaryLarge, 100, "", "<BINARY:1024 Bytes>"},
+		{"utf8_exact_limit", []byte("hello"), 5, "", "hello"},
+		{"multibyte_truncate", []byte("hello\u4e16\u754c"), 6, "", "hello\u4e16..."},
+		{"emoji_truncate", []byte("test\U0001F389\U0001F38A\U0001F381"), 5, "", "test\U0001F389..."},
+		{"cjk_only", []byte("\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8"), 3, "", "\u65e5\u672c\u8a9e..."},
+		{"nul_bytes", []byte("hello\x00world"), 100, "", "<BINARY:11 Bytes>"},
+		{"control_chars_high", makeControlBody(100), 1000, "", "<BINARY:100 Bytes>"},
+		{"binary_content_type", []byte("mostly text"), 100, "image/png", "<BINARY:11 Bytes>"},
+		{"binary_ct_with_params", []byte("text"), 100, "application/octet-stream; charset=utf-8", "<BINARY:4 Bytes>"},
+		{"text_ct_no_heuristic", []byte("hello world"), 100, "text/plain", "hello world"},
+		{"empty_ct_fallback", []byte("hello world"), 100, "", "hello world"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, previewBody(tt.body, tt.maxLen))
+			assert.Equal(t, tt.want, previewBody(tt.body, tt.maxLen, tt.contentType))
 		})
 	}
+}
+
+func TestIsBinaryContentType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		contentType string
+		want        bool
+	}{
+		{"empty", "", false},
+		{"text_plain", "text/plain", false},
+		{"text_html", "text/html", false},
+		{"application_json", "application/json", false},
+		{"application_xml", "application/xml", false},
+		{"image_png", "image/png", true},
+		{"image_jpeg", "image/jpeg", true},
+		{"audio_mpeg", "audio/mpeg", true},
+		{"video_mp4", "video/mp4", true},
+		{"font_woff2", "font/woff2", true},
+		{"octet_stream", "application/octet-stream", true},
+		{"pdf", "application/pdf", true},
+		{"zip", "application/zip", true},
+		{"gzip", "application/gzip", true},
+		{"protobuf", "application/x-protobuf", true},
+		{"wasm", "application/wasm", true},
+		{"with_charset", "image/png; charset=utf-8", true},
+		{"case_insensitive", "Image/PNG", true},
+		{"application_javascript", "application/javascript", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isBinaryContentType(tt.contentType))
+		})
+	}
+}
+
+func TestHasBinarySignature(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body []byte
+		want bool
+	}{
+		{"empty", []byte{}, false},
+		{"plain_text", []byte("Hello, World!"), false},
+		{"nul_byte", []byte("hello\x00world"), true},
+		{"nul_at_start", []byte("\x00hello"), true},
+		{"tabs_and_newlines", []byte("line1\tvalue\nline2\r\n"), false},
+		{"high_control_density", makeControlBody(100), true},
+		{"low_control_density", makeLowControlBody(100), false},
+		{"single_control_char", []byte("hello\x01world, this is a long enough string"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, hasBinarySignature(tt.body))
+		})
+	}
+}
+
+// makeControlBody creates a body where >10% of bytes are control characters.
+func makeControlBody(size int) []byte {
+	body := make([]byte, size)
+	for i := range body {
+		if i%5 == 0 {
+			body[i] = 0x01 // control char every 5th byte = 20%
+		} else {
+			body[i] = 'A'
+		}
+	}
+	return body
+}
+
+// makeLowControlBody creates a body with control chars well below the 10% threshold.
+func makeLowControlBody(size int) []byte {
+	body := make([]byte, size)
+	for i := range body {
+		body[i] = 'A'
+	}
+	body[0] = 0x01 // just 1% control chars
+	return body
 }
 
 func TestParseURLWithDefaultHTTPS(t *testing.T) {

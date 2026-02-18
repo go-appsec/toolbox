@@ -581,7 +581,7 @@ func (m *mcpServer) handleCrawlGet(ctx context.Context, req mcp.CallToolRequest)
 			if fullBody {
 				result["request_body"] = base64.StdEncoding.EncodeToString(displayReqBody)
 			} else {
-				result["request_body"] = previewBody(displayReqBody, fullBodyMaxSize)
+				result["request_body"] = previewBody(displayReqBody, fullBodyMaxSize, extractHeader(string(reqHeaders), "Content-Type"))
 			}
 		}
 		if scopeSet["response_headers"] {
@@ -592,7 +592,7 @@ func (m *mcpServer) handleCrawlGet(ctx context.Context, req mcp.CallToolRequest)
 			if fullBody {
 				result["response_body"] = base64.StdEncoding.EncodeToString(displayRespBody)
 			} else {
-				result["response_body"] = previewBody(displayRespBody, fullBodyMaxSize)
+				result["response_body"] = previewBody(displayRespBody, fullBodyMaxSize, extractHeader(string(respHeaders), "Content-Type"))
 			}
 		}
 	}

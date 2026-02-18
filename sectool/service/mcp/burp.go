@@ -162,7 +162,6 @@ func (c *BurpClient) connectLocked(ctx context.Context) error {
 	})
 
 	c.mcpClient = mcpClient
-	log.Printf("mcp: session initialized successfully")
 	return nil
 }
 
