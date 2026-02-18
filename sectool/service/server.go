@@ -363,6 +363,15 @@ func (s *Server) startBuiltinProxy() error {
 		return fmt.Errorf("start built-in proxy: %w", err)
 	}
 
+	// Configure capture exclusion filters
+	captureFilter, err := BuildCaptureFilter(s.cfg.Proxy)
+	if err != nil {
+		return fmt.Errorf("invalid capture filter: %w", err)
+	}
+	if captureFilter != nil {
+		backend.SetCaptureFilter(captureFilter)
+	}
+
 	// Start proxy server in background
 	go func() {
 		if err := backend.Serve(); err != nil {

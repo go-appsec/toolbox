@@ -654,6 +654,14 @@ func TestGetPath(t *testing.T) {
 			want: "/api/data",
 		},
 		{
+			name: "h2_strips_query",
+			entry: &HistoryEntry{
+				Protocol:  "h2",
+				H2Request: &H2RequestData{Path: "/search?q=test&page=1"},
+			},
+			want: "/search",
+		},
+		{
 			name: "nil_http1",
 			entry: &HistoryEntry{
 				Protocol: "http/1.1",

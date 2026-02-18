@@ -236,7 +236,7 @@ func (h *webSocketHandler) sendError(conn net.Conn, code int, message string) {
 }
 
 // storeHandshake stores the WebSocket upgrade handshake in history.
-// Returns the entry so frames can be appended to it.
+// Returns the entry so frames can be appended to it, or nil if filtered.
 func (h *webSocketHandler) storeHandshake(req *RawHTTP1Request, resp *RawHTTP1Response, startTime time.Time) *HistoryEntry {
 	entry := &HistoryEntry{
 		Protocol:  "websocket",
@@ -244,6 +244,9 @@ func (h *webSocketHandler) storeHandshake(req *RawHTTP1Request, resp *RawHTTP1Re
 		Response:  resp,
 		Timestamp: startTime,
 		Duration:  time.Since(startTime),
+	}
+	if !h.history.ShouldCapture(entry) {
+		return nil
 	}
 	h.history.Store(entry)
 	return entry
@@ -339,6 +342,10 @@ func (p *wsProxy) proxyFrames(src *bufio.Reader, dst net.Conn, direction string,
 
 // storeFrame appends a WebSocket frame to the handshake's history entry.
 func (p *wsProxy) storeFrame(frame *wsFrame, direction string) {
+	if p.historyEntry == nil {
+		return
+	}
+
 	// Strip "ws:" prefix from direction for storage (e.g., "ws:to-server" → "to-server")
 	dir := direction
 	if len(dir) > 3 && dir[:3] == "ws:" {

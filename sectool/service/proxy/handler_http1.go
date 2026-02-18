@@ -272,6 +272,9 @@ func (h *http1Handler) storeEntry(req *RawHTTP1Request, resp *RawHTTP1Response, 
 		Timestamp: startTime,
 		Duration:  time.Since(startTime),
 	}
+	if !h.history.ShouldCapture(entry) {
+		return
+	}
 	h.history.Store(entry)
 }
 

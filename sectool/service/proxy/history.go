@@ -5,7 +5,9 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-appsec/toolbox/sectool/service/store"
 )
@@ -22,9 +24,10 @@ func historyPayloadKey(offset uint32) string {
 
 // HistoryStore provides typed access to proxy history backed by store.Storage.
 type HistoryStore struct {
-	mu         sync.RWMutex
-	storage    store.Storage
-	nextOffset uint32
+	mu            sync.RWMutex
+	storage       store.Storage
+	nextOffset    uint32
+	captureFilter atomic.Value // stores CaptureFilter
 }
 
 // newHistoryStore creates a history store using the provided storage backend.
@@ -181,7 +184,7 @@ func (e *HistoryEntry) extractMeta() HistoryMeta {
 	}
 }
 
-// getFullPath returns path including query string for filter compatibility.
+// getFullPath returns path including query string for summary/meta display.
 // For HTTP/1.1, concatenates Path + "?" + Query when Query is non-empty.
 // For H2, Path already includes query.
 func (e *HistoryEntry) getFullPath() string {
@@ -271,11 +274,15 @@ func (e *HistoryEntry) GetMethod() string {
 	return ""
 }
 
-// GetPath returns the request path for any protocol.
+// GetPath returns the URL path without query string for any protocol.
+// For H2, strips the query portion since :path includes it.
 func (e *HistoryEntry) GetPath() string {
 	switch e.Protocol {
 	case "h2":
 		if e.H2Request != nil {
+			if idx := strings.IndexByte(e.H2Request.Path, '?'); idx >= 0 {
+				return e.H2Request.Path[:idx]
+			}
 			return e.H2Request.Path
 		}
 	default:

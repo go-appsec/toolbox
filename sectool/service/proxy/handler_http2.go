@@ -1333,6 +1333,9 @@ func (p *h2Proxy) storeStreamInHistory(stream *h2Stream) {
 	}
 	stream.mu.Unlock()
 
+	if !p.handler.history.ShouldCapture(entry) {
+		return
+	}
 	p.handler.history.Store(entry)
 }
 

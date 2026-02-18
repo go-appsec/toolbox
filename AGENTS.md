@@ -59,6 +59,7 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/backend_http_burp.go` - Burp MCP implementation of HttpBackend
 - `sectool/service/backend_oast_interactsh.go` - Interactsh implementation of OastBackend
 - `sectool/service/backend_crawler_colly.go` - Colly-based crawler implementation
+- `sectool/service/capture_filter.go` - BuildCaptureFilter: compiles proxy exclusion patterns from config
 - `sectool/service/httputil.go` - HTTP request/response parsing utilities
 - `sectool/service/jsonutil.go` - JSON field modification utilities
 - `sectool/service/types.go` - Service-specific request and internal types
@@ -75,6 +76,7 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/proxy/handler_websocket.go` - WebSocket frame proxying
 - `sectool/service/proxy/cert.go` - CA and per-hostname certificate management
 - `sectool/service/proxy/history.go` - Thread-safe history storage
+- `sectool/service/proxy/filter.go` - CaptureFilter type, SetCaptureFilter/ShouldCapture
 - `sectool/service/proxy/compression.go` - gzip/deflate utilities
 - `sectool/service/proxy/sender.go` - Wire-fidelity request sender (H1 and H2)
 - `sectool/service/proxy/hpack.go` - HPACK encoder/decoder management
@@ -129,6 +131,9 @@ Global config at `~/.sectool/config.json` (auto-created with defaults):
   "include_subdomains": true,
   "allowed_domains": [],
   "exclude_domains": [],
+  "proxy": {
+    "exclude_extensions": "<RE2 alternation, see DefaultExcludeExtensions>"
+  },
   "crawler": {
     "disallowed_paths": ["*logout*", "*signout*", "*sign-out*", "*delete*", "*remove*"],
     "delay_ms": 200,
@@ -146,6 +151,10 @@ Domain scoping rules:
 - `exclude_domains`: always takes precedence, always matches subdomains
 - `allowed_domains`: strict allowlist when non-empty; respects `include_subdomains` for subdomain matching
 - Neither configured: no restriction (default)
+
+Proxy capture exclusion filters (RE2 patterns, `proxy` section):
+- `exclude_extensions` (`*string`): matches file extension from path (no dot), anchored. nil → default (see `DefaultExcludeExtensions`), `""` → disabled
+- Matching requests are still proxied but never stored in history
 
 ### Export Bundle Layout
 

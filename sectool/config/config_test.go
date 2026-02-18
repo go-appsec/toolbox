@@ -176,6 +176,53 @@ func TestLoadInteractshServerURL(t *testing.T) {
 	})
 }
 
+func TestLoadExcludeExtensionsDefault(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil_gets_default", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.json")
+
+		// Config without exclude_extensions key
+		require.NoError(t, os.WriteFile(path, []byte(`{"mcp_port": 9119}`), 0644))
+
+		cfg, err := loadConfig(path)
+		require.NoError(t, err)
+		require.NotNil(t, cfg.Proxy.ExcludeExtensions)
+		assert.Equal(t, DefaultExcludeExtensions, *cfg.Proxy.ExcludeExtensions)
+	})
+
+	t.Run("empty_string_preserved", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.json")
+
+		// Explicit empty string disables the filter
+		cfgJSON := `{"proxy": {"exclude_extensions": ""}}`
+		require.NoError(t, os.WriteFile(path, []byte(cfgJSON), 0644))
+
+		cfg, err := loadConfig(path)
+		require.NoError(t, err)
+		require.NotNil(t, cfg.Proxy.ExcludeExtensions)
+		assert.Empty(t, *cfg.Proxy.ExcludeExtensions)
+	})
+
+	t.Run("custom_value_preserved", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "config.json")
+
+		cfgJSON := `{"proxy": {"exclude_extensions": "woff|woff2"}}`
+		require.NoError(t, os.WriteFile(path, []byte(cfgJSON), 0644))
+
+		cfg, err := loadConfig(path)
+		require.NoError(t, err)
+		require.NotNil(t, cfg.Proxy.ExcludeExtensions)
+		assert.Equal(t, "woff|woff2", *cfg.Proxy.ExcludeExtensions)
+	})
+
+	t.Run("default_config_has_value", func(t *testing.T) {
+		cfg := DefaultConfig()
+		require.NotNil(t, cfg.Proxy.ExcludeExtensions)
+		assert.Equal(t, DefaultExcludeExtensions, *cfg.Proxy.ExcludeExtensions)
+	})
+}
+
 func TestIsDomainAllowed(t *testing.T) {
 	t.Parallel()
 

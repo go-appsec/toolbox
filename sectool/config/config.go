@@ -15,6 +15,10 @@ const (
 	DefaultBurpProxyAddr = "127.0.0.1:8080"
 	DefaultMCPPort       = 9119
 	DefaultProxyPort     = 8080
+
+	// DefaultExcludeExtensions is the default RE2 alternation for file
+	// extensions that should be excluded from proxy capture.
+	DefaultExcludeExtensions = "gif|jpg|jpeg|png|ico|webp|woff|woff2|ttf|eot"
 )
 
 // Version is injected at build time via ldflags; defaults to "dev".
@@ -51,6 +55,9 @@ type ProxyConfig struct {
 	DialTimeoutSecs  int `json:"dial_timeout_secs"`
 	ReadTimeoutSecs  int `json:"read_timeout_secs"`
 	WriteTimeoutSecs int `json:"write_timeout_secs"`
+
+	// RE2 alternation of extensions to exclude from capture
+	ExcludeExtensions *string `json:"exclude_extensions"`
 }
 
 type CrawlerConfig struct {
@@ -68,6 +75,7 @@ type CrawlerConfig struct {
 func DefaultConfig() *Config {
 	t := true
 	f := false
+	defaultExts := DefaultExcludeExtensions
 	return &Config{
 		Version:           Version,
 		MCPPort:           DefaultMCPPort,
@@ -81,6 +89,8 @@ func DefaultConfig() *Config {
 			DialTimeoutSecs:  20,
 			ReadTimeoutSecs:  240,
 			WriteTimeoutSecs: 60,
+
+			ExcludeExtensions: &defaultExts,
 		},
 		Crawler: CrawlerConfig{
 			DisallowedPaths: []string{
@@ -137,6 +147,9 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if cfg.Proxy.WriteTimeoutSecs == 0 {
 		cfg.Proxy.WriteTimeoutSecs = defaults.Proxy.WriteTimeoutSecs
+	}
+	if cfg.Proxy.ExcludeExtensions == nil {
+		cfg.Proxy.ExcludeExtensions = defaults.Proxy.ExcludeExtensions
 	}
 	if cfg.Crawler.DisallowedPaths == nil {
 		cfg.Crawler.DisallowedPaths = defaults.Crawler.DisallowedPaths

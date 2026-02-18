@@ -115,6 +115,12 @@ func (s *ProxyServer) CertManager() *CertManager {
 	return s.certManager
 }
 
+// SetCaptureFilter sets the capture filter for the proxy history.
+// Entries rejected by the filter are still proxied but not stored.
+func (s *ProxyServer) SetCaptureFilter(f CaptureFilter) {
+	s.history.SetCaptureFilter(f)
+}
+
 // SetRuleApplier sets the rule applier for all handlers.
 // Call after construction but before Serve().
 func (s *ProxyServer) SetRuleApplier(applier RuleApplier) {

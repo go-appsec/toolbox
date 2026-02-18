@@ -85,6 +85,12 @@ func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, history
 	return b, nil
 }
 
+// SetCaptureFilter configures the proxy to skip storing entries that the filter rejects.
+// Filtered requests are still proxied normally.
+func (b *NativeProxyBackend) SetCaptureFilter(f proxy.CaptureFilter) {
+	b.server.SetCaptureFilter(f)
+}
+
 // Serve starts the proxy server. Call in a goroutine.
 func (b *NativeProxyBackend) Serve() error {
 	return b.server.Serve()
