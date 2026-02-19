@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/go-analyze/bulk"
 
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/protocol"
@@ -37,6 +39,12 @@ var (
 	numericSegmentRe = regexp.MustCompile(`^\d+$`)
 	uuidSegmentRe    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	hexIDSegmentRe   = regexp.MustCompile(`^[0-9a-fA-F]{24,}$`)
+
+	// Header detection patterns
+	contentLengthLineRe        = regexp.MustCompile(`(?im)^Content-Length[ \t]*:\s*\d+\r?\n`)
+	contentLengthValueRe       = regexp.MustCompile(`(?im)^Content-Length[ \t]*:\s*(\d+)`)
+	contentLengthPresenceRe    = regexp.MustCompile(`(?im)^Content-Length[ \t]*:`)
+	transferEncodingPresenceRe = regexp.MustCompile(`(?im)^Transfer-Encoding[ \t]*:`)
 )
 
 // normalizePath replaces dynamic path segments (numeric IDs, UUIDs, hex IDs 24+ chars)
@@ -117,8 +125,10 @@ const (
 // Handles both origin-form ("GET /path") and proxy-form ("GET http://host/path") requests.
 // Returns empty strings on parse failure.
 func extractRequestMeta(raw string) (method, host, path string) {
+	le := detectLineEnding([]byte(raw))
+
 	// Request line: "GET /path HTTP/1.1" or "GET http://host/path HTTP/1.1"
-	firstLine, _, _ := strings.Cut(raw, "\r\n")
+	firstLine, _, _ := strings.Cut(raw, le)
 	parts := strings.SplitN(firstLine, " ", 3)
 	if len(parts) >= 2 {
 		method = parts[0]
@@ -143,24 +153,59 @@ func extractRequestMeta(raw string) (method, host, path string) {
 		path = requestURI
 	}
 
-	// Host header (case-insensitive search) for origin-form requests
-	for _, line := range strings.Split(raw, "\r\n") {
-		if strings.HasPrefix(strings.ToLower(line), "host:") {
-			host = strings.TrimSpace(line[5:])
-			break
+	// Host header (case-insensitive, tolerant of whitespace before colon)
+	for _, line := range strings.Split(raw, le) {
+		if idx := strings.Index(line, ":"); idx > 0 {
+			if strings.EqualFold(strings.TrimSpace(line[:idx]), "host") {
+				host = strings.TrimSpace(line[idx+1:])
+				break
+			}
 		}
 	}
 
 	return method, host, path
 }
 
-// splitHeadersBody splits raw HTTP at the \r\n\r\n boundary.
+// splitHeadersBody splits raw HTTP at the blank line boundary.
+// Handles both CRLF (\r\n\r\n) and bare-LF (\n\n) terminators.
 func splitHeadersBody(raw []byte) (headers, body []byte) {
-	idx := bytes.Index(raw, []byte("\r\n\r\n"))
-	if idx < 0 {
-		return raw, nil
+	if idx := bytes.Index(raw, []byte("\r\n\r\n")); idx >= 0 {
+		return raw[:idx+4], raw[idx+4:]
+	} else if idx = bytes.Index(raw, []byte("\n\n")); idx >= 0 {
+		return raw[:idx+2], raw[idx+2:]
 	}
-	return raw[:idx+4], raw[idx+4:] // Include blank line in headers
+	return raw, nil
+}
+
+// insertBeforeBlankLine inserts a header line before the blank line separator.
+// Handles both CRLF (\r\n\r\n) and bare-LF (\n\n) terminators.
+func insertBeforeBlankLine(headers []byte, line string) []byte {
+	if bytes.Contains(headers, []byte("\r\n\r\n")) {
+		return bytes.Replace(headers, []byte("\r\n\r\n"), []byte("\r\n"+line+"\r\n\r\n"), 1)
+	} else if bytes.Contains(headers, []byte("\n\n")) {
+		return bytes.Replace(headers, []byte("\n\n"), []byte("\n"+line+"\n\n"), 1)
+	}
+	return headers
+}
+
+// detectLineEnding returns the line ending used in data ("\r\n" or "\n").
+func detectLineEnding(data []byte) string {
+	if bytes.Contains(data, []byte("\r\n")) {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+// findFirstLineEnd returns the byte index where the first line ends and
+// the length of the line-ending sequence (2 for \r\n, 1 for \n).
+// Returns (-1, 0) when no line ending exists.
+func findFirstLineEnd(data []byte) (int, int) {
+	if i := bytes.Index(data, []byte("\r\n")); i >= 0 {
+		return i, 2
+	} else if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		return i, 1
+	}
+	return -1, 0
 }
 
 // inferSchemeAndPort determines scheme and port from host string.
@@ -194,7 +239,7 @@ func readResponseBytes(resp []byte) (*http.Response, error) {
 // extractHeader extracts a header value from raw HTTP headers (case-insensitive).
 // Returns empty string if not found.
 func extractHeader(headers string, name string) string {
-	for _, line := range strings.Split(headers, "\r\n") {
+	for _, line := range strings.Split(headers, detectLineEnding([]byte(headers))) {
 		if idx := strings.Index(line, ":"); idx > 0 {
 			if strings.EqualFold(strings.TrimSpace(line[:idx]), name) {
 				return strings.TrimSpace(line[idx+1:])
@@ -347,7 +392,7 @@ func previewBody(body []byte, maxLen int, contentType string) string {
 // "POST /path HTTP/2\r\n" -> "POST /path HTTP/1.1\r\n"
 // The original request is sent unmodified to the backend (both handle HTTP/2 natively).
 func transformRequestForValidation(raw []byte) []byte {
-	firstLineEnd := bytes.Index(raw, []byte("\r\n"))
+	firstLineEnd, _ := findFirstLineEnd(raw)
 	if firstLineEnd < 0 {
 		return raw
 	}
@@ -403,15 +448,19 @@ func readResponseStatusCode(resp []byte) int {
 
 // parseHeaderArg extracts headers from an MCP argument that may be either:
 //   - an object {"Name": "Value"} (documented for request_send)
-//   - an array ["Name: Value"] (documented for replay_send add_headers)
+//   - an array ["Name: Value"] (documented for replay_send set_headers)
 //
 // Returns headers as "Name: Value" strings regardless of input format.
+// JSON objects lose key order; keys are sorted alphabetically for reproducibility.
+// Use the array format when header order matters.
 func parseHeaderArg(raw interface{}) []string {
 	switch v := raw.(type) {
 	case map[string]interface{}:
+		keys := bulk.MapKeysSlice(v)
+		sort.Strings(keys) // deterministic order since JSON objects are unordered
 		result := make([]string, 0, len(v))
-		for k, val := range v {
-			if vs, ok := val.(string); ok {
+		for _, k := range keys {
+			if vs, ok := v[k].(string); ok {
 				result = append(result, k+": "+vs)
 			}
 		}
@@ -424,6 +473,26 @@ func parseHeaderArg(raw interface{}) []string {
 			}
 		}
 		return result
+	case string:
+		// Handle string-encoded JSON: try to unmarshal as array or object.
+		// Agents sometimes pass '["Header: Value"]' as a JSON string literal.
+		s := strings.TrimSpace(v)
+		if len(s) < 2 {
+			return nil
+		}
+		switch s[0] {
+		case '[':
+			var arr []interface{}
+			if json.Unmarshal([]byte(s), &arr) == nil {
+				return parseHeaderArg(arr)
+			}
+		case '{':
+			var obj map[string]interface{}
+			if json.Unmarshal([]byte(s), &obj) == nil {
+				return parseHeaderArg(obj)
+			}
+		}
+		return nil
 	default:
 		return nil
 	}
@@ -432,7 +501,7 @@ func parseHeaderArg(raw interface{}) []string {
 // extractHeaderLines extracts header lines from raw HTTP request.
 // Skips the request line and returns each header as "Name: Value".
 func extractHeaderLines(raw string) []string {
-	lines := strings.Split(raw, "\r\n")
+	lines := strings.Split(raw, detectLineEnding([]byte(raw)))
 	if len(lines) <= 1 {
 		return nil
 	}
@@ -453,7 +522,7 @@ func extractHeaderLines(raw string) []string {
 // Header names are normalized to canonical form (e.g., "content-type" -> "Content-Type").
 func parseHeadersToMap(raw string) map[string][]string {
 	result := make(map[string][]string)
-	lines := strings.Split(raw, "\r\n")
+	lines := strings.Split(raw, detectLineEnding([]byte(raw)))
 
 	// Skip first line (request/status line)
 	for i := 1; i < len(lines); i++ {
@@ -491,23 +560,6 @@ func buildRequestLine(method, path, query, version string) string {
 	return method + " " + path + " " + version
 }
 
-// applyQueryModifications applies set and remove operations to query values.
-func applyQueryModifications(values url.Values, opts *PathQueryOpts) url.Values {
-	// Remove params first
-	for _, key := range opts.RemoveQuery {
-		values.Del(key)
-	}
-
-	// Set params (add or replace existing)
-	for _, kv := range opts.SetQuery {
-		if key, val, ok := strings.Cut(kv, "="); ok {
-			values.Set(key, val)
-		}
-	}
-
-	return values
-}
-
 // modifyRequestLine applies path and query modifications to raw HTTP request bytes.
 // Returns the modified request.
 func modifyRequestLine(raw []byte, opts *PathQueryOpts) []byte {
@@ -516,7 +568,7 @@ func modifyRequestLine(raw []byte, opts *PathQueryOpts) []byte {
 	}
 
 	// Find end of first line
-	lineEnd := bytes.Index(raw, []byte("\r\n"))
+	lineEnd, _ := findFirstLineEnd(raw)
 	if lineEnd < 0 {
 		return raw
 	}
@@ -541,10 +593,7 @@ func modifyRequestLine(raw []byte, opts *PathQueryOpts) []byte {
 		// Complete replacement
 		query = opts.Query
 	} else if len(opts.SetQuery) > 0 || len(opts.RemoveQuery) > 0 {
-		// Parse existing query and apply modifications
-		values, _ := url.ParseQuery(query)
-		values = applyQueryModifications(values, opts)
-		query = values.Encode()
+		query = proxy.ApplyRawQueryModifications(query, opts.RemoveQuery, opts.SetQuery)
 	}
 
 	// Build new request line
@@ -583,32 +632,49 @@ func targetFromURL(u *url.URL) Target {
 	return t
 }
 
-// buildRawRequest constructs a raw HTTP/1.1 request from components.
-// Returns bytes with proper CRLF line endings.
-func buildRawRequest(method string, parsedURL *url.URL, headers map[string]string, body []byte) []byte {
-	var bodyReader io.Reader
-	if len(body) > 0 {
-		bodyReader = bytes.NewReader(body)
-	}
-
-	req, err := http.NewRequest(method, parsedURL.String(), bodyReader)
-	if err != nil {
-		return nil
-	}
-	req.ContentLength = int64(len(body))
-	req.Header.Set("User-Agent", config.UserAgent())
-
-	// Apply user headers (may override Host or User-Agent)
-	for name, value := range headers {
-		if strings.EqualFold(name, "Host") {
-			req.Host = value
-		} else {
-			req.Header.Set(name, value)
+// buildRawRequestManual constructs a raw HTTP/1.1 request preserving wire
+// features. Headers are inserted in order; Host and User-Agent are added
+// automatically when not provided. Content-Length is set from body length
+// unless the user explicitly provides one.
+func buildRawRequestManual(method string, parsedURL *url.URL, headers []string, body []byte) []byte {
+	var hasHost, hasUA, hasCL, hasTE bool
+	for _, h := range headers {
+		if idx := strings.Index(h, ":"); idx > 0 {
+			name := strings.TrimSpace(h[:idx])
+			switch {
+			case strings.EqualFold(name, "Host"):
+				hasHost = true
+			case strings.EqualFold(name, "User-Agent"):
+				hasUA = true
+			case strings.EqualFold(name, "Content-Length"):
+				hasCL = true
+			case strings.EqualFold(name, "Transfer-Encoding"):
+				hasTE = true
+			}
 		}
 	}
 
 	var buf bytes.Buffer
-	_ = req.Write(&buf)
+	buf.WriteString(method + " " + parsedURL.RequestURI() + " HTTP/1.1\r\n")
+
+	if !hasHost {
+		buf.WriteString("Host: " + parsedURL.Host + "\r\n")
+	}
+	for _, h := range headers {
+		buf.WriteString(h + "\r\n")
+	}
+	if !hasUA {
+		buf.WriteString("User-Agent: " + config.UserAgent() + "\r\n")
+	}
+	// Auto-add CL only when body present, no explicit CL, and no TE.
+	// TE and CL are mutually exclusive per RFC 7230; auto-adding CL
+	// alongside TE would change request semantics for smuggling tests.
+	if !hasCL && !hasTE && len(body) > 0 {
+		fmt.Fprintf(&buf, "Content-Length: %d\r\n", len(body))
+	}
+
+	buf.WriteString("\r\n")
+	buf.Write(body)
 	return buf.Bytes()
 }
 
@@ -709,52 +775,33 @@ func parseStatusFilter(s string) *StatusCodeFilter {
 	return filter
 }
 
-// updateContentLength updates or adds Content-Length header.
+// updateContentLength removes all existing Content-Length headers and inserts
+// a single new one. Prevents duplicate CL from surviving.
 func updateContentLength(headers []byte, length int) []byte {
-	re := regexp.MustCompile(`(?im)^Content-Length:\s*\d+\r?\n`)
-	newHeader := fmt.Sprintf("Content-Length: %d\r\n", length)
+	hadCL := contentLengthLineRe.Match(headers)
+	headers = contentLengthLineRe.ReplaceAll(headers, nil)
 
-	if re.Match(headers) {
-		return re.ReplaceAll(headers, []byte(newHeader))
-	}
-
-	// Insert before blank line if not present and length > 0
-	if length > 0 {
-		return bytes.Replace(headers, []byte("\r\n\r\n"), []byte("\r\n"+newHeader+"\r\n"), 1)
+	if hadCL || length > 0 {
+		return insertBeforeBlankLine(headers, fmt.Sprintf("Content-Length: %d", length))
 	}
 	return headers
 }
 
-// containsContentLengthHeader checks if any header string sets Content-Length.
-// Headers are in "Name: Value" format.
-func containsContentLengthHeader(headers []string) bool {
-	for _, h := range headers {
-		if idx := strings.Index(h, ":"); idx > 0 {
-			name := strings.TrimSpace(h[:idx])
-			if strings.EqualFold(name, "Content-Length") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // setHeader adds or replaces a header.
 func setHeader(headers []byte, name, value string) []byte {
-	re := regexp.MustCompile(`(?im)^` + regexp.QuoteMeta(name) + `:[ \t]*.*\r?\n`)
-	newHeader := []byte(name + ": " + value + "\r\n")
+	le := detectLineEnding(headers)
+	re := regexp.MustCompile(`(?im)^` + regexp.QuoteMeta(name) + `[ \t]*:[ \t]*.*\r?\n`)
+	newHeader := []byte(name + ": " + value + le)
 
 	if re.Match(headers) {
 		return re.ReplaceAll(headers, newHeader)
 	}
 
-	// Insert before the blank line
-	return bytes.Replace(headers, []byte("\r\n\r\n"),
-		append([]byte("\r\n"), append(newHeader, []byte("\r\n")...)...), 1)
+	return insertBeforeBlankLine(headers, name+": "+value)
 }
 
 func setHeaderIfMissing(headers []byte, name, value string) []byte {
-	re := regexp.MustCompile(`(?im)^` + regexp.QuoteMeta(name) + `:`)
+	re := regexp.MustCompile(`(?im)^` + regexp.QuoteMeta(name) + `[ \t]*:`)
 	if re.Match(headers) {
 		return headers
 	}
@@ -763,25 +810,23 @@ func setHeaderIfMissing(headers []byte, name, value string) []byte {
 
 // removeHeader removes a header.
 func removeHeader(headers []byte, name string) []byte {
-	re := regexp.MustCompile(`(?im)^` + regexp.QuoteMeta(name) + `:[ \t]*.*\r?\n`)
+	re := regexp.MustCompile(`(?im)^` + regexp.QuoteMeta(name) + `[ \t]*:[ \t]*.*\r?\n`)
 	return re.ReplaceAll(headers, nil)
 }
 
-// applyHeaderModifications applies header modifications.
-func applyHeaderModifications(headers []byte, req *ReplaySendRequest) []byte {
-	for _, name := range req.RemoveHeaders {
+// applyHeaderModifications applies remove then set modifications to raw headers.
+// For set: entries sharing the same name (case-insensitive) remove all existing
+// instances of that name and insert all provided entries verbatim. This allows
+// expressing duplicate headers like ["TE: chunked", "TE: identity"].
+func applyHeaderModifications(headers []byte, remove []string, set []string) []byte {
+	for _, name := range remove {
 		headers = removeHeader(headers, name)
 	}
-	for _, h := range req.AddHeaders {
-		if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
-			headers = setHeader(headers, strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
-		}
-	}
 
-	// Handle --target (update Host header)
-	if req.Target != "" {
-		if u, err := url.Parse(req.Target); err == nil && u.Host != "" {
-			headers = setHeader(headers, "Host", u.Host)
+	for _, g := range proxy.GroupHeaderEntries(set) {
+		headers = removeHeader(headers, g.Key)
+		for _, entry := range g.Entries {
+			headers = insertBeforeBlankLine(headers, entry)
 		}
 	}
 
@@ -792,6 +837,56 @@ func applyHeaderModifications(headers []byte, req *ReplaySendRequest) []byte {
 type validationIssue struct {
 	Check  string
 	Detail string
+}
+
+// validateWireAnomalies checks for wire-level anomalies that indicate
+// HTTP smuggling/desync test payloads. Returns issues that should block
+// sending unless force=true.
+func validateWireAnomalies(headers []byte) []validationIssue {
+	var issues []validationIssue
+
+	teCount := len(transferEncodingPresenceRe.FindAll(headers, -1))
+	clCount := len(contentLengthPresenceRe.FindAll(headers, -1))
+
+	if teCount > 0 && clCount > 0 {
+		issues = append(issues, validationIssue{
+			Check:  "te-cl-conflict",
+			Detail: "both Transfer-Encoding and Content-Length headers present; use force=true for smuggling tests",
+		})
+	}
+	if clCount > 1 {
+		issues = append(issues, validationIssue{
+			Check:  "duplicate-cl",
+			Detail: "multiple Content-Length headers; use force=true for smuggling tests",
+		})
+	}
+	if teCount > 1 {
+		issues = append(issues, validationIssue{
+			Check:  "duplicate-te",
+			Detail: "multiple Transfer-Encoding headers; use force=true for smuggling tests",
+		})
+	}
+
+	// Check for space/tab before colon in header names (skip request line)
+	lines := bytes.Split(headers, []byte(detectLineEnding(headers)))
+	for i, line := range lines {
+		if i == 0 || len(line) == 0 {
+			continue
+		}
+		colonIdx := bytes.IndexByte(line, ':')
+		if colonIdx <= 0 {
+			continue
+		}
+		name := line[:colonIdx]
+		if bytes.ContainsAny(name, " \t") {
+			issues = append(issues, validationIssue{
+				Check:  "header-whitespace",
+				Detail: fmt.Sprintf("space before colon in header '%s'; use force=true to send anyway", strings.TrimSpace(string(name))),
+			})
+		}
+	}
+
+	return issues
 }
 
 // validateRequest checks request for common issues.
@@ -808,6 +903,9 @@ func validateRequest(raw []byte) []validationIssue {
 		})
 		return issues
 	}
+
+	// Wire anomaly checks (TE+CL conflict, duplicates, header whitespace)
+	issues = append(issues, validateWireAnomalies(headers)...)
 
 	// Use Go's parser to check structure
 	// Transform for validation only (HTTP/2 -> HTTP/1.1 for Go's parser)
@@ -833,7 +931,7 @@ func validateRequest(raw []byte) []validationIssue {
 // validateContentLength checks if Content-Length header matches actual body length.
 func validateContentLength(headers, body []byte) string {
 	// Extract Content-Length header
-	clMatch := regexp.MustCompile(`(?im)^Content-Length:\s*(\d+)`).FindSubmatch(headers)
+	clMatch := contentLengthValueRe.FindSubmatch(headers)
 	if clMatch == nil {
 		return "" // No Content-Length header, no validation needed
 	}
@@ -881,7 +979,7 @@ func parseTarget(raw []byte, targetOverride string) (host string, port int, uses
 
 	// Check for proxy-form URL in request line first (e.g., "GET http://host/path")
 	rawStr := string(raw)
-	firstLine, _, _ := strings.Cut(rawStr, "\r\n")
+	firstLine, _, _ := strings.Cut(rawStr, detectLineEnding(raw))
 	parts := strings.SplitN(firstLine, " ", 3)
 	if len(parts) >= 2 {
 		requestURI := parts[1]
@@ -921,27 +1019,31 @@ func parseTarget(raw []byte, targetOverride string) (host string, port int, uses
 	return
 }
 
-// extractMethod extracts the HTTP method from a raw request.
-func extractMethod(raw []byte) string {
-	lines := bytes.SplitN(raw, []byte("\r\n"), 2)
-	if len(lines) == 0 {
-		return "GET"
+// isBodylessMethod returns true for methods that conventionally do not carry a body.
+func isBodylessMethod(method string) bool {
+	switch strings.ToUpper(method) {
+	case "GET", "HEAD":
+		return true
 	}
-	parts := bytes.SplitN(lines[0], []byte(" "), 2)
-	if len(parts) == 0 {
-		return "GET"
-	}
-	return string(parts[0])
+	return false
 }
 
 // extractRequestPath extracts the path from a raw request's request line,
-// stripping any query parameters.
+// stripping any query parameters. Handles both CRLF and bare-LF line
+// endings. Defaults to "/" for empty or malformed input.
 func extractRequestPath(raw []byte) string {
-	lines := bytes.SplitN(raw, []byte("\r\n"), 2)
-	if len(lines) == 0 {
+	if len(raw) == 0 {
 		return "/"
 	}
-	parts := bytes.SplitN(lines[0], []byte(" "), 3)
+	// Find end of request line (CRLF or bare LF)
+	line := raw
+	if idx := bytes.IndexByte(raw, '\n'); idx >= 0 {
+		line = raw[:idx]
+	}
+	// Trim trailing CR if present
+	line = bytes.TrimRight(line, "\r")
+	// Extract request-target (second token: METHOD <path> HTTP/1.x)
+	parts := bytes.SplitN(line, []byte(" "), 3)
 	if len(parts) < 2 {
 		return "/"
 	}
@@ -968,7 +1070,7 @@ func buildRedirectRequest(originalReq []byte, location string, currentTarget Tar
 		return nil, Target{}, "", err
 	}
 
-	method := extractMethod(originalReq)
+	method := proxy.ExtractMethod(originalReq)
 	if !preserveMethod {
 		method = "GET"
 	}
@@ -1051,7 +1153,7 @@ func copyHeadersForRedirect(originalReq []byte, buf *bytes.Buffer, newTarget Tar
 
 	_, _ = fmt.Fprintf(buf, "Host: %s\r\n", newHost)
 
-	for _, line := range bytes.Split(headers, []byte("\r\n")) {
+	for _, line := range bytes.Split(headers, []byte(detectLineEnding(headers))) {
 		if len(line) == 0 {
 			continue
 		}

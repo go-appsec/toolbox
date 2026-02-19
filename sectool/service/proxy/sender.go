@@ -54,7 +54,7 @@ type SendOptions struct {
 // Modifications specifies changes to apply to a request.
 type Modifications struct {
 	Method        string            // Override HTTP method
-	SetHeaders    map[string]string // Add or replace headers
+	SetHeaders    []string          // "Name: Value" format; duplicates supported
 	RemoveHeaders []string          // Remove headers by name
 	Body          []byte            // Replace entire body (mutually exclusive with JSON mods)
 	SetJSON       map[string]any    // Modify JSON fields
@@ -100,12 +100,19 @@ func (s *Sender) Send(ctx context.Context, opts SendOptions) (*SendResult, error
 		return nil, fmt.Errorf("invalid protocol %q: must be %q, %q, or empty", opts.Protocol, protocolHTTP11, protocolH2)
 	}
 
-	// When force=true, no modifications, and HTTP/1.1, send raw bytes directly.
-	// This preserves intentional Content-Length mismatches for security testing
-	// (e.g., request smuggling scenarios).
-	// Note: Raw byte sending only works for HTTP/1.1 - H2 requires framing.
+	// No modifications + HTTP/1.1: send raw bytes for wire fidelity.
+	// H2 always requires framing, so it falls through to prepareRequest.
 	isHTTP11 := opts.Protocol == "" || opts.Protocol == protocolHTTP11
-	if opts.Force && isHTTP11 && (opts.Modifications == nil || isEmptyModifications(opts.Modifications)) {
+	if isHTTP11 && isEmptyModifications(opts.Modifications) {
+		// Validate when force=false (parse-only, does not re-serialize)
+		if !opts.Force {
+			req, err := parseRequest(bytes.NewReader(opts.RawRequest))
+			if err != nil {
+				return nil, fmt.Errorf("parse request: %w", err)
+			} else if err := validateRequest(req); err != nil {
+				return nil, fmt.Errorf("validation failed: %w (use force=true to bypass)", err)
+			}
+		}
 		resp, err := s.sendRawRequest(ctx, opts)
 		if err != nil {
 			return nil, err
@@ -300,9 +307,8 @@ func (s *Sender) sendRequestWithProtocol(ctx context.Context, req *RawHTTP1Reque
 }
 
 // applyModifications applies all modifications to a request.
-// When force is true, Content-Length is not auto-updated on body changes
-// (allows testing scenarios like request smuggling).
-// User-specified Content-Length in SetHeaders is preserved (not overwritten).
+// Content-Length is auto-updated on body changes unless the user explicitly
+// set it via SetHeaders. Force only disables validation, not CL behavior.
 func (s *Sender) applyModifications(req *RawHTTP1Request, mods *Modifications, force bool) error {
 	if mods == nil {
 		return nil
@@ -310,13 +316,7 @@ func (s *Sender) applyModifications(req *RawHTTP1Request, mods *Modifications, f
 
 	// Check if user explicitly set Content-Length via SetHeaders before we apply them.
 	// If so, we won't auto-update Content-Length on body changes.
-	var userSetContentLength bool
-	for name := range mods.SetHeaders {
-		if strings.EqualFold(name, "Content-Length") {
-			userSetContentLength = true
-			break
-		}
-	}
+	userSetContentLength := ContainsHeader(mods.SetHeaders, "Content-Length")
 
 	// Method override
 	if mods.Method != "" {
@@ -328,24 +328,27 @@ func (s *Sender) applyModifications(req *RawHTTP1Request, mods *Modifications, f
 		applyQueryModifications(req, mods)
 	}
 
-	// Header modifications (sets, then removes)
-	// Sort keys for deterministic order (map iteration is random)
-	if len(mods.SetHeaders) > 0 {
-		headerNames := bulk.MapKeysSlice(mods.SetHeaders)
-		slices.Sort(headerNames)
-		for _, name := range headerNames {
-			req.SetHeader(name, mods.SetHeaders[name])
-		}
-	}
+	// Header modifications: remove first, then set (matches MCP layer order)
 	for _, name := range mods.RemoveHeaders {
 		req.RemoveHeader(name)
 	}
 
+	for _, g := range GroupHeaderEntries(mods.SetHeaders) {
+		req.RemoveHeader(g.Key)
+		for _, entry := range g.Entries {
+			idx := strings.Index(entry, ":")
+			name := strings.TrimSpace(entry[:idx])
+			value := strings.TrimSpace(entry[idx+1:])
+			req.Headers = append(req.Headers, Header{Name: name, Value: value})
+		}
+	}
+
 	// Body modifications (mutually exclusive)
-	// Auto-update Content-Length only if:
-	// - force=false (not bypassing validation)
-	// - User didn't explicitly set Content-Length in SetHeaders
-	shouldAutoUpdateCL := !force && !userSetContentLength
+	// Auto-update Content-Length unless user explicitly set it via SetHeaders
+	// or Transfer-Encoding is present (TE and CL are mutually exclusive per
+	// RFC 7230; auto-adding CL alongside TE changes request semantics).
+	hasTE := req.GetHeader("Transfer-Encoding") != ""
+	shouldAutoUpdateCL := !userSetContentLength && !hasTE
 
 	if mods.Body != nil {
 		req.Body = mods.Body
@@ -384,17 +387,13 @@ func isEmptyModifications(mods *Modifications) bool {
 }
 
 // sendRawRequest sends raw request bytes without parsing/serializing.
-// Used when force=true to preserve intentional Content-Length mismatches.
+// Used for wire fidelity when no modifications are needed (HTTP/1.1 only).
 func (s *Sender) sendRawRequest(ctx context.Context, opts SendOptions) (*RawHTTP1Response, error) {
-	// Parse just enough to get method for response parsing
-	req, err := parseRequest(bytes.NewReader(opts.RawRequest))
-	if err != nil {
-		return nil, fmt.Errorf("parse request: %w", err)
-	}
-	method := req.Method
+	method := ExtractMethod(opts.RawRequest)
 
 	targetAddr := fmt.Sprintf("%s:%d", opts.Target.Hostname, opts.Target.Port)
 	var conn net.Conn
+	var err error
 
 	if opts.Target.UsesHTTPS {
 		tlsDialer := &tls.Dialer{
@@ -435,23 +434,17 @@ func (s *Sender) sendRawRequest(ctx context.Context, opts SendOptions) (*RawHTTP
 	return resp, nil
 }
 
-// applyQueryModifications modifies query parameters in the request path.
+// applyQueryModifications modifies query parameters in the request path
+// using raw string manipulation to preserve original parameter order and encoding.
 func applyQueryModifications(req *RawHTTP1Request, mods *Modifications) {
-	// Parse existing query
-	values, _ := url.ParseQuery(req.Query)
-
-	// Remove params first
-	for _, key := range mods.RemoveParams {
-		values.Del(key)
+	// Convert map entries to "key=value" strings with URL encoding
+	keys := bulk.MapKeysSlice(mods.SetParams)
+	slices.Sort(keys)
+	set := make([]string, 0, len(keys))
+	for _, key := range keys {
+		set = append(set, url.QueryEscape(key)+"="+url.QueryEscape(mods.SetParams[key]))
 	}
-
-	// Set params
-	for key, value := range mods.SetParams {
-		values.Set(key, value)
-	}
-
-	// Rebuild query
-	req.Query = values.Encode()
+	req.Query = ApplyRawQueryModifications(req.Query, mods.RemoveParams, set)
 }
 
 // buildRedirectRequest builds a new request for following a redirect.

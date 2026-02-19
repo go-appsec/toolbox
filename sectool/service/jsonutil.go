@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,24 @@ import (
 	"strconv"
 	"strings"
 )
+
+// marshalRaw serializes to JSON without HTML-escaping <, >, and &.
+// Standard json.Marshal escapes these for safe HTML embedding, but
+// security payloads (e.g. XSS) must preserve them literally.
+func marshalRaw(v interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	// Encode appends a trailing newline; trim it
+	b := buf.Bytes()
+	if len(b) > 0 && b[len(b)-1] == '\n' {
+		b = b[:len(b)-1]
+	}
+	return b, nil
+}
 
 // jsonPathRe matches path segments: key names or [index]
 var jsonPathRe = regexp.MustCompile(`([^.\[\]]+)|\[(\d+)\]`)
@@ -93,7 +112,7 @@ func modifyJSONBodyMap(body []byte, setJSON map[string]interface{}, removeJSON [
 		}
 	}
 
-	return json.Marshal(data)
+	return marshalRaw(data)
 }
 
 // ModifyJSONBodyMap applies JSON modifications to the body using map format.
@@ -208,7 +227,7 @@ func setValueAtPath(data interface{}, segments []pathSegment, value interface{})
 					if err != nil {
 						return nil, err
 					}
-					encoded, err := json.Marshal(modified)
+					encoded, err := marshalRaw(modified)
 					if err != nil {
 						return nil, fmt.Errorf("failed to re-encode JSON string: %w", err)
 					}
@@ -251,7 +270,7 @@ func setValueAtPath(data interface{}, segments []pathSegment, value interface{})
 				if err != nil {
 					return nil, err
 				}
-				encoded, err := json.Marshal(modified)
+				encoded, err := marshalRaw(modified)
 				if err != nil {
 					return nil, fmt.Errorf("failed to re-encode JSON string: %w", err)
 				}
@@ -296,7 +315,7 @@ func removeKeyAtPath(data interface{}, segments []pathSegment) (interface{}, err
 					if err != nil {
 						return nil, err
 					}
-					encoded, err := json.Marshal(modified)
+					encoded, err := marshalRaw(modified)
 					if err != nil {
 						return nil, fmt.Errorf("failed to re-encode JSON string: %w", err)
 					}
@@ -334,7 +353,7 @@ func removeKeyAtPath(data interface{}, segments []pathSegment) (interface{}, err
 				if err != nil {
 					return nil, err
 				}
-				encoded, err := json.Marshal(modified)
+				encoded, err := marshalRaw(modified)
 				if err != nil {
 					return nil, fmt.Errorf("failed to re-encode JSON string: %w", err)
 				}

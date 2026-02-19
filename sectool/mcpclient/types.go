@@ -47,7 +47,7 @@ type ReplaySendOpts struct {
 	Method          string
 	Body            string
 	Target          string
-	AddHeaders      []string
+	SetHeaders      []string
 	RemoveHeaders   []string
 	Path            string
 	Query           string
@@ -63,9 +63,10 @@ type ReplaySendOpts struct {
 type RequestSendOpts struct {
 	URL             string
 	Method          string
-	Headers         map[string]string
+	Headers         []string
 	Body            string
 	FollowRedirects bool
+	Force           bool
 }
 
 // =============================================================================

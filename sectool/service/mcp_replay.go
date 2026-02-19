@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"log"
+	"net/url"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -11,6 +12,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/ids"
+	"github.com/go-appsec/toolbox/sectool/service/proxy"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
@@ -25,21 +27,21 @@ Edits:
 - target: scheme+host[:port] (e.g., 'https://staging.example.com')
 - path/query: override path or entire query string
 - set_query/remove_query: selective query param edits
-- add_headers/remove_headers: header edits
+- set_headers/remove_headers: header edits. Single entry replaces existing; multiple entries with the same name create duplicates
 - body: replace entire body
 - set_json/remove_json: selective JSON edits; requires body to be valid JSON
 
 JSON paths: dot notation with array brackets (e.g., "user.email", "items[0].id", "data.users[0].name").
 set_json object: {"user.email": "x", "items[0].id": 5}
 Types auto-parsed: null/true/false/numbers/{}/[], else string.
-Processing: remove_* then set_*. Content-Length/Host auto-updated.
+Processing: remove_* then set_*. Content-Length auto-updated when body is modified and CL not explicitly set.
 Validation: fix issues or use force=true for protocol testing.
 Replayed requests appear in proxy_poll history alongside captured traffic.`),
 		mcp.WithString("flow_id", mcp.Required(), mcp.Description("Flow ID from proxy_poll or crawl_poll to use as base request")),
 		mcp.WithString("method", mcp.Description("Override HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)")),
 		mcp.WithString("body", mcp.Description("Request body content (replaces existing body)")),
 		mcp.WithString("target", mcp.Description("Override destination (scheme+host[:port]); keeps original path/query")),
-		mcp.WithArray("add_headers", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("Headers to add/replace (format: 'Name: Value')")),
+		mcp.WithArray("set_headers", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("Headers to set (format: 'Name: Value')")),
 		mcp.WithArray("remove_headers", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("Header names to remove")),
 		mcp.WithString("path", mcp.Description("Override request path (include leading '/')")),
 		mcp.WithString("query", mcp.Description("Override entire query string (no leading '?')")),
@@ -68,14 +70,31 @@ func (m *mcpServer) requestSendTool() mcp.Tool {
 
 Use this when you need to send a request to a URL without first capturing it via proxy.
 Returns: replay_id, status, headers, response_preview. Full body via replay_get.
-Sent requests appear in proxy_poll history alongside captured traffic.`),
+Sent requests appear in proxy_poll history alongside captured traffic if additional modifications or resending needed.`),
 		mcp.WithString("url", mcp.Required(), mcp.Description("Target URL (e.g., 'https://api.example.com/users')")),
 		mcp.WithString("method", mcp.Description("HTTP method (default: GET)")),
-		mcp.WithObject("headers", mcp.Description("Headers as object: {\"Name\": \"Value\"}")),
+		mcp.WithObject("headers", mcp.Description("Headers as object {\"Name\": \"Value\"} (alphabetical order) or array [\"Name: Value\"] (preserves order)")),
 		mcp.WithString("body", mcp.Description("Request body content")),
 		mcp.WithBoolean("follow_redirects", mcp.Description("Follow HTTP redirects (default: false)")),
+		mcp.WithBoolean("force", mcp.Description("Skip validation for protocol-level tests")),
 	)
 }
+
+// sendModifications holds all modification parameters for executeSend.
+// handleReplaySend populates this from MCP params; handleRequestSend passes a zero value.
+type sendModifications struct {
+	Method          string // non-empty if method was overridden
+	SetHeaders      []string
+	RemoveHeaders   []string
+	Target          string
+	Body            string
+	SetJSON         map[string]interface{}
+	RemoveJSON      []string
+	Force           bool
+	FollowRedirects bool
+	UserSetHost     bool // user explicitly supplied a Host header
+}
+
 func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if err := m.requireWorkflow(); err != nil {
 		return err, nil
@@ -104,7 +123,6 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 		httpProtocol = proxyEntries[0].Protocol
 	} else if flow, err := m.service.crawlerBackend.GetFlow(ctx, flowID); err == nil && flow != nil {
 		rawRequest = flow.Request
-		// Crawler uses HTTP/1.1
 	} else {
 		return errorResult("flow_id not found: run proxy_poll or crawl_poll to see available flows"), nil
 	}
@@ -117,156 +135,21 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 		RemoveQuery: req.GetStringSlice("remove_query", nil),
 	})
 
-	headers, reqBody := splitHeadersBody(rawRequest)
-
-	// Parse add_headers flexibly: array ["Name: Value"] or object {"Name":"Value"}
-	var addHeaders []string
-	if args := req.GetArguments(); args != nil {
-		if raw, ok := args["add_headers"]; ok && raw != nil {
-			addHeaders = parseHeaderArg(raw)
-		}
-	}
-
-	sendReq := &ReplaySendRequest{
-		AddHeaders:    addHeaders,
-		RemoveHeaders: req.GetStringSlice("remove_headers", nil),
-		Target:        req.GetString("target", ""),
-	}
-	headers = applyHeaderModifications(headers, sendReq)
-	headers = setHeaderIfMissing(headers, "User-Agent", config.UserAgent())
-
-	var bodyModified bool // Track if user provided a new body (for recompression)
-	if body := req.GetString("body", ""); body != "" {
-		reqBody = []byte(body)
-		bodyModified = true
-	}
-
-	// Get set_json as a map (MCP format: {"path": value})
-	var setJSON map[string]interface{}
-	if args := req.GetArguments(); args != nil {
-		if setJSONRaw, ok := args["set_json"]; ok && setJSONRaw != nil {
-			if setJSONMap, ok := setJSONRaw.(map[string]interface{}); ok {
-				setJSON = setJSONMap
-			}
-		}
-	}
-	removeJSON := req.GetStringSlice("remove_json", nil)
-	if len(setJSON) > 0 || len(removeJSON) > 0 {
-		modifiedBody, err := modifyJSONBodyMap(reqBody, setJSON, removeJSON)
-		if err != nil {
-			return errorResult("JSON body modification failed: " + err.Error()), nil
-		}
-		reqBody = modifiedBody
-		bodyModified = true
-	}
-
-	// If user provided/modified body and Content-Encoding header is present, recompress
-	if bodyModified {
-		encoding := extractHeader(string(headers), "Content-Encoding")
-		var compressionFailed bool
-		reqBody, compressionFailed = compressBody(reqBody, encoding)
-		if compressionFailed {
-			// remove Content-Encoding to send uncompressed
-			headers = removeHeader(headers, "Content-Encoding")
-		}
-	}
-
-	force := req.GetBool("force", false)
-
-	// Check if user explicitly set Content-Length in add_headers
-	userSetContentLength := containsContentLengthHeader(sendReq.AddHeaders)
-
-	if !userSetContentLength {
-		// User didn't explicitly set Content-Length, so auto-update it to match body.
-		// This is the normal case for body replacement.
-		headers = updateContentLength(headers, len(reqBody))
-	}
-	// If user explicitly set Content-Length, preserve it for validation.
-
-	rawRequest = append(headers, reqBody...)
-
-	if !force {
-		if issues := validateRequest(rawRequest); len(issues) > 0 {
-			return errorResult("validation failed:\n" + formatIssues(issues)), nil
-		}
-	}
-	// When force=true, skip validation and preserve user-specified Content-Length for security testing scenarios.
-
-	targetOverride := req.GetString("target", "")
-	host, port, usesHTTPS := parseTarget(rawRequest, targetOverride)
-
-	// Check domain scoping
-	if allowed, reason := m.service.cfg.IsDomainAllowed(host); !allowed {
-		return errorResult("domain rejected: " + reason), nil
-	}
-
-	// HTTP/2 requires TLS.
-	// If replaying an H2 request and user explicitly specified http://, return error.
-	// Otherwise force HTTPS (handles non-443 ports where parseTarget can't infer scheme).
-	if httpProtocol == "h2" {
-		if targetOverride != "" && strings.HasPrefix(strings.ToLower(targetOverride), "http://") {
-			return errorResult("cannot replay HTTP/2 request to http:// target: HTTP/2 requires TLS. To replay as HTTP/1.1, use a flow captured as HTTP/1.1 or manually construct the request."), nil
-		}
-		usesHTTPS = true
-	}
-
-	replayID := ids.Generate(ids.DefaultLength)
-
-	scheme := schemeHTTP
-	if usesHTTPS {
-		scheme = schemeHTTPS
-	}
-	sendInput := SendRequestInput{
-		RawRequest: rawRequest,
-		Target: Target{
-			Hostname:  host,
-			Port:      port,
-			UsesHTTPS: usesHTTPS,
-		},
-		FollowRedirects: req.GetBool("follow_redirects", false),
+	setHeaders := getHeaderArg(req, "set_headers")
+	mods := sendModifications{
+		Method:          req.GetString("method", ""),
+		SetHeaders:      setHeaders,
+		RemoveHeaders:   req.GetStringSlice("remove_headers", nil),
+		Target:          req.GetString("target", ""),
+		Body:            req.GetString("body", ""),
+		SetJSON:         getJSONArg(req),
+		RemoveJSON:      req.GetStringSlice("remove_json", nil),
 		Force:           req.GetBool("force", false),
-		Protocol:        httpProtocol,
+		FollowRedirects: req.GetBool("follow_redirects", false),
+		UserSetHost:     proxy.ContainsHeader(setHeaders, "Host"),
 	}
 
-	result, err := m.service.httpBackend.SendRequest(ctx, "sectool-"+replayID, sendInput)
-	if err != nil {
-		return errorResultFromErr("request failed: ", err), nil
-	}
-
-	respHeaders := result.Headers
-	respBody := result.Body
-	respCode, respStatusLine := parseResponseStatus(respHeaders)
-	log.Printf("replay/send: %s %s://%s:%d status=%d size=%d duration=%v (flow=%s)", replayID, scheme, host, port, respCode, len(respBody), result.Duration, flowID)
-
-	// Store in replay history for proxy_poll visibility
-	method, replayHost, replayPath := extractRequestMeta(string(rawRequest))
-	refOffset, _ := m.service.replayHistoryStore.UpdateReferenceOffset(m.service.proxyLastOffset.Load())
-	m.service.replayHistoryStore.Store(&store.ReplayHistoryEntry{
-		FlowID:          replayID,
-		ReferenceOffset: refOffset,
-		RawRequest:      rawRequest,
-		Method:          method,
-		Host:            replayHost,
-		Path:            replayPath,
-		Protocol:        httpProtocol,
-		RespHeaders:     respHeaders,
-		RespBody:        respBody,
-		RespStatus:      respCode,
-		Duration:        result.Duration,
-		SourceFlowID:    flowID,
-	})
-
-	return jsonResult(protocol.ReplaySendResponse{
-		ReplayID: replayID,
-		Duration: result.Duration.String(),
-		ResponseDetails: protocol.ResponseDetails{
-			Status:      respCode,
-			StatusLine:  respStatusLine,
-			RespHeaders: string(respHeaders),
-			RespSize:    len(respBody),
-			RespPreview: previewBody(respBody, responsePreviewSize, extractHeader(string(respHeaders), "Content-Type")),
-		},
-	})
+	return m.executeSend(ctx, rawRequest, httpProtocol, mods, flowID)
 }
 
 func (m *mcpServer) handleReplayGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -325,34 +208,29 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 
 	method := req.GetString("method", "GET")
 
-	// Parse headers from object {"Name":"Value"} or array ["Name: Value"]
-	var headers map[string]string
+	// Parse base headers: object {"Name":"Value"} or array ["Name: Value"]
+	var headers []string
 	if args := req.GetArguments(); args != nil {
 		if headersRaw, ok := args["headers"]; ok && headersRaw != nil {
-			headerSlice := parseHeaderArg(headersRaw)
-			if len(headerSlice) > 0 {
-				headers = make(map[string]string, len(headerSlice))
-				for _, h := range headerSlice {
-					if parts := strings.SplitN(h, ":", 2); len(parts) == 2 {
-						headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-					}
-				}
-			}
+			headers = parseHeaderArg(headersRaw)
 		}
 	}
 
 	body := []byte(req.GetString("body", ""))
 
-	// If Content-Encoding header is present, compress the body
-	// This handles the case where user exported a decompressed request
-	// (e.g., from proxy_get) and is sending it back with the original encoding
+	// Compress body if Content-Encoding set in base headers
 	if len(body) > 0 {
-		for k, v := range headers {
-			if strings.EqualFold(k, "Content-Encoding") {
+		for i, h := range headers {
+			idx := strings.Index(h, ":")
+			if idx <= 0 {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(h[:idx]), "Content-Encoding") {
+				encoding := strings.TrimSpace(h[idx+1:])
 				var compressionFailed bool
-				body, compressionFailed = compressBody(body, v)
+				body, compressionFailed = compressBody(body, encoding)
 				if compressionFailed {
-					delete(headers, k)
+					headers = append(headers[:i], headers[i+1:]...)
 				}
 				break
 			}
@@ -364,31 +242,122 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 		return errorResult("invalid URL: " + err.Error()), nil
 	}
 
-	// Check domain scoping
-	if allowed, reason := m.service.cfg.IsDomainAllowed(parsedURL.Hostname()); !allowed {
+	rawRequest := buildRawRequestManual(method, parsedURL, headers, body)
+
+	mods := sendModifications{
+		Target:          parsedURL.Scheme + "://" + parsedURL.Host,
+		Force:           req.GetBool("force", false),
+		FollowRedirects: req.GetBool("follow_redirects", false),
+		UserSetHost:     proxy.ContainsHeader(headers, "Host"),
+	}
+
+	return m.executeSend(ctx, rawRequest, "http/1.1", mods, "")
+}
+
+// executeSend is the shared send pipeline for replay_send and request_send.
+// Applies header/body modifications, validates, sends, and stores the result.
+func (m *mcpServer) executeSend(ctx context.Context, rawRequest []byte, httpProtocol string, mods sendModifications, sourceFlowID string) (*mcp.CallToolResult, error) {
+	headers, reqBody := splitHeadersBody(rawRequest)
+	headers = applyHeaderModifications(headers, mods.RemoveHeaders, mods.SetHeaders)
+
+	// Sync Host to Target unless the user explicitly set a Host header
+	// (enables vhost routing tests and Host header injection testing).
+	if mods.Target != "" && !mods.UserSetHost {
+		if u, err := url.Parse(mods.Target); err == nil && u.Host != "" {
+			headers = setHeader(headers, "Host", u.Host)
+		}
+	}
+
+	headers = setHeaderIfMissing(headers, "User-Agent", config.UserAgent())
+
+	// Body replacement and JSON modifications
+	var bodyModified bool
+	if mods.Body != "" {
+		reqBody = []byte(mods.Body)
+		bodyModified = true
+	}
+	if len(mods.SetJSON) > 0 || len(mods.RemoveJSON) > 0 {
+		modifiedBody, err := modifyJSONBodyMap(reqBody, mods.SetJSON, mods.RemoveJSON)
+		if err != nil {
+			return errorResult("JSON body modification failed: " + err.Error()), nil
+		}
+		reqBody = modifiedBody
+		bodyModified = true
+	}
+
+	// Recompress if body was modified and Content-Encoding is present
+	if bodyModified {
+		encoding := extractHeader(string(headers), "Content-Encoding")
+		var compressionFailed bool
+		reqBody, compressionFailed = compressBody(reqBody, encoding)
+		if compressionFailed {
+			headers = removeHeader(headers, "Content-Encoding")
+		}
+	}
+
+	// Strip body when method changed to bodyless (GET/HEAD) and no explicit body provided.
+	// Prevents stale Content-Length from causing server errors (e.g., 400 on GET+CL).
+	// Use force=true to send GET/HEAD with body intentionally.
+	if isBodylessMethod(mods.Method) && !bodyModified && !mods.Force {
+		reqBody = nil
+		headers = removeHeader(headers, "Content-Length")
+	}
+
+	// Auto-update CL only when body was modified, user didn't explicitly set CL,
+	// and no Transfer-Encoding is present. TE and CL are mutually exclusive per
+	// RFC 7230; auto-adding CL alongside TE would change request semantics.
+	hasTE := extractHeader(string(headers), "Transfer-Encoding") != ""
+	if bodyModified && !hasTE && !proxy.ContainsHeader(mods.SetHeaders, "Content-Length") {
+		headers = updateContentLength(headers, len(reqBody))
+	}
+
+	rawRequest = append(headers, reqBody...)
+
+	// Validate when force is not set
+	if !mods.Force {
+		if issues := validateRequest(rawRequest); len(issues) > 0 {
+			return errorResult("validation failed:\n" + formatIssues(issues)), nil
+		}
+	}
+
+	// Parse target and check domain scoping
+	host, port, usesHTTPS := parseTarget(rawRequest, mods.Target)
+	if allowed, reason := m.service.cfg.IsDomainAllowed(host); !allowed {
 		return errorResult("domain rejected: " + reason), nil
 	}
 
-	rawRequest := buildRawRequest(method, parsedURL, headers, body)
-	if rawRequest == nil {
-		return errorResult("failed to build request: invalid method or URL"), nil
+	// HTTP/2 requires TLS
+	if httpProtocol == "h2" {
+		if mods.Target != "" && strings.HasPrefix(strings.ToLower(mods.Target), "http://") {
+			return errorResult("cannot replay HTTP/2 request to http:// target: HTTP/2 requires TLS. To replay as HTTP/1.1, use a flow captured as HTTP/1.1 or manually construct the request."), nil
+		}
+		usesHTTPS = true
 	}
-	target := targetFromURL(parsedURL)
+
 	replayID := ids.Generate(ids.DefaultLength)
-
-	sendInput := SendRequestInput{
-		RawRequest:      rawRequest,
-		Target:          target,
-		FollowRedirects: req.GetBool("follow_redirects", false),
+	scheme := schemeHTTP
+	if usesHTTPS {
+		scheme = schemeHTTPS
 	}
 
-	result, err := m.service.httpBackend.SendRequest(ctx, "sectool-"+replayID, sendInput)
+	result, err := m.service.httpBackend.SendRequest(ctx, "sectool-"+replayID, SendRequestInput{
+		RawRequest: rawRequest,
+		Target: Target{
+			Hostname:  host,
+			Port:      port,
+			UsesHTTPS: usesHTTPS,
+		},
+		FollowRedirects: mods.FollowRedirects,
+		Force:           mods.Force,
+		Protocol:        httpProtocol,
+	})
 	if err != nil {
 		return errorResultFromErr("request failed: ", err), nil
 	}
 
 	respCode, respStatusLine := parseResponseStatus(result.Headers)
-	log.Printf("request/send: %s %s status=%d size=%d duration=%v", replayID, parsedURL, respCode, len(result.Body), result.Duration)
+	method, replayHost, replayPath := extractRequestMeta(string(rawRequest))
+	log.Printf("send: %s %s://%s:%d status=%d size=%d duration=%v", replayID, scheme, host, port, respCode, len(result.Body), result.Duration)
 
 	// Store in replay history for proxy_poll visibility
 	refOffset, _ := m.service.replayHistoryStore.UpdateReferenceOffset(m.service.proxyLastOffset.Load())
@@ -397,14 +366,14 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 		ReferenceOffset: refOffset,
 		RawRequest:      rawRequest,
 		Method:          method,
-		Host:            target.Hostname,
-		Path:            parsedURL.Path,
-		Protocol:        "http/1.1",
+		Host:            replayHost,
+		Path:            replayPath,
+		Protocol:        httpProtocol,
 		RespHeaders:     result.Headers,
 		RespBody:        result.Body,
 		RespStatus:      respCode,
 		Duration:        result.Duration,
-		SourceFlowID:    "", // No source for request_send
+		SourceFlowID:    sourceFlowID,
 	})
 
 	return jsonResult(protocol.ReplaySendResponse{
@@ -418,4 +387,26 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 			RespPreview: previewBody(result.Body, responsePreviewSize, extractHeader(string(result.Headers), "Content-Type")),
 		},
 	})
+}
+
+// getHeaderArg extracts a header array parameter from an MCP request.
+func getHeaderArg(req mcp.CallToolRequest, name string) []string {
+	if args := req.GetArguments(); args != nil {
+		if raw, ok := args[name]; ok && raw != nil {
+			return parseHeaderArg(raw)
+		}
+	}
+	return nil
+}
+
+// getJSONArg extracts set_json as a map from an MCP request.
+func getJSONArg(req mcp.CallToolRequest) map[string]interface{} {
+	if args := req.GetArguments(); args != nil {
+		if raw, ok := args["set_json"]; ok && raw != nil {
+			if jsonMap, ok := raw.(map[string]interface{}); ok {
+				return jsonMap
+			}
+		}
+	}
+	return nil
 }

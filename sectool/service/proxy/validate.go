@@ -1,48 +1,126 @@
 package proxy
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
-// validateRequest performs basic sanity checks on a parsed request.
-// Used when force=false to reject clearly malformed requests in user-facing scenarios.
-// When force=true in replay, this validation is skipped entirely.
-//
-// Returns nil if request is valid, or an error describing the issue.
+// validateRequest checks a parsed request for protocol issues that the parser
+// tolerates but that may indicate malformed input, injection, or smuggling.
+// Used when force=false to warn about conditions that force=true bypasses.
+// Returns nil if request passes all checks, or an error listing all issues.
 func validateRequest(req *RawHTTP1Request) error {
 	if req == nil {
 		return errors.New("nil request")
 	}
 
+	var issues []string
+
 	// Method must be non-empty and contain only valid token characters
 	if req.Method == "" {
-		return errors.New("empty method")
+		issues = append(issues, "empty method")
 	} else if !isValidToken(req.Method) {
-		return fmt.Errorf("invalid method characters: %q", req.Method)
+		issues = append(issues, fmt.Sprintf("invalid method characters: %q", req.Method))
 	}
 
-	// Path must be non-empty
+	// Path must be non-empty; CR/LF in path is a request splitting risk
 	if req.Path == "" {
-		return errors.New("empty path")
+		issues = append(issues, "empty path")
+	} else if strings.ContainsAny(req.Path, "\r\n") {
+		issues = append(issues, "CR/LF in request path")
 	}
 
 	// Version should be HTTP/1.0 or HTTP/1.1
 	if req.Version != "HTTP/1.0" && req.Version != "HTTP/1.1" {
-		return fmt.Errorf("invalid HTTP version: %q (expected HTTP/1.0 or HTTP/1.1)", req.Version)
+		issues = append(issues, fmt.Sprintf("invalid HTTP version: %q (expected HTTP/1.0 or HTTP/1.1)", req.Version))
 	}
 
-	// Check for NUL bytes in header names and values (injection risk)
+	// Bare LF line endings (parser tolerates but HTTP requires CRLF)
+	if req.Wire != nil && req.Wire.UsedBareLF {
+		issues = append(issues, "bare LF line endings (HTTP requires CRLF)")
+	}
+
+	// Per-header checks
 	for _, h := range req.Headers {
-		if strings.ContainsRune(h.Name, '\x00') {
-			return fmt.Errorf("NUL byte in header name: %q", h.Name)
-		} else if strings.ContainsRune(h.Value, '\x00') {
-			return fmt.Errorf("NUL byte in header value for %q", h.Name)
+		// Header name: NUL (most specific), then token validation
+		if h.Name == "" {
+			issues = append(issues, "empty header name")
+		} else if strings.ContainsRune(h.Name, '\x00') {
+			issues = append(issues, fmt.Sprintf("NUL byte in header name: %q", h.Name))
+		} else if !isValidToken(h.Name) {
+			issues = append(issues, fmt.Sprintf("invalid header name: %q", h.Name))
+		}
+
+		// Header value: NUL bytes, then CR/LF injection
+		if strings.ContainsRune(h.Value, '\x00') {
+			issues = append(issues, fmt.Sprintf("NUL byte in header value for %q", h.Name))
+		} else if strings.ContainsAny(h.Value, "\r\n") {
+			issues = append(issues, fmt.Sprintf("CR/LF in header value for %q", h.Name))
+		}
+
+		// Wire-level checks using RawLine (only available for parsed-from-wire headers)
+		if len(h.RawLine) > 0 {
+			// Obs-fold (continuation lines) deprecated per RFC 7230 §3.2.4
+			if bytes.ContainsAny(h.RawLine, "\r\n") {
+				issues = append(issues, fmt.Sprintf("obs-fold (line continuation) in header %q", h.Name))
+			}
+			// Header line without colon separator (parser treats entire line as name)
+			if !bytes.ContainsRune(h.RawLine, ':') {
+				issues = append(issues, fmt.Sprintf("header without colon separator: %q", h.Name))
+			}
 		}
 	}
 
-	return nil
+	// Host header: required for HTTP/1.1, at most one
+	hostCount := countHeaders(req.Headers, "Host")
+	if req.Version == "HTTP/1.1" && hostCount == 0 {
+		issues = append(issues, "missing Host header")
+	}
+	if hostCount > 1 {
+		issues = append(issues, fmt.Sprintf("duplicate Host header (%d)", hostCount))
+	}
+
+	// Smuggling indicators: TE+CL conflict, duplicate CL/TE
+	clCount := countHeaders(req.Headers, "Content-Length")
+	teCount := countHeaders(req.Headers, "Transfer-Encoding")
+	if teCount > 0 && clCount > 0 {
+		issues = append(issues, "both Transfer-Encoding and Content-Length present")
+	}
+	if clCount > 1 {
+		issues = append(issues, fmt.Sprintf("duplicate Content-Length (%d)", clCount))
+	}
+	if teCount > 1 {
+		issues = append(issues, fmt.Sprintf("duplicate Transfer-Encoding (%d)", teCount))
+	}
+
+	// Content-Length accuracy
+	if clCount == 1 {
+		clStr := req.GetHeader("Content-Length")
+		if cl, err := strconv.Atoi(clStr); err != nil {
+			issues = append(issues, fmt.Sprintf("non-numeric Content-Length: %q", clStr))
+		} else if cl != len(req.Body) {
+			issues = append(issues, fmt.Sprintf("Content-Length (%d) does not match body length (%d)", cl, len(req.Body)))
+		}
+	}
+
+	if len(issues) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(issues, "; "))
+}
+
+// countHeaders returns the number of headers with the given name (case-insensitive).
+func countHeaders(headers Headers, name string) int {
+	var count int
+	for _, h := range headers {
+		if strings.EqualFold(h.Name, name) {
+			count++
+		}
+	}
+	return count
 }
 
 // isValidToken checks if s contains only valid HTTP token characters.

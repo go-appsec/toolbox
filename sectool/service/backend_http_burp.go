@@ -14,6 +14,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/ids"
 	"github.com/go-appsec/toolbox/sectool/service/mcp"
+	"github.com/go-appsec/toolbox/sectool/service/proxy"
 )
 
 // ErrConfigEditDisabled is returned when a write operation fails because config editing is not enabled.
@@ -209,7 +210,7 @@ func rawRequestToH2Params(raw []byte, target Target) mcp.SendHTTP2RequestParams 
 	}
 
 	pseudos := map[string]string{
-		":method": extractMethod(raw),
+		":method": proxy.ExtractMethod(raw),
 		":path":   requestURI,
 		":scheme": scheme,
 	}

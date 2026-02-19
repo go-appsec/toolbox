@@ -114,172 +114,6 @@ func TestParseJSONPath(t *testing.T) {
 	}
 }
 
-func TestSetJSONValue(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		input    string
-		path     string
-		value    interface{}
-		expected string
-	}{
-		{
-			name:     "set_simple_key",
-			input:    `{"name": "old"}`,
-			path:     "name",
-			value:    "new",
-			expected: `{"name":"new"}`,
-		},
-		{
-			name:     "add_new_key",
-			input:    `{"a": 1}`,
-			path:     "b",
-			value:    2,
-			expected: `{"a":1,"b":2}`,
-		},
-		{
-			name:     "nested_set",
-			input:    `{"user": {"name": "old"}}`,
-			path:     "user.name",
-			value:    "new",
-			expected: `{"user":{"name":"new"}}`,
-		},
-		{
-			name:     "create_nested",
-			input:    `{}`,
-			path:     "user.email",
-			value:    "test@example.com",
-			expected: `{"user":{"email":"test@example.com"}}`,
-		},
-		{
-			name:     "set_array_element",
-			input:    `{"items": ["a", "b", "c"]}`,
-			path:     "items[1]",
-			value:    "B",
-			expected: `{"items":["a","B","c"]}`,
-		},
-		{
-			name:     "append_array",
-			input:    `{"items": ["a", "b"]}`,
-			path:     "items[2]",
-			value:    "c",
-			expected: `{"items":["a","b","c"]}`,
-		},
-		{
-			name:     "extend_array",
-			input:    `{"items": []}`,
-			path:     "items[2]",
-			value:    "c",
-			expected: `{"items":[null,null,"c"]}`,
-		},
-		{
-			name:     "set_nested_in_array",
-			input:    `{"users": [{"name": "alice"}, {"name": "bob"}]}`,
-			path:     "users[1].name",
-			value:    "BOB",
-			expected: `{"users":[{"name":"alice"},{"name":"BOB"}]}`,
-		},
-		{
-			name:     "set_null",
-			input:    `{"key": "value"}`,
-			path:     "key",
-			value:    nil,
-			expected: `{"key":null}`,
-		},
-		{
-			name:     "empty_input",
-			input:    ``,
-			path:     "key",
-			value:    "value",
-			expected: `{"key":"value"}`,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var input []byte
-			if tc.input != "" {
-				input = []byte(tc.input)
-			}
-
-			// Build the SetJSON value based on type
-			var setVal string
-			switch v := tc.value.(type) {
-			case nil:
-				setVal = tc.path // no "=" means null
-			case string:
-				setVal = tc.path + "=" + v
-			default:
-				setVal = tc.path + "=" + string(mustMarshal(t, v))
-			}
-
-			result, err := modifyJSONBody(input, []string{setVal}, nil)
-			require.NoError(t, err)
-
-			// Compare as parsed JSON to ignore ordering
-			var expectedMap, resultMap interface{}
-			require.NoError(t, json.Unmarshal([]byte(tc.expected), &expectedMap))
-			require.NoError(t, json.Unmarshal(result, &resultMap))
-			assert.Equal(t, expectedMap, resultMap)
-		})
-	}
-}
-
-func TestRemoveJSONKey(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		input    string
-		path     string
-		expected string
-	}{
-		{
-			name:     "remove_simple",
-			input:    `{"a": 1, "b": 2}`,
-			path:     "a",
-			expected: `{"b":2}`,
-		},
-		{
-			name:     "remove_nested",
-			input:    `{"user": {"name": "alice", "email": "a@b.com"}}`,
-			path:     "user.email",
-			expected: `{"user":{"name":"alice"}}`,
-		},
-		{
-			name:     "remove_array_element",
-			input:    `{"items": ["a", "b", "c"]}`,
-			path:     "items[1]",
-			expected: `{"items":["a","c"]}`,
-		},
-		{
-			name:     "remove_nonexistent",
-			input:    `{"a": 1}`,
-			path:     "b",
-			expected: `{"a":1}`,
-		},
-		{
-			name:     "remove_from_array_object",
-			input:    `{"users": [{"name": "alice", "age": 30}]}`,
-			path:     "users[0].age",
-			expected: `{"users":[{"name":"alice"}]}`,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := modifyJSONBody([]byte(tc.input), nil, []string{tc.path})
-			require.NoError(t, err)
-
-			var expectedMap, resultMap interface{}
-			require.NoError(t, json.Unmarshal([]byte(tc.expected), &expectedMap))
-			require.NoError(t, json.Unmarshal(result, &resultMap))
-			assert.Equal(t, expectedMap, resultMap)
-		})
-	}
-}
-
 func TestModifyJSONBody(t *testing.T) {
 	t.Parallel()
 
@@ -290,7 +124,103 @@ func TestModifyJSONBody(t *testing.T) {
 		removeJSON []string
 		expected   string
 		wantErr    bool
+		rawCompare bool // compare raw output bytes instead of parsed JSON
 	}{
+		// Set operations
+		{
+			name:     "set_simple_key",
+			input:    `{"name":"old"}`,
+			setJSON:  []string{"name=new"},
+			expected: `{"name":"new"}`,
+		},
+		{
+			name:     "add_new_key",
+			input:    `{"a":1}`,
+			setJSON:  []string{"b=2"},
+			expected: `{"a":1,"b":2}`,
+		},
+		{
+			name:     "nested_set",
+			input:    `{"user":{"name":"old"}}`,
+			setJSON:  []string{"user.name=new"},
+			expected: `{"user":{"name":"new"}}`,
+		},
+		{
+			name:     "nested_path_create",
+			input:    `{}`,
+			setJSON:  []string{"user.email=test@evil.com"},
+			expected: `{"user":{"email":"test@evil.com"}}`,
+		},
+		{
+			name:     "set_nested_in_array",
+			input:    `{"users":[{"name":"alice"},{"name":"bob"}]}`,
+			setJSON:  []string{"users[1].name=BOB"},
+			expected: `{"users":[{"name":"alice"},{"name":"BOB"}]}`,
+		},
+		{
+			name:     "array_index_set",
+			input:    `{"items":["a","b","c"]}`,
+			setJSON:  []string{"items[1]=replaced"},
+			expected: `{"items":["a","replaced","c"]}`,
+		},
+		{
+			name:     "append_array",
+			input:    `{"items":["a","b"]}`,
+			setJSON:  []string{"items[2]=c"},
+			expected: `{"items":["a","b","c"]}`,
+		},
+		{
+			name:     "extend_array",
+			input:    `{"items":[]}`,
+			setJSON:  []string{"items[2]=c"},
+			expected: `{"items":[null,null,"c"]}`,
+		},
+		// Remove operations
+		{
+			name:       "remove_simple",
+			input:      `{"a":1,"b":2}`,
+			removeJSON: []string{"a"},
+			expected:   `{"b":2}`,
+		},
+		{
+			name:       "remove_nested",
+			input:      `{"user":{"name":"alice","email":"a@b.com"}}`,
+			removeJSON: []string{"user.email"},
+			expected:   `{"user":{"name":"alice"}}`,
+		},
+		{
+			name:       "remove_array_element",
+			input:      `{"items":["a","b","c"]}`,
+			removeJSON: []string{"items[1]"},
+			expected:   `{"items":["a","c"]}`,
+		},
+		{
+			name:       "remove_nonexistent",
+			input:      `{"a":1}`,
+			removeJSON: []string{"b"},
+			expected:   `{"a":1}`,
+		},
+		{
+			name:       "remove_array_field",
+			input:      `{"users":[{"name":"alice","age":30}]}`,
+			removeJSON: []string{"users[0].age"},
+			expected:   `{"users":[{"name":"alice"}]}`,
+		},
+		// Combined operations
+		{
+			name:       "combined_operations",
+			input:      `{"old":"value","keep":"this"}`,
+			removeJSON: []string{"old"},
+			setJSON:    []string{"new=added"},
+			expected:   `{"keep":"this","new":"added"}`,
+		},
+		{
+			name:     "multiple_sets",
+			input:    `{}`,
+			setJSON:  []string{"a=1", "b=two", "c=true"},
+			expected: `{"a":1,"b":"two","c":true}`,
+		},
+		// Type inference
 		{
 			name:     "infer_string",
 			input:    `{}`,
@@ -317,9 +247,15 @@ func TestModifyJSONBody(t *testing.T) {
 		},
 		{
 			name:     "null_no_equals",
-			input:    `{"existing": "value"}`,
+			input:    `{"existing":"value"}`,
 			setJSON:  []string{"deleted_at"},
 			expected: `{"existing":"value","deleted_at":null}`,
+		},
+		{
+			name:     "overwrite_with_null",
+			input:    `{"key":"value"}`,
+			setJSON:  []string{"key"},
+			expected: `{"key":null}`,
 		},
 		{
 			name:     "infer_json_object",
@@ -333,54 +269,72 @@ func TestModifyJSONBody(t *testing.T) {
 			setJSON:  []string{`items=[1,2,3]`},
 			expected: `{"items":[1,2,3]}`,
 		},
+		// Encoded JSON strings
 		{
-			name:     "infer_nested_object",
-			input:    `{}`,
-			setJSON:  []string{`config={"debug":true,"level":5}`},
-			expected: `{"config":{"debug":true,"level":5}}`,
+			name:     "set_encoded_object",
+			input:    `{"user": "{\"email\": \"old@test.com\"}"}`,
+			setJSON:  []string{"user.email=new@test.com"},
+			expected: `{"user":"{\"email\":\"new@test.com\"}"}`,
 		},
 		{
-			name:       "combined_operations",
-			input:      `{"old": "value", "keep": "this"}`,
-			removeJSON: []string{"old"},
-			setJSON:    []string{"new=added"},
-			expected:   `{"keep":"this","new":"added"}`,
+			name:     "add_encoded_field",
+			input:    `{"user": "{\"email\": \"a@test.com\"}"}`,
+			setJSON:  []string{"user.name=Bob"},
+			expected: `{"user":"{\"email\":\"a@test.com\",\"name\":\"Bob\"}"}`,
 		},
 		{
-			name:     "multiple_sets",
-			input:    `{}`,
-			setJSON:  []string{"a=1", "b=two", "c=true"},
-			expected: `{"a":1,"b":"two","c":true}`,
+			name:     "set_encoded_array",
+			input:    `{"items": "[1,2,3]"}`,
+			setJSON:  []string{"items[1]=99"},
+			expected: `{"items":"[1,99,3]"}`,
 		},
 		{
-			name:     "nested_path_create",
-			input:    `{}`,
-			setJSON:  []string{"user.email=test@evil.com"},
-			expected: `{"user":{"email":"test@evil.com"}}`,
+			name:     "double_encoded_set",
+			input:    `{"outer": "{\"inner\": \"{\\\"deep\\\": \\\"old\\\"}\"}"}`,
+			setJSON:  []string{"outer.inner.deep=new"},
+			expected: `{"outer":"{\"inner\":\"{\\\"deep\\\":\\\"new\\\"}\"}"}`,
 		},
 		{
-			name:     "array_index_set",
-			input:    `{"items":["a","b","c"]}`,
-			setJSON:  []string{"items[1]=replaced"},
-			expected: `{"items":["a","replaced","c"]}`,
+			name:       "remove_encoded_field",
+			input:      `{"user": "{\"a\":1,\"b\":2}"}`,
+			removeJSON: []string{"user.b"},
+			expected:   `{"user":"{\"a\":1}"}`,
 		},
 		{
-			name:    "invalid_json_body",
-			input:   `not valid json`,
-			setJSON: []string{"key=value"},
-			wantErr: true,
+			name:       "remove_encoded_array",
+			input:      `{"items": "[1,2,3]"}`,
+			removeJSON: []string{"items[1]"},
+			expected:   `{"items":"[1,3]"}`,
 		},
 		{
-			name:     "no_modifications",
-			input:    `{"unchanged": true}`,
-			expected: `{"unchanged": true}`,
+			name:       "remove_double_encoded",
+			input:      `{"outer": "{\"inner\": \"{\\\"a\\\": 1, \\\"b\\\": 2}\"}"}`,
+			removeJSON: []string{"outer.inner.b"},
+			expected:   `{"outer":"{\"inner\":\"{\\\"a\\\":1}\"}"}`,
+		},
+		// No HTML escaping (raw byte comparison)
+		{
+			name:       "angle_brackets",
+			input:      `{}`,
+			setJSON:    []string{`xss=<script>alert(1)</script>`},
+			expected:   `{"xss":"<script>alert(1)</script>"}`,
+			rawCompare: true,
 		},
 		{
-			name:     "empty_body_creates_object",
-			input:    ``,
-			setJSON:  []string{"key=value"},
-			expected: `{"key":"value"}`,
+			name:       "ampersand",
+			input:      `{}`,
+			setJSON:    []string{`q=a&b=c`},
+			expected:   `{"q":"a&b=c"}`,
+			rawCompare: true,
 		},
+		{
+			name:       "nested_html",
+			input:      `{"data":"{}"}`,
+			setJSON:    []string{`data.tag=<img src=x>`},
+			expected:   `{"data":"{\"tag\":\"<img src=x>\"}"}`,
+			rawCompare: true,
+		},
+		// Edge cases
 		{
 			name:     "value_with_equals",
 			input:    `{}`,
@@ -399,6 +353,36 @@ func TestModifyJSONBody(t *testing.T) {
 			setJSON:  []string{"[1]=replaced"},
 			expected: `[1,"replaced",3]`,
 		},
+		{
+			name:     "empty_body_creates_object",
+			input:    ``,
+			setJSON:  []string{"key=value"},
+			expected: `{"key":"value"}`,
+		},
+		{
+			name:     "no_modifications",
+			input:    `{"unchanged": true}`,
+			expected: `{"unchanged": true}`,
+		},
+		// Error cases
+		{
+			name:    "invalid_json_body",
+			input:   `not valid json`,
+			setJSON: []string{"key=value"},
+			wantErr: true,
+		},
+		{
+			name:    "invalid_encoded_json",
+			input:   `{"data": "{not valid}"}`,
+			setJSON: []string{"data.field=x"},
+			wantErr: true,
+		},
+		{
+			name:    "plain_string_error",
+			input:   `{"data": "just text"}`,
+			setJSON: []string{"data.field=x"},
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -411,124 +395,102 @@ func TestModifyJSONBody(t *testing.T) {
 			}
 			require.NoError(t, err)
 
-			var expectedMap, resultMap interface{}
-			require.NoError(t, json.Unmarshal([]byte(tc.expected), &expectedMap))
-			require.NoError(t, json.Unmarshal(result, &resultMap))
-			assert.Equal(t, expectedMap, resultMap)
-		})
-	}
-}
-
-func TestSetEncodedJSONString(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		input    string
-		path     string
-		value    string
-		expected string
-		wantErr  bool
-	}{
-		{
-			name:     "set_in_encoded_object",
-			input:    `{"user": "{\"email\": \"old@test.com\"}"}`,
-			path:     "user.email",
-			value:    "new@test.com",
-			expected: `{"user":"{\"email\":\"new@test.com\"}"}`,
-		},
-		{
-			name:     "add_to_encoded_object",
-			input:    `{"user": "{\"email\": \"a@test.com\"}"}`,
-			path:     "user.name",
-			value:    "Bob",
-			expected: `{"user":"{\"email\":\"a@test.com\",\"name\":\"Bob\"}"}`,
-		},
-		{
-			name:     "set_in_encoded_array",
-			input:    `{"items": "[1,2,3]"}`,
-			path:     "items[1]",
-			value:    "99",
-			expected: `{"items":"[1,99,3]"}`,
-		},
-		{
-			name:     "double_encoded",
-			input:    `{"outer": "{\"inner\": \"{\\\"deep\\\": \\\"old\\\"}\"}"}`,
-			path:     "outer.inner.deep",
-			value:    "new",
-			expected: `{"outer":"{\"inner\":\"{\\\"deep\\\":\\\"new\\\"}\"}"}`,
-		},
-		{
-			name:    "invalid_json_string",
-			input:   `{"data": "{not valid}"}`,
-			path:    "data.field",
-			value:   "x",
-			wantErr: true,
-		},
-		{
-			name:    "plain_string_error",
-			input:   `{"data": "just text"}`,
-			path:    "data.field",
-			value:   "x",
-			wantErr: true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := modifyJSONBody([]byte(tc.input), []string{tc.path + "=" + tc.value}, nil)
-			if tc.wantErr {
-				assert.Error(t, err)
+			if tc.rawCompare {
+				assert.Equal(t, tc.expected, string(result))
 				return
 			}
-			require.NoError(t, err)
-			assert.JSONEq(t, tc.expected, string(result))
+
+			var expectedVal, resultVal interface{}
+			require.NoError(t, json.Unmarshal([]byte(tc.expected), &expectedVal))
+			require.NoError(t, json.Unmarshal(result, &resultVal))
+			assert.Equal(t, expectedVal, resultVal)
 		})
 	}
 }
 
-func TestRemoveEncodedJSONString(t *testing.T) {
+func TestFlattenJSON(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name     string
-		input    string
-		path     string
-		expected string
+		prefix   string
+		data     interface{}
+		expected map[string]interface{}
 	}{
 		{
-			name:     "remove_from_encoded_object",
-			input:    `{"user": "{\"a\":1,\"b\":2}"}`,
-			path:     "user.b",
-			expected: `{"user":"{\"a\":1}"}`,
+			name: "flat_object",
+			data: map[string]interface{}{"a": float64(1), "b": "two"},
+			expected: map[string]interface{}{
+				"a": float64(1),
+				"b": "two",
+			},
 		},
 		{
-			name:     "remove_from_encoded_array",
-			input:    `{"items": "[1,2,3]"}`,
-			path:     "items[1]",
-			expected: `{"items":"[1,3]"}`,
+			name: "nested_object",
+			data: map[string]interface{}{
+				"user": map[string]interface{}{"name": "alice"},
+			},
+			expected: map[string]interface{}{
+				"user.name": "alice",
+			},
 		},
 		{
-			name:     "remove_double_encoded",
-			input:    `{"outer": "{\"inner\": \"{\\\"a\\\": 1, \\\"b\\\": 2}\"}"}`,
-			path:     "outer.inner.b",
-			expected: `{"outer":"{\"inner\":\"{\\\"a\\\":1}\"}"}`,
+			name: "array_values",
+			data: map[string]interface{}{
+				"items": []interface{}{float64(1), float64(2)},
+			},
+			expected: map[string]interface{}{
+				"items[0]": float64(1),
+				"items[1]": float64(2),
+			},
+		},
+		{
+			name: "mixed_nesting",
+			data: map[string]interface{}{
+				"data": map[string]interface{}{
+					"items": []interface{}{
+						map[string]interface{}{"name": "a"},
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"data.items[0].name": "a",
+			},
+		},
+		{
+			name:     "empty_object",
+			data:     map[string]interface{}{},
+			expected: map[string]interface{}{"": map[string]interface{}{}},
+		},
+		{
+			name: "empty_nested_array",
+			data: map[string]interface{}{
+				"items": []interface{}{},
+			},
+			expected: map[string]interface{}{
+				"items": []interface{}{},
+			},
+		},
+		{
+			name: "null_value",
+			data: map[string]interface{}{"key": nil},
+			expected: map[string]interface{}{
+				"key": nil,
+			},
+		},
+		{
+			name:   "with_prefix",
+			prefix: "root",
+			data:   map[string]interface{}{"a": float64(1)},
+			expected: map[string]interface{}{
+				"root.a": float64(1),
+			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := modifyJSONBody([]byte(tc.input), nil, []string{tc.path})
-			require.NoError(t, err)
-			assert.JSONEq(t, tc.expected, string(result))
+			assert.Equal(t, tc.expected, flattenJSON(tc.prefix, tc.data))
 		})
 	}
-}
-
-func mustMarshal(t *testing.T, v interface{}) []byte {
-	t.Helper()
-
-	b, err := json.Marshal(v)
-	require.NoError(t, err)
-	return b
 }

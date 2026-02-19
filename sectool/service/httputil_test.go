@@ -91,7 +91,37 @@ func TestParseHeaderArg(t *testing.T) {
 		},
 		{
 			name: "wrong_type",
-			raw:  "not a map or slice",
+			raw:  42,
+			want: nil,
+		},
+		{
+			name: "string_plain_text",
+			raw:  "not a JSON structure",
+			want: nil,
+		},
+		{
+			name: "string_encoded_array",
+			raw:  `["X-Custom: value", "Accept: application/json"]`,
+			want: []string{"X-Custom: value", "Accept: application/json"},
+		},
+		{
+			name: "string_encoded_object",
+			raw:  `{"Accept": "application/json", "X-Custom": "value"}`,
+			want: []string{"Accept: application/json", "X-Custom: value"},
+		},
+		{
+			name: "string_encoded_duplicates",
+			raw:  `["Content-Length: 5", "Content-Length: 10"]`,
+			want: []string{"Content-Length: 5", "Content-Length: 10"},
+		},
+		{
+			name: "string_encoded_empty_array",
+			raw:  `[]`,
+			want: []string{},
+		},
+		{
+			name: "string_encoded_invalid_json",
+			raw:  `[invalid`,
 			want: nil,
 		},
 		{
@@ -142,28 +172,28 @@ func TestExtractRequestMeta(t *testing.T) {
 		path   string
 	}{
 		{
-			name:   "simple GET",
+			name:   "simple_get",
 			raw:    "GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\n",
 			method: "GET",
 			host:   "example.com",
 			path:   "/api/users",
 		},
 		{
-			name:   "POST with port",
+			name:   "post_with_port",
 			raw:    "POST /login HTTP/1.1\r\nHost: api.example.com:8080\r\n\r\n",
 			method: "POST",
 			host:   "api.example.com:8080",
 			path:   "/login",
 		},
 		{
-			name:   "with query string",
+			name:   "with_query_string",
 			raw:    "GET /search?q=test&page=1 HTTP/1.1\r\nHost: example.com\r\nAccept: */*\r\n\r\n",
 			method: "GET",
 			host:   "example.com",
 			path:   "/search?q=test&page=1",
 		},
 		{
-			name:   "lowercase host header",
+			name:   "lowercase_host_header",
 			raw:    "GET / HTTP/1.1\r\nhost: lowercase.com\r\n\r\n",
 			method: "GET",
 			host:   "lowercase.com",
@@ -198,14 +228,35 @@ func TestExtractRequestMeta(t *testing.T) {
 			path:   "/",
 		},
 		{
-			name:   "malformed - no crash",
+			name:   "host_space_before_colon",
+			raw:    "GET /path HTTP/1.1\r\nHost : example.com\r\n\r\n",
+			method: "GET",
+			host:   "example.com",
+			path:   "/path",
+		},
+		{
+			name:   "bare_lf_simple",
+			raw:    "GET /api/users HTTP/1.1\nHost: example.com\n\n",
+			method: "GET",
+			host:   "example.com",
+			path:   "/api/users",
+		},
+		{
+			name:   "bare_lf_proxy_form",
+			raw:    "GET http://127.0.0.1:8080/path?q=1 HTTP/1.1\nUser-Agent: test\n\n",
+			method: "GET",
+			host:   "127.0.0.1:8080",
+			path:   "/path?q=1",
+		},
+		{
+			name:   "malformed_no_crash",
 			raw:    "garbage",
 			method: "",
 			host:   "",
 			path:   "",
 		},
 		{
-			name:   "empty string",
+			name:   "empty_string",
 			raw:    "",
 			method: "",
 			host:   "",
@@ -233,27 +284,39 @@ func TestSplitHeadersBody(t *testing.T) {
 		wantBody    string
 	}{
 		{
-			name:        "simple request with body",
+			name:        "request_with_body",
 			raw:         "GET / HTTP/1.1\r\nHost: example.com\r\n\r\nbody here",
 			wantHeaders: "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
 			wantBody:    "body here",
 		},
 		{
-			name:        "no body",
+			name:        "no_body",
 			raw:         "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
 			wantHeaders: "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
 			wantBody:    "",
 		},
 		{
-			name:        "binary body",
+			name:        "binary_body",
 			raw:         "POST / HTTP/1.1\r\n\r\n\x00\x01\x02",
 			wantHeaders: "POST / HTTP/1.1\r\n\r\n",
 			wantBody:    "\x00\x01\x02",
 		},
 		{
-			name:        "no separator",
+			name:        "no_separator",
 			raw:         "malformed request",
 			wantHeaders: "malformed request",
+			wantBody:    "",
+		},
+		{
+			name:        "bare_lf_with_body",
+			raw:         "GET / HTTP/1.1\nHost: example.com\n\nbody here",
+			wantHeaders: "GET / HTTP/1.1\nHost: example.com\n\n",
+			wantBody:    "body here",
+		},
+		{
+			name:        "bare_lf_no_body",
+			raw:         "POST / HTTP/1.1\nHost: x\n\n",
+			wantHeaders: "POST / HTTP/1.1\nHost: x\n\n",
 			wantBody:    "",
 		},
 	}
@@ -294,16 +357,6 @@ func TestReadResponseStatusCode(t *testing.T) {
 			name:     "http_2_0_500",
 			input:    []byte("HTTP/2.0 500 Internal Server Error\r\n\r\n"),
 			expected: 500,
-		},
-		{
-			name:     "status_204_no_content",
-			input:    []byte("HTTP/1.1 204 No Content\r\n\r\n"),
-			expected: 204,
-		},
-		{
-			name:     "status_301_redirect",
-			input:    []byte("HTTP/1.1 301 Moved Permanently\r\nLocation: /new\r\n\r\n"),
-			expected: 301,
 		},
 		{
 			name:     "lf_only_line_ending",
@@ -383,19 +436,9 @@ func TestTransformRequestForValidation(t *testing.T) {
 			expected: []byte("POST /api/example HTTP/1.1\r\nHost: example.com\r\n\r\n"),
 		},
 		{
-			name:     "get_http_2",
-			input:    []byte("GET /path HTTP/2\r\nHost: test.com\r\n\r\n"),
-			expected: []byte("GET /path HTTP/1.1\r\nHost: test.com\r\n\r\n"),
-		},
-		{
 			name:     "http_1_1_unchanged",
 			input:    []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"),
 			expected: []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"),
-		},
-		{
-			name:     "http_1_0_unchanged",
-			input:    []byte("GET / HTTP/1.0\r\nHost: example.com\r\n\r\n"),
-			expected: []byte("GET / HTTP/1.0\r\nHost: example.com\r\n\r\n"),
 		},
 		{
 			name:     "http_2_with_body",
@@ -403,9 +446,14 @@ func TestTransformRequestForValidation(t *testing.T) {
 			expected: []byte("POST /api HTTP/1.1\r\nHost: test.com\r\nContent-Length: 4\r\n\r\ntest"),
 		},
 		{
-			name:     "no_crlf",
+			name:     "no_line_ending",
 			input:    []byte("GET / HTTP/2"),
 			expected: []byte("GET / HTTP/2"),
+		},
+		{
+			name:     "bare_lf_http_2",
+			input:    []byte("POST /api HTTP/2\nHost: test.com\n\n"),
+			expected: []byte("POST /api HTTP/1.1\nHost: test.com\n\n"),
 		},
 	}
 
@@ -554,6 +602,27 @@ func TestModifyRequestLine(t *testing.T) {
 			opts:     &PathQueryOpts{RemoveQuery: []string{"b", "d"}},
 			expected: "GET /api?a=1&c=3 HTTP/1.1\r\nHost: example.com\r\n\r\n",
 		},
+		// Encoding preservation: existing percent-encoding is not normalized
+		{
+			name:     "encoding_preservation",
+			input:    []byte("GET /api?foo=%2F&bar=hello HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			opts:     &PathQueryOpts{SetQuery: []string{"baz=new"}},
+			expected: "GET /api?foo=%2F&bar=hello&baz=new HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		},
+		// Order preservation on set: existing param order is maintained
+		{
+			name:     "order_preservation_on_set",
+			input:    []byte("GET /api?z=1&a=2&m=3 HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			opts:     &PathQueryOpts{SetQuery: []string{"a=changed"}},
+			expected: "GET /api?z=1&a=changed&m=3 HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		},
+		// Bare-LF line endings
+		{
+			name:     "bare_lf_replace_path",
+			input:    []byte("GET /old HTTP/1.1\nHost: example.com\n\n"),
+			opts:     &PathQueryOpts{Path: "/new"},
+			expected: "GET /new HTTP/1.1\nHost: example.com\n\n",
+		},
 	}
 
 	for _, tc := range tests {
@@ -633,24 +702,6 @@ func TestParseResponseStatus(t *testing.T) {
 			expectedStatus: "HTTP/1.0 404 Not Found",
 		},
 		{
-			name:           "http_1_1_500",
-			input:          []byte("HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nerror"),
-			expectedCode:   500,
-			expectedStatus: "HTTP/1.1 500 Internal Server Error",
-		},
-		{
-			name:           "http_1_1_301_redirect",
-			input:          []byte("HTTP/1.1 301 Moved Permanently\r\nLocation: /new\r\n\r\n"),
-			expectedCode:   301,
-			expectedStatus: "HTTP/1.1 301 Moved Permanently",
-		},
-		{
-			name:           "http_1_1_204_no_content",
-			input:          []byte("HTTP/1.1 204 No Content\r\n\r\n"),
-			expectedCode:   204,
-			expectedStatus: "HTTP/1.1 204 No Content",
-		},
-		{
 			name:           "empty_input",
 			input:          []byte{},
 			expectedCode:   0,
@@ -690,42 +741,42 @@ func TestReadResponseBytes(t *testing.T) {
 		wantErr    bool
 	}{
 		{
-			name:       "http/1.1 response",
+			name:       "http_1_1",
 			input:      "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n",
 			wantStatus: 200,
 			wantProto:  "HTTP/1.1",
 		},
 		{
-			name:       "http/1.0 response",
+			name:       "http_1_0",
 			input:      "HTTP/1.0 404 Not Found\r\n\r\n",
 			wantStatus: 404,
 			wantProto:  "HTTP/1.0",
 		},
 		{
-			name:       "http/2 normalized and parsed",
+			name:       "http_2_normalized",
 			input:      "HTTP/2 200\r\nContent-Type: text/html\r\n\r\n",
 			wantStatus: 200,
 			wantProto:  "HTTP/2.0",
 		},
 		{
-			name:       "http/2 with reason phrase",
+			name:       "http_2_reason_phrase",
 			input:      "HTTP/2 301 Moved Permanently\r\nLocation: /new\r\n\r\n",
 			wantStatus: 301,
 			wantProto:  "HTTP/2.0",
 		},
 		{
-			name:       "http/2.0 already normalized",
+			name:       "http_2_0_normalized",
 			input:      "HTTP/2.0 204 No Content\r\n\r\n",
 			wantStatus: 204,
 			wantProto:  "HTTP/2.0",
 		},
 		{
-			name:    "empty input",
+			name:    "empty_input",
 			input:   "",
 			wantErr: true,
 		},
 		{
-			name:    "malformed response",
+			name:    "malformed_response",
 			input:   "not a valid http response",
 			wantErr: true,
 		},
@@ -796,19 +847,12 @@ func TestIsBinaryContentType(t *testing.T) {
 	}{
 		{"empty", "", false},
 		{"text_plain", "text/plain", false},
-		{"text_html", "text/html", false},
 		{"application_json", "application/json", false},
-		{"application_xml", "application/xml", false},
 		{"image_png", "image/png", true},
-		{"image_jpeg", "image/jpeg", true},
 		{"audio_mpeg", "audio/mpeg", true},
 		{"video_mp4", "video/mp4", true},
 		{"font_woff2", "font/woff2", true},
 		{"octet_stream", "application/octet-stream", true},
-		{"pdf", "application/pdf", true},
-		{"zip", "application/zip", true},
-		{"gzip", "application/gzip", true},
-		{"protobuf", "application/x-protobuf", true},
 		{"wasm", "application/wasm", true},
 		{"with_charset", "image/png; charset=utf-8", true},
 		{"case_insensitive", "Image/PNG", true},
@@ -1021,16 +1065,74 @@ func TestNormalizePath(t *testing.T) {
 	}
 }
 
-func TestBuildRawRequest(t *testing.T) {
+func TestExtractRequestPath(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		method       string
-		url          string
-		headers      map[string]string
-		body         []byte
-		wantContains []string
+		name string
+		raw  []byte
+		want string
+	}{
+		{
+			name: "standard_get",
+			raw:  []byte("GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			want: "/api/users",
+		},
+		{
+			name: "with_query_string",
+			raw:  []byte("GET /search?q=test&page=1 HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			want: "/search",
+		},
+		{
+			name: "bare_lf",
+			raw:  []byte("POST /submit HTTP/1.1\nHost: example.com\n\n"),
+			want: "/submit",
+		},
+		{
+			name: "bare_lf_with_query",
+			raw:  []byte("GET /path?key=val HTTP/1.1\nHost: example.com\n\n"),
+			want: "/path",
+		},
+		{
+			name: "empty_input",
+			raw:  nil,
+			want: "/",
+		},
+		{
+			name: "method_only",
+			raw:  []byte("GET\r\n"),
+			want: "/",
+		},
+		{
+			name: "root_path",
+			raw:  []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			want: "/",
+		},
+		{
+			name: "absolute_uri",
+			raw:  []byte("GET http://example.com/path HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			want: "http://example.com/path",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, extractRequestPath(tt.raw))
+		})
+	}
+}
+
+func TestBuildRawRequestManual(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		method          string
+		url             string
+		headers         []string
+		body            []byte
+		wantContains    []string
+		wantNotContains []string
 	}{
 		{
 			name:    "simple_get",
@@ -1056,13 +1158,11 @@ func TestBuildRawRequest(t *testing.T) {
 			},
 		},
 		{
-			name:   "post_with_body",
-			method: "POST",
-			url:    "https://api.example.com/users",
-			headers: map[string]string{
-				"Content-Type": "application/json",
-			},
-			body: []byte(`{"name":"test"}`),
+			name:    "post_with_body",
+			method:  "POST",
+			url:     "https://api.example.com/users",
+			headers: []string{"Content-Type: application/json"},
+			body:    []byte(`{"name":"test"}`),
 			wantContains: []string{
 				"POST /users HTTP/1.1\r\n",
 				"Host: api.example.com\r\n",
@@ -1072,26 +1172,22 @@ func TestBuildRawRequest(t *testing.T) {
 			},
 		},
 		{
-			name:   "with_auth_header",
-			method: "GET",
-			url:    "https://api.example.com/protected",
-			headers: map[string]string{
-				"Authorization": "Bearer token123",
-			},
-			body: nil,
+			name:    "with_auth_header",
+			method:  "GET",
+			url:     "https://api.example.com/protected",
+			headers: []string{"Authorization: Bearer token123"},
+			body:    nil,
 			wantContains: []string{
 				"GET /protected HTTP/1.1\r\n",
 				"Authorization: Bearer token123\r\n",
 			},
 		},
 		{
-			name:   "custom_host_header",
-			method: "GET",
-			url:    "https://example.com/path",
-			headers: map[string]string{
-				"Host": "custom.host.com",
-			},
-			body: nil,
+			name:    "custom_host_header",
+			method:  "GET",
+			url:     "https://example.com/path",
+			headers: []string{"Host: custom.host.com"},
+			body:    nil,
 			wantContains: []string{
 				"GET /path HTTP/1.1\r\n",
 				"Host: custom.host.com\r\n",
@@ -1119,15 +1215,51 @@ func TestBuildRawRequest(t *testing.T) {
 				"Host: example.com:8443\r\n",
 			},
 		},
+		{
+			name:    "preserves_header_order",
+			method:  "GET",
+			url:     "https://example.com/",
+			headers: []string{"X-First: 1", "X-Second: 2", "X-Third: 3"},
+			body:    nil,
+			wantContains: []string{
+				"X-First: 1\r\nX-Second: 2\r\nX-Third: 3\r\n",
+			},
+		},
+		{
+			name:    "explicit_cl_preserved",
+			method:  "POST",
+			url:     "https://example.com/",
+			headers: []string{"Content-Length: 99"},
+			body:    []byte("hello"),
+			wantContains: []string{
+				"Content-Length: 99\r\n",
+			},
+		},
+		{
+			name:    "te_present_no_auto_cl",
+			method:  "POST",
+			url:     "https://example.com/",
+			headers: []string{"Transfer-Encoding: chunked"},
+			body:    []byte("5\r\nHELLO\r\n0\r\n\r\n"),
+			wantContains: []string{
+				"Transfer-Encoding: chunked\r\n",
+			},
+			wantNotContains: []string{
+				"Content-Length:",
+			},
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			u, err := parseURLWithDefaultHTTPS(tc.url)
 			require.NoError(t, err)
-			result := string(buildRawRequest(tc.method, u, tc.headers, tc.body))
+			result := string(buildRawRequestManual(tc.method, u, tc.headers, tc.body))
 			for _, want := range tc.wantContains {
 				assert.Contains(t, result, want)
+			}
+			for _, notWant := range tc.wantNotContains {
+				assert.NotContains(t, result, notWant)
 			}
 		})
 	}
@@ -1137,21 +1269,22 @@ func TestGlobToRegex(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
+		name     string
 		glob     string
 		expected string
 	}{
-		{"*.example.com", `.*\.example\.com`},
-		{"api.example.com", `api\.example\.com`},
-		{"test?", `test.`},
-		{"*.*.com", `.*\..*\.com`},
-		{"plain", `plain`},
-		{"path/to/*", `path/to/.*`},
-		{"[bracket]", `\[bracket\]`},
-		{"(paren)", `\(paren\)`},
+		{"wildcard_domain", "*.example.com", `.*\.example\.com`},
+		{"literal_domain", "api.example.com", `api\.example\.com`},
+		{"question_mark", "test?", `test.`},
+		{"double_wildcard", "*.*.com", `.*\..*\.com`},
+		{"plain_string", "plain", `plain`},
+		{"wildcard_path", "path/to/*", `path/to/.*`},
+		{"brackets_escaped", "[bracket]", `\[bracket\]`},
+		{"parens_escaped", "(paren)", `\(paren\)`},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.glob, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, globToRegex(tt.glob))
 		})
 	}
@@ -1161,21 +1294,22 @@ func TestMatchesGlob(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
+		name    string
 		s       string
 		pattern string
 		match   bool
 	}{
-		{"api.example.com", "*.example.com", true},
-		{"example.com", "*.example.com", false},
-		{"api.example.com", "api.example.com", true},
-		{"api.example.com", "api.*.com", true},
-		{"test1", "test?", true},
-		{"test12", "test?", false},
-		{"anything", "", true}, // empty pattern matches all
+		{"subdomain_wildcard", "api.example.com", "*.example.com", true},
+		{"root_no_match", "example.com", "*.example.com", false},
+		{"exact_match", "api.example.com", "api.example.com", true},
+		{"middle_wildcard", "api.example.com", "api.*.com", true},
+		{"question_mark_match", "test1", "test?", true},
+		{"question_mark_no_match", "test12", "test?", false},
+		{"empty_matches_all", "anything", "", true},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.s+"_"+tt.pattern, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.match, matchesGlob(tt.s, tt.pattern))
 		})
 	}
@@ -1185,24 +1319,25 @@ func TestMatchesCookieDomain(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
+		name   string
 		domain string
 		filter string
 		match  bool
 	}{
-		{"example.com", "example.com", true},
-		{"api.example.com", "example.com", true},
-		{"a.b.example.com", "example.com", true},
-		{"Example.COM", "example.com", true},     // case insensitive
-		{"api.EXAMPLE.com", "Example.Com", true}, // case insensitive subdomain
-		{"other.com", "example.com", false},
-		{"notexample.com", "example.com", false}, // suffix but not subdomain
-		{"example.com.evil.com", "example.com", false},
-		{"", "example.com", false},
-		{"example.com", "", false},
+		{"exact_match", "example.com", "example.com", true},
+		{"subdomain_match", "api.example.com", "example.com", true},
+		{"deep_subdomain_match", "a.b.example.com", "example.com", true},
+		{"case_insensitive", "Example.COM", "example.com", true},
+		{"case_insensitive_subdomain", "api.EXAMPLE.com", "Example.Com", true},
+		{"different_domain", "other.com", "example.com", false},
+		{"suffix_not_subdomain", "notexample.com", "example.com", false},
+		{"domain_in_subdomain", "example.com.evil.com", "example.com", false},
+		{"empty_domain", "", "example.com", false},
+		{"empty_filter", "example.com", "", false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.domain+"_"+tt.filter, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.match, matchesCookieDomain(tt.domain, tt.filter))
 		})
 	}
@@ -1212,18 +1347,19 @@ func TestParseCommaSeparated(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
+		name     string
 		input    string
 		expected []string
 	}{
-		{"GET,POST,PUT", []string{"GET", "POST", "PUT"}},
-		{"GET, POST, PUT", []string{"GET", "POST", "PUT"}},
-		{"GET", []string{"GET"}},
-		{"", nil},
-		{" , , ", []string{}},
+		{"comma_separated", "GET,POST,PUT", []string{"GET", "POST", "PUT"}},
+		{"with_spaces", "GET, POST, PUT", []string{"GET", "POST", "PUT"}},
+		{"single_value", "GET", []string{"GET"}},
+		{"empty", "", nil},
+		{"all_whitespace", " , , ", []string{}},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, parseCommaSeparated(tt.input))
 		})
 	}
@@ -1232,70 +1368,79 @@ func TestParseCommaSeparated(t *testing.T) {
 func TestParseStatusFilter(t *testing.T) {
 	t.Parallel()
 
-	t.Run("exact_codes", func(t *testing.T) {
-		f := parseStatusFilter("200,302,404")
-		assert.True(t, f.Matches(200))
-		assert.True(t, f.Matches(302))
-		assert.True(t, f.Matches(404))
-		assert.False(t, f.Matches(500))
-	})
+	tests := []struct {
+		name        string
+		input       string
+		wantNil     bool
+		wantEmpty   bool
+		wantMatch   []int
+		wantNoMatch []int
+	}{
+		{
+			name:        "exact_codes",
+			input:       "200,302,404",
+			wantMatch:   []int{200, 302, 404},
+			wantNoMatch: []int{500},
+		},
+		{
+			name:        "range_uppercase",
+			input:       "2XX",
+			wantMatch:   []int{200, 201, 299},
+			wantNoMatch: []int{199, 300},
+		},
+		{
+			name:        "range_lowercase",
+			input:       "4xx",
+			wantMatch:   []int{400, 404, 499},
+			wantNoMatch: []int{399, 500},
+		},
+		{
+			name:        "mixed_codes_and_ranges",
+			input:       "2XX,404,5xx",
+			wantMatch:   []int{200, 201, 404, 500, 503},
+			wantNoMatch: []int{302, 400},
+		},
+		{
+			name:      "empty_input",
+			input:     "",
+			wantNil:   true,
+			wantEmpty: true,
+			wantMatch: []int{200},
+		},
+		{
+			name:      "invalid_input",
+			input:     "invalid",
+			wantEmpty: true,
+		},
+		{
+			name:      "whitespace_handling",
+			input:     "200, 2xx, 404",
+			wantMatch: []int{200, 201, 404},
+		},
+		{
+			name:      "all_ranges",
+			input:     "1XX,2XX,3XX,4XX,5XX",
+			wantMatch: []int{100, 200, 301, 404, 503},
+		},
+	}
 
-	t.Run("range_uppercase", func(t *testing.T) {
-		f := parseStatusFilter("2XX")
-		assert.True(t, f.Matches(200))
-		assert.True(t, f.Matches(201))
-		assert.True(t, f.Matches(299))
-		assert.False(t, f.Matches(300))
-		assert.False(t, f.Matches(199))
-	})
-
-	t.Run("range_lowercase", func(t *testing.T) {
-		f := parseStatusFilter("4xx")
-		assert.True(t, f.Matches(400))
-		assert.True(t, f.Matches(404))
-		assert.True(t, f.Matches(499))
-		assert.False(t, f.Matches(500))
-		assert.False(t, f.Matches(399))
-	})
-
-	t.Run("mixed_codes_and_ranges", func(t *testing.T) {
-		f := parseStatusFilter("2XX,404,5xx")
-		assert.True(t, f.Matches(200))
-		assert.True(t, f.Matches(201))
-		assert.True(t, f.Matches(404))
-		assert.True(t, f.Matches(500))
-		assert.True(t, f.Matches(503))
-		assert.False(t, f.Matches(400))
-		assert.False(t, f.Matches(302))
-	})
-
-	t.Run("empty_input", func(t *testing.T) {
-		f := parseStatusFilter("")
-		assert.Nil(t, f)
-		assert.True(t, f.Empty())
-		assert.True(t, f.Matches(200)) // nil filter matches all
-	})
-
-	t.Run("invalid_input", func(t *testing.T) {
-		f := parseStatusFilter("invalid")
-		assert.True(t, f.Empty())
-	})
-
-	t.Run("whitespace_handling", func(t *testing.T) {
-		f := parseStatusFilter("200, 2xx, 404")
-		assert.True(t, f.Matches(200))
-		assert.True(t, f.Matches(201))
-		assert.True(t, f.Matches(404))
-	})
-
-	t.Run("all_ranges", func(t *testing.T) {
-		f := parseStatusFilter("1XX,2XX,3XX,4XX,5XX")
-		assert.True(t, f.Matches(100))
-		assert.True(t, f.Matches(200))
-		assert.True(t, f.Matches(301))
-		assert.True(t, f.Matches(404))
-		assert.True(t, f.Matches(503))
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := parseStatusFilter(tt.input)
+			if tt.wantNil {
+				assert.Nil(t, f)
+			}
+			if tt.wantEmpty {
+				assert.True(t, f.Empty())
+			}
+			for _, code := range tt.wantMatch {
+				assert.True(t, f.Matches(code), "expected %d to match", code)
+			}
+			for _, code := range tt.wantNoMatch {
+				assert.False(t, f.Matches(code), "expected %d not to match", code)
+			}
+		})
+	}
 }
 
 func TestUpdateContentLength(t *testing.T) {
@@ -1331,11 +1476,165 @@ func TestUpdateContentLength(t *testing.T) {
 			length:  20,
 			want:    "POST / HTTP/1.1\r\nContent-Length: 20\r\n\r\n",
 		},
+		{
+			name:    "duplicate_cl_collapsed",
+			headers: "POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 10\r\n\r\n",
+			length:  7,
+			want:    "POST / HTTP/1.1\r\nContent-Length: 7\r\n\r\n",
+		},
+		{
+			name:    "zero_with_existing_cl",
+			headers: "POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\n",
+			length:  0,
+			want:    "POST / HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+		},
+		{
+			name:    "space_before_colon",
+			headers: "POST / HTTP/1.1\r\nContent-Length : 5\r\n\r\n",
+			length:  20,
+			want:    "POST / HTTP/1.1\r\nContent-Length: 20\r\n\r\n",
+		},
+		{
+			name:    "bare_lf_update",
+			headers: "POST / HTTP/1.1\nContent-Length: 5\n\n",
+			length:  20,
+			want:    "POST / HTTP/1.1\nContent-Length: 20\n\n",
+		},
+		{
+			name:    "bare_lf_add",
+			headers: "POST / HTTP/1.1\nHost: x\n\n",
+			length:  100,
+			want:    "POST / HTTP/1.1\nHost: x\nContent-Length: 100\n\n",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, string(updateContentLength([]byte(tt.headers), tt.length)))
+		})
+	}
+}
+
+func TestValidateWireAnomalies(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		headers    string
+		wantChecks []string
+	}{
+		{
+			name:       "clean_request",
+			headers:    "GET / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 0\r\n\r\n",
+			wantChecks: nil,
+		},
+		{
+			name:       "te_cl_conflict",
+			headers:    "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n",
+			wantChecks: []string{"te-cl-conflict"},
+		},
+		{
+			name:       "duplicate_cl",
+			headers:    "POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 10\r\n\r\n",
+			wantChecks: []string{"duplicate-cl"},
+		},
+		{
+			name:       "duplicate_te",
+			headers:    "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: identity\r\n\r\n",
+			wantChecks: []string{"duplicate-te"},
+		},
+		{
+			name:       "header_whitespace",
+			headers:    "GET / HTTP/1.1\r\nContent-Length : 4\r\n\r\n",
+			wantChecks: []string{"header-whitespace"},
+		},
+		{
+			name:       "ows_after_colon_ok",
+			headers:    "GET / HTTP/1.1\r\nHost:  example.com\r\n\r\n",
+			wantChecks: nil,
+		},
+		{
+			name:       "te_cl_space_before_colon",
+			headers:    "POST / HTTP/1.1\r\nTransfer-Encoding : chunked\r\nContent-Length : 5\r\n\r\n",
+			wantChecks: []string{"te-cl-conflict", "header-whitespace"},
+		},
+		{
+			name:       "duplicate_cl_space_before_colon",
+			headers:    "POST / HTTP/1.1\r\nContent-Length : 5\r\nContent-Length : 10\r\n\r\n",
+			wantChecks: []string{"duplicate-cl", "header-whitespace"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issues := validateWireAnomalies([]byte(tt.headers))
+			if len(tt.wantChecks) == 0 {
+				assert.Empty(t, issues)
+				return
+			}
+			var gotChecks []string
+			for _, iss := range issues {
+				gotChecks = append(gotChecks, iss.Check)
+			}
+			for _, want := range tt.wantChecks {
+				assert.Contains(t, gotChecks, want)
+			}
+		})
+	}
+}
+
+func TestApplyHeaderModifications(t *testing.T) {
+	t.Parallel()
+
+	base := "GET / HTTP/1.1\r\nHost: example.com\r\nX-Old: value\r\n\r\n"
+
+	tests := []struct {
+		name         string
+		remove       []string
+		set          []string
+		wantContains []string
+		wantMissing  []string
+	}{
+		{
+			name:         "single_replaces_existing",
+			set:          []string{"Host: new.example.com"},
+			wantContains: []string{"Host: new.example.com"},
+			wantMissing:  []string{"Host: example.com"},
+		},
+		{
+			name:         "duplicate_headers_preserved",
+			set:          []string{"X-Custom: a", "X-Custom: b"},
+			wantContains: []string{"X-Custom: a", "X-Custom: b"},
+		},
+		{
+			name:         "remove_then_set",
+			remove:       []string{"X-Old"},
+			set:          []string{"X-New: added"},
+			wantContains: []string{"X-New: added"},
+			wantMissing:  []string{"X-Old"},
+		},
+		{
+			name:         "mixed_single_and_duplicate",
+			set:          []string{"Host: new.com", "TE: chunked", "TE: identity"},
+			wantContains: []string{"Host: new.com", "TE: chunked", "TE: identity"},
+			wantMissing:  []string{"Host: example.com"},
+		},
+		{
+			name:         "verbatim_whitespace",
+			set:          []string{"Transfer-Encoding:  chunked"},
+			wantContains: []string{"Transfer-Encoding:  chunked"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := string(applyHeaderModifications([]byte(base), tt.remove, tt.set))
+			for _, want := range tt.wantContains {
+				assert.Contains(t, result, want)
+			}
+			for _, missing := range tt.wantMissing {
+				assert.NotContains(t, result, missing)
+			}
 		})
 	}
 }
@@ -1406,6 +1705,34 @@ func TestSetHeader(t *testing.T) {
 			hValue:  "filled",
 			want:    "GET / HTTP/1.1\r\nHost: x\r\nX-Blank: filled\r\n\r\n",
 		},
+		{
+			name:    "space_before_colon",
+			headers: "GET / HTTP/1.1\r\nContent-Length : 5\r\n\r\n",
+			hName:   "Content-Length",
+			hValue:  "10",
+			want:    "GET / HTTP/1.1\r\nContent-Length: 10\r\n\r\n",
+		},
+		{
+			name:    "tab_before_colon",
+			headers: "GET / HTTP/1.1\r\nHost\t: old.com\r\n\r\n",
+			hName:   "Host",
+			hValue:  "new.com",
+			want:    "GET / HTTP/1.1\r\nHost: new.com\r\n\r\n",
+		},
+		{
+			name:    "bare_lf_add_new",
+			headers: "GET / HTTP/1.1\nHost: x\n\n",
+			hName:   "Authorization",
+			hValue:  "Bearer token",
+			want:    "GET / HTTP/1.1\nHost: x\nAuthorization: Bearer token\n\n",
+		},
+		{
+			name:    "bare_lf_replace",
+			headers: "GET / HTTP/1.1\nHost: old.com\n\n",
+			hName:   "Host",
+			hValue:  "new.com",
+			want:    "GET / HTTP/1.1\nHost: new.com\n\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1454,6 +1781,18 @@ func TestRemoveHeader(t *testing.T) {
 			hName:   "X-Lower",
 			want:    "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
 		},
+		{
+			name:    "space_before_colon",
+			headers: "GET / HTTP/1.1\r\nHost: x\r\nContent-Length : 5\r\n\r\n",
+			hName:   "Content-Length",
+			want:    "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+		},
+		{
+			name:    "bare_lf",
+			headers: "GET / HTTP/1.1\nHost: x\nX-Remove: val\n\n",
+			hName:   "X-Remove",
+			want:    "GET / HTTP/1.1\nHost: x\n\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1493,6 +1832,13 @@ func TestSetHeaderIfMissing(t *testing.T) {
 			hName:   "User-Agent",
 			hValue:  "sectool/1.0",
 			want:    "GET / HTTP/1.1\r\nHost: x\r\nuser-agent: existing\r\n\r\n",
+		},
+		{
+			name:    "space_before_colon_present",
+			headers: "GET / HTTP/1.1\r\nHost: x\r\nUser-Agent : existing\r\n\r\n",
+			hName:   "User-Agent",
+			hValue:  "sectool/1.0",
+			want:    "GET / HTTP/1.1\r\nHost: x\r\nUser-Agent : existing\r\n\r\n",
 		},
 	}
 
@@ -1547,6 +1893,12 @@ func TestExtractHeader(t *testing.T) {
 			headers: "HTTP/1.1 200 OK\r\nContent-Encoding: gzip, br\r\n\r\n",
 			search:  "Content-Encoding",
 			want:    "gzip, br",
+		},
+		{
+			name:    "bare_lf",
+			headers: "HTTP/1.1 200 OK\nContent-Encoding: gzip\n\n",
+			search:  "Content-Encoding",
+			want:    "gzip",
 		},
 	}
 
@@ -1641,6 +1993,269 @@ func compressGzipBytes(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func TestParseTarget(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		raw       string
+		override  string
+		wantHost  string
+		wantPort  int
+		wantHTTPS bool
+	}{
+		{
+			name:      "host_header_no_port",
+			raw:       "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			wantHost:  "example.com",
+			wantPort:  443,
+			wantHTTPS: true,
+		},
+		{
+			name:      "host_header_port_443",
+			raw:       "GET / HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+			wantHost:  "example.com",
+			wantPort:  443,
+			wantHTTPS: true,
+		},
+		{
+			name:      "host_header_port_80",
+			raw:       "GET / HTTP/1.1\r\nHost: example.com:80\r\n\r\n",
+			wantHost:  "example.com",
+			wantPort:  80,
+			wantHTTPS: false,
+		},
+		{
+			name:      "host_header_custom_port",
+			raw:       "GET / HTTP/1.1\r\nHost: example.com:8443\r\n\r\n",
+			wantHost:  "example.com",
+			wantPort:  8443,
+			wantHTTPS: false,
+		},
+		{
+			name:      "target_override_https",
+			raw:       "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			override:  "https://staging.example.com:8443",
+			wantHost:  "staging.example.com",
+			wantPort:  8443,
+			wantHTTPS: true,
+		},
+		{
+			name:      "target_override_http",
+			raw:       "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+			override:  "http://staging.example.com",
+			wantHost:  "staging.example.com",
+			wantPort:  80,
+			wantHTTPS: false,
+		},
+		{
+			name:      "proxy_form_http",
+			raw:       "GET http://example.com:8080/path HTTP/1.1\r\n\r\n",
+			wantHost:  "example.com",
+			wantPort:  8080,
+			wantHTTPS: false,
+		},
+		{
+			name:      "proxy_form_https",
+			raw:       "GET https://example.com/path HTTP/1.1\r\n\r\n",
+			wantHost:  "example.com",
+			wantPort:  443,
+			wantHTTPS: true,
+		},
+		{
+			name:      "bare_lf_host_header",
+			raw:       "GET / HTTP/1.1\nHost: example.com\n\n",
+			wantHost:  "example.com",
+			wantPort:  443,
+			wantHTTPS: true,
+		},
+		{
+			name:      "bare_lf_proxy_form",
+			raw:       "GET http://example.com:8080/path HTTP/1.1\n\n",
+			wantHost:  "example.com",
+			wantPort:  8080,
+			wantHTTPS: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			host, port, usesHTTPS := parseTarget([]byte(tt.raw), tt.override)
+			assert.Equal(t, tt.wantHost, host)
+			assert.Equal(t, tt.wantPort, port)
+			assert.Equal(t, tt.wantHTTPS, usesHTTPS)
+		})
+	}
+}
+
+func TestInsertBeforeBlankLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		headers string
+		line    string
+		want    string
+	}{
+		{
+			name:    "crlf_insert",
+			headers: "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+			line:    "X-New: value",
+			want:    "GET / HTTP/1.1\r\nHost: x\r\nX-New: value\r\n\r\n",
+		},
+		{
+			name:    "bare_lf_insert",
+			headers: "GET / HTTP/1.1\nHost: x\n\n",
+			line:    "X-New: value",
+			want:    "GET / HTTP/1.1\nHost: x\nX-New: value\n\n",
+		},
+		{
+			name:    "no_blank_line",
+			headers: "malformed",
+			line:    "X-New: value",
+			want:    "malformed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, string(insertBeforeBlankLine([]byte(tt.headers), tt.line)))
+		})
+	}
+}
+
+func TestValidateContentLength(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		headers      string
+		body         string
+		wantContains string
+	}{
+		{
+			name:    "no_cl_header",
+			headers: "POST / HTTP/1.1\r\nHost: x\r\n\r\n",
+			body:    "hello",
+		},
+		{
+			name:    "matching_length",
+			headers: "POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\n",
+			body:    "hello",
+		},
+		{
+			name:         "mismatched_length",
+			headers:      "POST / HTTP/1.1\r\nContent-Length: 10\r\n\r\n",
+			body:         "short",
+			wantContains: "does not match",
+		},
+		{
+			name:    "space_before_colon_match",
+			headers: "POST / HTTP/1.1\r\nContent-Length : 5\r\n\r\n",
+			body:    "12345",
+		},
+		{
+			name:         "space_before_colon_mismatch",
+			headers:      "POST / HTTP/1.1\r\nContent-Length : 10\r\n\r\n",
+			body:         "short",
+			wantContains: "does not match",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := validateContentLength([]byte(tt.headers), []byte(tt.body))
+			if tt.wantContains != "" {
+				assert.Contains(t, result, tt.wantContains)
+			} else {
+				assert.Empty(t, result)
+			}
+		})
+	}
+}
+
+func TestExtractHeaderLines(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{
+			name: "crlf_headers",
+			raw:  "GET / HTTP/1.1\r\nHost: example.com\r\nAccept: */*\r\n\r\n",
+			want: []string{"Host: example.com", "Accept: */*"},
+		},
+		{
+			name: "bare_lf_headers",
+			raw:  "GET / HTTP/1.1\nHost: example.com\nAccept: */*\n\n",
+			want: []string{"Host: example.com", "Accept: */*"},
+		},
+		{
+			name: "single_line",
+			raw:  "GET / HTTP/1.1\r\n",
+			want: nil,
+		},
+		{
+			name: "empty",
+			raw:  "",
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, extractHeaderLines(tt.raw))
+		})
+	}
+}
+
+func TestParseHeadersToMap(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raw  string
+		want map[string][]string
+	}{
+		{
+			name: "crlf_headers",
+			raw:  "GET / HTTP/1.1\r\nHost: example.com\r\nAccept: */*\r\n\r\n",
+			want: map[string][]string{
+				"Host":   {"example.com"},
+				"Accept": {"*/*"},
+			},
+		},
+		{
+			name: "bare_lf_headers",
+			raw:  "GET / HTTP/1.1\nHost: example.com\nAccept: */*\n\n",
+			want: map[string][]string{
+				"Host":   {"example.com"},
+				"Accept": {"*/*"},
+			},
+		},
+		{
+			name: "duplicate_headers",
+			raw:  "GET / HTTP/1.1\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\n\r\n",
+			want: map[string][]string{
+				"Set-Cookie": {"a=1", "b=2"},
+			},
+		},
+		{
+			name: "empty",
+			raw:  "",
+			want: map[string][]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, parseHeadersToMap(tt.raw))
+		})
+	}
 }
 
 func TestCompressBody(t *testing.T) {

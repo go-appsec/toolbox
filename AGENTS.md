@@ -79,6 +79,7 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/proxy/filter.go` - CaptureFilter type, SetCaptureFilter/ShouldCapture
 - `sectool/service/proxy/compression.go` - gzip/deflate utilities
 - `sectool/service/proxy/sender.go` - Wire-fidelity request sender (H1 and H2)
+- `sectool/service/proxy/httputil.go` - HTTP method extraction, header grouping, and raw query modification utilities
 - `sectool/service/proxy/hpack.go` - HPACK encoder/decoder management
 
 ### Burp MCP Client

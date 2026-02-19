@@ -70,26 +70,6 @@ func (r *ProxyListRequest) HasFilters() bool {
 		r.Source != ""
 }
 
-// =============================================================================
-// Replay Types
-// =============================================================================
-
-// ReplaySendRequest contains options for replay_send.
-type ReplaySendRequest struct {
-	FlowID          string   `json:"flow_id,omitempty"`
-	Target          string   `json:"target,omitempty"`
-	AddHeaders      []string `json:"add_headers,omitempty"`
-	RemoveHeaders   []string `json:"remove_headers,omitempty"`
-	Path            string   `json:"path,omitempty"`
-	Query           string   `json:"query,omitempty"`
-	SetQuery        []string `json:"set_query,omitempty"`
-	RemoveQuery     []string `json:"remove_query,omitempty"`
-	SetJSON         []string `json:"set_json,omitempty"`
-	RemoveJSON      []string `json:"remove_json,omitempty"`
-	FollowRedirects bool     `json:"follow_redirects,omitempty"`
-	Force           bool     `json:"force,omitempty"`
-}
-
 // RuleDeleteResponse is the response for proxy_rule_delete.
 type RuleDeleteResponse struct{}
 

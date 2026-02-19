@@ -153,8 +153,8 @@ func (c *Client) ReplaySend(ctx context.Context, opts ReplaySendOpts) (*protocol
 	if opts.Target != "" {
 		args["target"] = opts.Target
 	}
-	if len(opts.AddHeaders) > 0 {
-		args["add_headers"] = opts.AddHeaders
+	if len(opts.SetHeaders) > 0 {
+		args["set_headers"] = opts.SetHeaders
 	}
 	if len(opts.RemoveHeaders) > 0 {
 		args["remove_headers"] = opts.RemoveHeaders
@@ -217,6 +217,9 @@ func (c *Client) RequestSend(ctx context.Context, opts RequestSendOpts) (*protoc
 	}
 	if opts.FollowRedirects {
 		args["follow_redirects"] = opts.FollowRedirects
+	}
+	if opts.Force {
+		args["force"] = opts.Force
 	}
 
 	var resp protocol.ReplaySendResponse

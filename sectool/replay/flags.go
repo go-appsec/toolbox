@@ -45,11 +45,11 @@ replay send [options]
   Send a request through the HTTP backend.
 
   Input sources (exactly one required):
-    --flow <flow_id>      replay from proxy history
-    --bundle <bundle_id>  replay from exported bundle (from proxy export)
-    --file <path>         replay from raw HTTP file (- for stdin)
+    --flow <flow_id>      replay from proxy history (supports modifications)
+    --bundle <bundle_id>  replay from exported bundle (edit bundle files directly)
+    --file <path>         replay from raw HTTP file (edit file directly)
 
-  Request modifications (combine multiple):
+  Modifications (--flow only, combine multiple):
     --set-header "Name: Value"     add or replace header
     --remove-header "Name"         remove header
     --path "/new/path"             replace URL path
@@ -57,8 +57,6 @@ replay send [options]
     --set-query "key=value"        add or replace query param
     --remove-query "key"           remove query param
     --target "https://other:8443"  override destination host
-
-  JSON body modifications:
     --set-json "key=value"         set key (infers type: null/bool/number/object/string)
     --set-json "key"               set key to null (no = sign)
     --remove-json "key"            remove key from JSON body
@@ -67,7 +65,7 @@ replay send [options]
   Other options:
     --follow-redirects             follow 3xx redirects
     --force                        send even if validation fails
-    --body <path>                  body file (with --file)
+    --body <path>                  body file (with --file or --bundle)
 
 ---
 
@@ -133,8 +131,9 @@ File format (--file):
     printf 'GET / HTTP/1.1\r\nHost: example.com\r\n\r\n' > request.http
   Or use 'sectool proxy export' to create an editable bundle from captured traffic.
 
-Request modifications:
+Request modifications (--flow only):
   Modify request without editing files. Multiple modifications can be combined.
+  For --bundle and --file, edit the source files directly instead.
 
   Headers:
     --set-header "Name: Value"    Add or replace a header
@@ -151,7 +150,7 @@ Request modifications:
 
   Query modification order: remove -> set
 
-JSON body modifications:
+JSON body modifications (--flow only):
   Modify JSON request bodies inline without editing files. Requires the request
   body to be valid JSON (returns error with hint otherwise).
 

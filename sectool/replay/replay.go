@@ -8,9 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
-	"net/textproto"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -19,8 +18,47 @@ import (
 	"github.com/go-appsec/toolbox/sectool/cliutil"
 	"github.com/go-appsec/toolbox/sectool/mcpclient"
 	"github.com/go-appsec/toolbox/sectool/protocol"
-	"github.com/go-appsec/toolbox/sectool/service"
 )
+
+// rejectModificationFlags returns an error if any modification-only flags are
+// set. These flags only apply to --flow; --bundle and --file should be edited directly.
+func rejectModificationFlags(target string, headers, removeHeaders []string,
+	path, query string, setQuery, removeQuery []string,
+	setJSON, removeJSON []string) error {
+	var offending []string
+	if target != "" {
+		offending = append(offending, "--target")
+	}
+	if len(headers) > 0 {
+		offending = append(offending, "--set-header")
+	}
+	if len(removeHeaders) > 0 {
+		offending = append(offending, "--remove-header")
+	}
+	if path != "" {
+		offending = append(offending, "--path")
+	}
+	if query != "" {
+		offending = append(offending, "--query")
+	}
+	if len(setQuery) > 0 {
+		offending = append(offending, "--set-query")
+	}
+	if len(removeQuery) > 0 {
+		offending = append(offending, "--remove-query")
+	}
+	if len(setJSON) > 0 {
+		offending = append(offending, "--set-json")
+	}
+	if len(removeJSON) > 0 {
+		offending = append(offending, "--remove-json")
+	}
+	if len(offending) == 0 {
+		return nil
+	}
+	return fmt.Errorf("modification flags (%s) are only supported with --flow; edit the source files directly for --bundle or --file",
+		strings.Join(offending, ", "))
+}
 
 func send(mcpURL string, flow, bundleArg, file, body, target string, headers, removeHeaders []string,
 	path, query string, setQuery, removeQuery []string,
@@ -70,11 +108,17 @@ func send(mcpURL string, flow, bundleArg, file, body, target string, headers, re
 	}
 
 	if bundleArg != "" {
-		return sendFromBundle(mcpURL, bundleArg, target, headers, removeHeaders, path, query, setQuery, removeQuery, setJSONMap, removeJSON, bodyOverride, hasBodyOverride, followRedirects)
+		if err := rejectModificationFlags(target, headers, removeHeaders, path, query, setQuery, removeQuery, setJSON, removeJSON); err != nil {
+			return err
+		}
+		return sendFromBundle(mcpURL, bundleArg, bodyOverride, hasBodyOverride, followRedirects, force)
 	}
 
 	if file != "" {
-		return sendFromFile(mcpURL, file, target, headers, removeHeaders, path, query, setQuery, removeQuery, setJSONMap, removeJSON, bodyOverride, hasBodyOverride, followRedirects)
+		if err := rejectModificationFlags(target, headers, removeHeaders, path, query, setQuery, removeQuery, setJSON, removeJSON); err != nil {
+			return err
+		}
+		return sendFromFile(mcpURL, file, bodyOverride, hasBodyOverride, followRedirects, force)
 	}
 
 	ctx := context.Background()
@@ -94,7 +138,7 @@ func send(mcpURL string, flow, bundleArg, file, body, target string, headers, re
 		FlowID:          flow,
 		Body:            bodyContent,
 		Target:          target,
-		AddHeaders:      headers,
+		SetHeaders:      headers,
 		RemoveHeaders:   removeHeaders,
 		Path:            path,
 		Query:           query,
@@ -234,11 +278,9 @@ func create(urlArg, method string, headers []string, bodyPath string) error {
 	return nil
 }
 
-func sendFromBundle(mcpURL string, bundleArg, target string, addHeaders, removeHeaders []string,
-	path, query string, setQuery, removeQuery []string,
-	setJSON map[string]interface{}, removeJSON []string,
+func sendFromBundle(mcpURL string, bundleArg string,
 	bodyOverride []byte, hasBodyOverride bool,
-	followRedirects bool) error {
+	followRedirects, force bool) error {
 	bundlePath, err := bundle.ResolvePath(bundleArg)
 	if err != nil {
 		return err
@@ -252,25 +294,10 @@ func sendFromBundle(mcpURL string, bundleArg, target string, addHeaders, removeH
 	if hasBodyOverride {
 		body = bodyOverride
 	}
-	if len(setJSON) > 0 || len(removeJSON) > 0 {
-		body, err = service.ModifyJSONBodyMap(body, setJSON, removeJSON)
-		if err != nil {
-			return err
-		}
-	}
 
-	// Parse headers from bundle request.http content
-	headerMap, err := parseHeaders(rawHeaders)
+	headers, err := parseHeaders(rawHeaders)
 	if err != nil {
 		return fmt.Errorf("parse headers: %w", err)
-	}
-
-	headerMap = applyHeaderModifications(headerMap, addHeaders, removeHeaders)
-	deleteHeaderCaseInsensitive(headerMap, "Content-Length")
-
-	urlStr, err := applyURLModifications(meta.URL, target, path, query, setQuery, removeQuery)
-	if err != nil {
-		return err
 	}
 
 	ctx := context.Background()
@@ -282,11 +309,12 @@ func sendFromBundle(mcpURL string, bundleArg, target string, addHeaders, removeH
 	defer func() { _ = client.Close() }()
 
 	resp, err := client.RequestSend(ctx, mcpclient.RequestSendOpts{
-		URL:             urlStr,
+		URL:             meta.URL,
 		Method:          meta.Method,
-		Headers:         headerMap,
+		Headers:         headers,
 		Body:            string(body),
 		FollowRedirects: followRedirects,
+		Force:           force,
 	})
 	if err != nil {
 		return fmt.Errorf("request send: %w", err)
@@ -296,11 +324,9 @@ func sendFromBundle(mcpURL string, bundleArg, target string, addHeaders, removeH
 	return nil
 }
 
-func sendFromFile(mcpURL string, file, target string, addHeaders, removeHeaders []string,
-	path, query string, setQuery, removeQuery []string,
-	setJSON map[string]interface{}, removeJSON []string,
+func sendFromFile(mcpURL string, file string,
 	bodyOverride []byte, hasBodyOverride bool,
-	followRedirects bool) error {
+	followRedirects, force bool) error {
 	data, err := readRequestData(file)
 	if err != nil {
 		return err
@@ -321,29 +347,16 @@ func sendFromFile(mcpURL string, file, target string, addHeaders, removeHeaders 
 	if hasBodyOverride {
 		body = bodyOverride
 	}
-	if len(setJSON) > 0 || len(removeJSON) > 0 {
-		body, err = service.ModifyJSONBodyMap(body, setJSON, removeJSON)
-		if err != nil {
-			return err
-		}
-	}
 
-	// Build headers map
-	headerMap := make(map[string]string)
+	// Build headers preserving all values
+	var headers []string
 	for name, values := range req.Header {
-		if len(values) > 0 {
-			headerMap[name] = values[0]
+		for _, v := range values {
+			headers = append(headers, name+": "+v)
 		}
 	}
 
-	headerMap = applyHeaderModifications(headerMap, addHeaders, removeHeaders)
-	deleteHeaderCaseInsensitive(headerMap, "Content-Length")
-
-	baseURL, err := buildURLFromHTTPRequest(req, target)
-	if err != nil {
-		return err
-	}
-	urlStr, err := applyURLModifications(baseURL, "", path, query, setQuery, removeQuery)
+	baseURL, err := buildURLFromHTTPRequest(req)
 	if err != nil {
 		return err
 	}
@@ -357,11 +370,12 @@ func sendFromFile(mcpURL string, file, target string, addHeaders, removeHeaders 
 	defer func() { _ = client.Close() }()
 
 	resp, err := client.RequestSend(ctx, mcpclient.RequestSendOpts{
-		URL:             urlStr,
+		URL:             baseURL,
 		Method:          req.Method,
-		Headers:         headerMap,
+		Headers:         headers,
 		Body:            string(body),
 		FollowRedirects: followRedirects,
+		Force:           force,
 	})
 	if err != nil {
 		return fmt.Errorf("request send: %w", err)
@@ -386,104 +400,28 @@ func readRequestData(file string) ([]byte, error) {
 	return data, nil
 }
 
-func applyHeaderModifications(headers map[string]string, addHeaders, removeHeaders []string) map[string]string {
-	result := make(map[string]string, len(headers))
-	for k, v := range headers {
-		result[k] = v
-	}
-
-	for _, name := range removeHeaders {
-		deleteHeaderCaseInsensitive(result, name)
-	}
-	for _, h := range addHeaders {
-		name, value, ok := strings.Cut(h, ":")
-		if !ok {
-			continue
-		}
-		result[textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(name))] = strings.TrimSpace(value)
-	}
-
-	return result
-}
-
-func deleteHeaderCaseInsensitive(headers map[string]string, name string) {
-	name = strings.TrimSpace(name)
-	for k := range headers {
-		if strings.EqualFold(k, name) {
-			delete(headers, k)
-		}
-	}
-}
-
-func applyURLModifications(baseURL, target, path, query string, setQuery, removeQuery []string) (string, error) {
-	parsedBase, err := url.Parse(baseURL)
-	if err != nil {
-		return "", fmt.Errorf("invalid URL: %w", err)
-	}
-
-	result := parsedBase
-	if target != "" {
-		parsedTarget, err := url.Parse(target)
-		if err != nil {
-			return "", fmt.Errorf("invalid target URL: %w", err)
-		}
-		parsedTarget.Path = parsedBase.Path
-		parsedTarget.RawQuery = parsedBase.RawQuery
-		result = parsedTarget
-	}
-
-	if path != "" {
-		result.Path = path
-	}
-
-	if query != "" {
-		result.RawQuery = query
-	} else if len(setQuery) > 0 || len(removeQuery) > 0 {
-		values, _ := url.ParseQuery(result.RawQuery)
-		for _, key := range removeQuery {
-			values.Del(key)
-		}
-		for _, kv := range setQuery {
-			if key, val, ok := strings.Cut(kv, "="); ok {
-				values.Set(key, val)
-			}
-		}
-		result.RawQuery = values.Encode()
-	}
-
-	return result.String(), nil
-}
-
-func buildURLFromHTTPRequest(req *http.Request, target string) (string, error) {
-	if target != "" {
-		parsedTarget, err := url.Parse(target)
-		if err != nil {
-			return "", fmt.Errorf("invalid target URL: %w", err)
-		}
-		parsedTarget.Path = req.URL.Path
-		parsedTarget.RawQuery = req.URL.RawQuery
-		return parsedTarget.String(), nil
-	}
-
+func buildURLFromHTTPRequest(req *http.Request) (string, error) {
 	host := req.Host
 	if host == "" {
 		host = req.Header.Get("Host")
 	}
 	if host == "" {
-		return "", errors.New("no Host header and no --target specified")
+		return "", errors.New("no Host header found in request")
 	}
 
 	scheme := "https"
 	if strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "127.") {
+		scheme = "http"
+	} else if _, port, err := net.SplitHostPort(host); err == nil && port == "80" {
 		scheme = "http"
 	}
 
 	return scheme + "://" + host + req.URL.RequestURI(), nil
 }
 
-// parseHeaders extracts headers from bundle request.http content.
-// Handles body placeholder removal, request line skipping, and MIME parsing.
-func parseHeaders(raw []byte) (map[string]string, error) {
+// parseHeaders extracts headers from bundle request.http content as "Name: Value" strings.
+// Handles body placeholder removal, request line skipping, and obs-fold continuation lines.
+func parseHeaders(raw []byte) ([]string, error) {
 	raw = bytes.Replace(raw, []byte(bundle.BodyPlaceholder+"\n"), nil, 1)
 
 	// Find end of headers
@@ -507,19 +445,22 @@ func parseHeaders(raw []byte) (map[string]string, error) {
 		}
 	}
 
-	reader := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw)))
-	mimeHeaders, err := reader.ReadMIMEHeader()
-	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
-	}
-
-	headerMap := make(map[string]string)
-	for name, values := range mimeHeaders {
-		if len(values) > 0 {
-			headerMap[name] = values[0]
+	var headers []string
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		line = bytes.TrimRight(line, "\r")
+		if len(line) == 0 {
+			continue
+		}
+		// obs-fold: continuation line starting with space or tab
+		if (line[0] == ' ' || line[0] == '\t') && len(headers) > 0 {
+			headers[len(headers)-1] += " " + strings.TrimLeft(string(line), " \t")
+			continue
+		}
+		if bytes.Contains(line, []byte(":")) {
+			headers = append(headers, string(line))
 		}
 	}
-	return headerMap, nil
+	return headers, nil
 }
 
 func printReplayResult(resp *protocol.ReplaySendResponse) {

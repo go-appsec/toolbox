@@ -576,7 +576,7 @@ func TestIntegration_Replay(t *testing.T) {
 		t.Run("send_with_header_mods", func(t *testing.T) {
 			resp, err := env.mcpClient.ReplaySend(t.Context(), mcpclient.ReplaySendOpts{
 				FlowID:        flowID,
-				AddHeaders:    []string{"X-Integration-Test: modified"},
+				SetHeaders:    []string{"X-Integration-Test: modified"},
 				RemoveHeaders: []string{"Accept-Encoding"},
 			})
 			require.NoError(t, err)
@@ -771,9 +771,9 @@ func TestIntegration_RequestSend(t *testing.T) {
 			resp, err := client.RequestSend(t.Context(), mcpclient.RequestSendOpts{
 				URL:    "https://httpbin.org/headers",
 				Method: "GET",
-				Headers: map[string]string{
-					"X-Custom-Header": "integration-test",
-					"Accept":          "application/json",
+				Headers: []string{
+					"X-Custom-Header: integration-test",
+					"Accept: application/json",
 				},
 			})
 			require.NoError(t, err)
@@ -784,8 +784,8 @@ func TestIntegration_RequestSend(t *testing.T) {
 			resp, err := client.RequestSend(t.Context(), mcpclient.RequestSendOpts{
 				URL:    "https://httpbin.org/post",
 				Method: "POST",
-				Headers: map[string]string{
-					"Content-Type": "application/json",
+				Headers: []string{
+					"Content-Type: application/json",
 				},
 				Body: `{"test": "data", "integration": true}`,
 			})
@@ -2225,7 +2225,7 @@ func TestIntegration_MalformedRequests(t *testing.T) {
 		// Header with NUL byte should fail validation
 		_, err := client.ReplaySend(t.Context(), mcpclient.ReplaySendOpts{
 			FlowID:     flowID,
-			AddHeaders: []string{"X-Evil: value\x00injected"},
+			SetHeaders: []string{"X-Evil: value\x00injected"},
 			Target:     "http://" + tcpAddr,
 			Force:      false,
 		})
@@ -2242,7 +2242,7 @@ func TestIntegration_MalformedRequests(t *testing.T) {
 		// With force=true, NUL byte validation is bypassed
 		replayResp, err := client.ReplaySend(t.Context(), mcpclient.ReplaySendOpts{
 			FlowID:     flowID,
-			AddHeaders: []string{"X-Evil: value\x00injected"},
+			SetHeaders: []string{"X-Evil: value\x00injected"},
 			Target:     "http://" + tcpAddr,
 			Force:      true,
 		})
@@ -2414,7 +2414,7 @@ func TestIntegration_ContentLengthMismatch(t *testing.T) {
 		_, err := client.ReplaySend(t.Context(), mcpclient.ReplaySendOpts{
 			FlowID:     flowID,
 			Body:       "this is a much longer body than content-length says",
-			AddHeaders: []string{"Content-Length: 5"},
+			SetHeaders: []string{"Content-Length: 5"},
 			Target:     "http://" + tcpAddr,
 			Force:      false,
 		})
@@ -2431,7 +2431,7 @@ func TestIntegration_ContentLengthMismatch(t *testing.T) {
 		replayResp, err := client.ReplaySend(t.Context(), mcpclient.ReplaySendOpts{
 			FlowID:     flowID,
 			Body:       "actual body content here",
-			AddHeaders: []string{"Content-Length: 5"},
+			SetHeaders: []string{"Content-Length: 5"},
 			Target:     "http://" + tcpAddr,
 			Force:      true,
 		})
@@ -2454,7 +2454,7 @@ func TestIntegration_ContentLengthMismatch(t *testing.T) {
 		_, err := client.ReplaySend(t.Context(), mcpclient.ReplaySendOpts{
 			FlowID:     flowID,
 			Body:       "short body",
-			AddHeaders: []string{"Content-Length: 1000"},
+			SetHeaders: []string{"Content-Length: 1000"},
 			Target:     "http://" + tcpAddr,
 			Force:      false,
 		})
@@ -2471,7 +2471,7 @@ func TestIntegration_ContentLengthMismatch(t *testing.T) {
 		replayResp, err := client.ReplaySend(t.Context(), mcpclient.ReplaySendOpts{
 			FlowID:     flowID,
 			Body:       "hidden body",
-			AddHeaders: []string{"Content-Length: 0"},
+			SetHeaders: []string{"Content-Length: 0"},
 			Target:     "http://" + tcpAddr,
 			Force:      true,
 		})

@@ -8,6 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// hostHeader is a convenience for test cases that need a valid Host header.
+var hostHeader = Header{Name: "Host", Value: "example.com"}
+
 func TestValidateRequest(t *testing.T) {
 	t.Parallel()
 
@@ -22,8 +25,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
-			wantErr: "",
 		},
 		{
 			name: "valid_post",
@@ -31,12 +34,13 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "POST",
 				Path:    "/api/users",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: Headers{
+					hostHeader,
 					{Name: "Content-Type", Value: "application/json"},
+					{Name: "Content-Length", Value: "15"},
 				},
 				Body: []byte(`{"name":"test"}`),
 			},
-			wantErr: "",
 		},
 		{
 			name:    "nil_request",
@@ -49,6 +53,7 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "",
 				Path:    "/",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
 			wantErr: "empty method",
 		},
@@ -58,6 +63,7 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET POST",
 				Path:    "/",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
 			wantErr: "invalid method characters",
 		},
@@ -67,6 +73,7 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET\x00",
 				Path:    "/",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
 			wantErr: "invalid method characters",
 		},
@@ -76,6 +83,7 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
 			wantErr: "empty path",
 		},
@@ -85,6 +93,7 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/2.0",
+				Headers: Headers{hostHeader},
 			},
 			wantErr: "invalid HTTP version",
 		},
@@ -95,7 +104,6 @@ func TestValidateRequest(t *testing.T) {
 				Path:    "/",
 				Version: "HTTP/1.0",
 			},
-			wantErr: "",
 		},
 		{
 			name: "nul_in_header_name",
@@ -103,7 +111,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: Headers{
+					hostHeader,
 					{Name: "X-Bad\x00Header", Value: "value"},
 				},
 			},
@@ -115,7 +124,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: Headers{
+					hostHeader,
 					{Name: "X-Header", Value: "bad\x00value"},
 				},
 			},
@@ -127,8 +137,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/api/users?id=123",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
-			wantErr: "",
 		},
 		{
 			name: "custom_method",
@@ -136,8 +146,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "CUSTOMMETHOD",
 				Path:    "/",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
-			wantErr: "",
 		},
 		{
 			name: "method_with_tab",
@@ -145,6 +155,7 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET\t",
 				Path:    "/",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
 			wantErr: "invalid method characters",
 		},
@@ -154,8 +165,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/path\x00inject",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
-			wantErr: "",
 		},
 		{
 			name: "multiple_headers",
@@ -163,23 +174,21 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: Headers{
 					{Name: "Host", Value: "example.com"},
 					{Name: "Accept", Value: "*/*"},
 					{Name: "User-Agent", Value: "test"},
 				},
 			},
-			wantErr: "",
 		},
 		{
-			name: "empty_headers_slice",
+			name: "empty_headers_http_1_0",
 			req: &RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/",
-				Version: "HTTP/1.1",
-				Headers: []Header{},
+				Version: "HTTP/1.0",
+				Headers: Headers{},
 			},
-			wantErr: "",
 		},
 		{
 			name: "lowercase_method_valid",
@@ -187,8 +196,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "get",
 				Path:    "/",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
-			wantErr: "",
 		},
 		{
 			name: "method_special_chars_only",
@@ -196,8 +205,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "!#$%",
 				Path:    "/",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
-			wantErr: "",
 		},
 		{
 			name: "path_query_and_fragment",
@@ -205,8 +214,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/api/users?id=1#section",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
-			wantErr: "",
 		},
 		{
 			name: "path_only_query",
@@ -214,8 +223,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "?query=1",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
-			wantErr: "",
 		},
 		{
 			name: "path_encoded_nul",
@@ -223,8 +232,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/path%00inject",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
-			wantErr: "",
 		},
 		{
 			name: "header_value_with_tab",
@@ -232,11 +241,11 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: Headers{
+					hostHeader,
 					{Name: "X-Header", Value: "value\twith\ttabs"},
 				},
 			},
-			wantErr: "",
 		},
 		{
 			name: "header_name_only_nul",
@@ -244,7 +253,8 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: Headers{
+					hostHeader,
 					{Name: "\x00", Value: "value"},
 				},
 			},
@@ -256,6 +266,7 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/2",
+				Headers: Headers{hostHeader},
 			},
 			wantErr: "invalid HTTP version",
 		},
@@ -265,8 +276,292 @@ func TestValidateRequest(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/ 1.1",
+				Headers: Headers{hostHeader},
 			},
 			wantErr: "invalid HTTP version",
+		},
+		// New checks: header name validation
+		{
+			name: "header_name_with_space",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "X Header", Value: "value"},
+				},
+			},
+			wantErr: "invalid header name",
+		},
+		{
+			name: "header_name_trailing_space",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "Content-Type ", Value: "text/html"},
+				},
+			},
+			wantErr: "invalid header name",
+		},
+		{
+			name: "header_name_with_colon",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "X:Header", Value: "value"},
+				},
+			},
+			wantErr: "invalid header name",
+		},
+		{
+			name: "empty_header_name",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "", Value: "value"},
+				},
+			},
+			wantErr: "empty header name",
+		},
+		{
+			name: "header_without_colon",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "BadHeader", Value: "", RawLine: []byte("BadHeader")},
+				},
+			},
+			wantErr: "header without colon separator",
+		},
+		// New checks: CR/LF in path and header values
+		{
+			name: "crlf_in_path",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/path\r\nX-Inject: val",
+				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
+			},
+			wantErr: "CR/LF in request path",
+		},
+		{
+			name: "lf_in_path",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/path\ninjection",
+				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
+			},
+			wantErr: "CR/LF in request path",
+		},
+		{
+			name: "crlf_in_header_value",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "X-Header", Value: "value\r\nX-Inject: evil"},
+				},
+			},
+			wantErr: "CR/LF in header value",
+		},
+		{
+			name: "lf_in_header_value",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "X-Header", Value: "val\nue"},
+				},
+			},
+			wantErr: "CR/LF in header value",
+		},
+		// New checks: bare LF wire format
+		{
+			name: "bare_lf_wire",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
+				Wire:    &WireFormat{UsedBareLF: true},
+			},
+			wantErr: "bare LF line endings",
+		},
+		// New checks: obs-fold
+		{
+			name: "obs_fold_header",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "X-Long", Value: "first second", RawLine: []byte("X-Long: first\r\n second")},
+				},
+			},
+			wantErr: "obs-fold",
+		},
+		// New checks: Host header
+		{
+			name: "missing_host",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+			},
+			wantErr: "missing Host header",
+		},
+		{
+			name: "missing_host_http_1_0",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.0",
+			},
+		},
+		{
+			name: "duplicate_host",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					{Name: "Host", Value: "example.com"},
+					{Name: "Host", Value: "evil.com"},
+				},
+			},
+			wantErr: "duplicate Host header",
+		},
+		// New checks: smuggling indicators
+		{
+			name: "te_cl_conflict",
+			req: &RawHTTP1Request{
+				Method:  "POST",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "Transfer-Encoding", Value: "chunked"},
+					{Name: "Content-Length", Value: "5"},
+				},
+				Body: []byte("hello"),
+			},
+			wantErr: "both Transfer-Encoding and Content-Length",
+		},
+		{
+			name: "duplicate_cl",
+			req: &RawHTTP1Request{
+				Method:  "POST",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "Content-Length", Value: "5"},
+					{Name: "Content-Length", Value: "10"},
+				},
+				Body: []byte("hello"),
+			},
+			wantErr: "duplicate Content-Length",
+		},
+		{
+			name: "duplicate_te",
+			req: &RawHTTP1Request{
+				Method:  "POST",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "Transfer-Encoding", Value: "chunked"},
+					{Name: "Transfer-Encoding", Value: "identity"},
+				},
+			},
+			wantErr: "duplicate Transfer-Encoding",
+		},
+		// New checks: Content-Length accuracy
+		{
+			name: "cl_body_mismatch",
+			req: &RawHTTP1Request{
+				Method:  "POST",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "Content-Length", Value: "10"},
+				},
+				Body: []byte("short"),
+			},
+			wantErr: "Content-Length (10) does not match body length (5)",
+		},
+		{
+			name: "cl_body_match",
+			req: &RawHTTP1Request{
+				Method:  "POST",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "Content-Length", Value: "4"},
+				},
+				Body: []byte("test"),
+			},
+		},
+		{
+			name: "non_numeric_cl",
+			req: &RawHTTP1Request{
+				Method:  "POST",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "Content-Length", Value: "abc"},
+				},
+			},
+			wantErr: "non-numeric Content-Length",
+		},
+		{
+			name: "cl_zero_no_body",
+			req: &RawHTTP1Request{
+				Method:  "POST",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					hostHeader,
+					{Name: "Content-Length", Value: "0"},
+				},
+			},
+		},
+		// Multiple issues reported together
+		{
+			name: "multiple_issues",
+			req: &RawHTTP1Request{
+				Method:  "GET",
+				Path:    "/",
+				Version: "HTTP/1.1",
+				Headers: Headers{
+					{Name: "Content-Length", Value: "5"},
+					{Name: "Content-Length", Value: "10"},
+				},
+				Body: []byte("hello"),
+			},
+			wantErr: "missing Host",
 		},
 	}
 
@@ -282,6 +577,27 @@ func TestValidateRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateRequestMultipleIssues(t *testing.T) {
+	t.Parallel()
+
+	// Request with multiple issues: missing Host + duplicate CL + CL mismatch
+	req := &RawHTTP1Request{
+		Method:  "POST",
+		Path:    "/",
+		Version: "HTTP/1.1",
+		Headers: Headers{
+			{Name: "Content-Length", Value: "5"},
+			{Name: "Content-Length", Value: "10"},
+		},
+		Body: []byte("hello"),
+	}
+	err := validateRequest(req)
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "missing Host header")
+	assert.Contains(t, msg, "duplicate Content-Length")
 }
 
 func TestCheckLineEndings(t *testing.T) {
@@ -542,7 +858,6 @@ func TestIsValidToken(t *testing.T) {
 func TestValidateRequestCRLFInjection(t *testing.T) {
 	t.Parallel()
 
-	// CRLF injection tests - these should parse but may be flagged by validation
 	tests := []struct {
 		name    string
 		req     *RawHTTP1Request
@@ -554,6 +869,7 @@ func TestValidateRequestCRLFInjection(t *testing.T) {
 				Method:  "GET\r\nX-Injected: true",
 				Path:    "/",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
 			wantErr: "invalid method characters",
 		},
@@ -563,8 +879,9 @@ func TestValidateRequestCRLFInjection(t *testing.T) {
 				Method:  "GET",
 				Path:    "/path\r\nX-Inject: val",
 				Version: "HTTP/1.1",
+				Headers: Headers{hostHeader},
 			},
-			wantErr: "", // paths are allowed to contain unusual characters for testing
+			wantErr: "CR/LF in request path",
 		},
 		{
 			name: "version_with_crlf",
@@ -572,6 +889,7 @@ func TestValidateRequestCRLFInjection(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1\r\nX-Inject: val",
+				Headers: Headers{hostHeader},
 			},
 			wantErr: "invalid HTTP version",
 		},
@@ -581,11 +899,12 @@ func TestValidateRequestCRLFInjection(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: Headers{
+					hostHeader,
 					{Name: "X-Header", Value: "value\r\nX-Inject: evil"},
 				},
 			},
-			wantErr: "", // header values can contain unusual chars for testing
+			wantErr: "CR/LF in header value",
 		},
 		{
 			name: "multiple_nul_in_value",
@@ -593,7 +912,8 @@ func TestValidateRequestCRLFInjection(t *testing.T) {
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: Headers{
+					hostHeader,
 					{Name: "X-Header", Value: "a\x00b\x00c"},
 				},
 			},
@@ -632,9 +952,39 @@ func TestParseValidationIntegration(t *testing.T) {
 		},
 		{
 			name:      "nul_in_header",
-			input:     "GET / HTTP/1.1\r\nX-Header: val\x00ue\r\n\r\n",
+			input:     "GET / HTTP/1.1\r\nHost: example.com\r\nX-Header: val\x00ue\r\n\r\n",
 			wantParse: true,
 			wantValid: false,
+		},
+		{
+			name:      "bare_lf_line_endings",
+			input:     "GET / HTTP/1.1\nHost: example.com\n\n",
+			wantParse: true,
+			wantValid: false,
+		},
+		{
+			name:      "obs_fold_parsed",
+			input:     "GET / HTTP/1.1\r\nHost: example.com\r\nX-Long: first\r\n second\r\n\r\n",
+			wantParse: true,
+			wantValid: false,
+		},
+		{
+			name:      "header_no_colon",
+			input:     "GET / HTTP/1.1\r\nHost: example.com\r\nBadHeader\r\n\r\n",
+			wantParse: true,
+			wantValid: false, // "BadHeader" is not a valid token (no colon means entire line is the name, but that's actually valid token chars)
+		},
+		{
+			name:      "missing_version",
+			input:     "GET /\r\nHost: example.com\r\n\r\n",
+			wantParse: true,
+			wantValid: true, // parser defaults to HTTP/1.1
+		},
+		{
+			name:      "duplicate_cl_and_te",
+			input:     "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\nhello",
+			wantParse: true,
+			wantValid: false, // both TE and CL present
 		},
 	}
 
@@ -657,4 +1007,20 @@ func TestParseValidationIntegration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCountHeaders(t *testing.T) {
+	t.Parallel()
+
+	headers := Headers{
+		{Name: "Host", Value: "example.com"},
+		{Name: "Content-Length", Value: "5"},
+		{Name: "content-length", Value: "10"},
+		{Name: "X-Custom", Value: "val"},
+	}
+
+	assert.Equal(t, 1, countHeaders(headers, "Host"))
+	assert.Equal(t, 2, countHeaders(headers, "Content-Length"))
+	assert.Equal(t, 1, countHeaders(headers, "X-Custom"))
+	assert.Equal(t, 0, countHeaders(headers, "Missing"))
 }
