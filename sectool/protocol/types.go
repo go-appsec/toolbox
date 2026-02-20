@@ -61,9 +61,10 @@ func (r ProxyPollResponse) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// ProxyGetResponse is the response for proxy_get.
-type ProxyGetResponse struct {
+// FlowGetResponse is the response for flow_get.
+type FlowGetResponse struct {
 	FlowID            string              `json:"flow_id"`
+	Source            string              `json:"source"`
 	Method            string              `json:"method"`
 	URL               string              `json:"url"`
 	ReqHeaders        string              `json:"request_headers"`
@@ -77,6 +78,10 @@ type ProxyGetResponse struct {
 	RespHeadersParsed map[string][]string `json:"response_headers_parsed,omitempty"`
 	RespBody          string              `json:"response_body"`
 	RespSize          int                 `json:"response_size"`
+	Duration          string              `json:"duration,omitempty"`
+	FoundOn           string              `json:"found_on,omitempty"`
+	Depth             int                 `json:"depth,omitempty"`
+	Truncated         bool                `json:"truncated,omitempty"`
 	Note              string              `json:"note,omitempty"`
 }
 
@@ -99,21 +104,9 @@ type ResponseDetails struct {
 
 // ReplaySendResponse is the response for replay_send.
 type ReplaySendResponse struct {
-	ReplayID string `json:"replay_id"`
+	FlowID   string `json:"flow_id"`
 	Duration string `json:"duration"`
 	ResponseDetails
-}
-
-// ReplayGetResponse is the response for replay_get.
-type ReplayGetResponse struct {
-	ReplayID          string              `json:"replay_id"`
-	Duration          string              `json:"duration"`
-	Status            int                 `json:"status"`
-	StatusLine        string              `json:"status_line"`
-	RespHeaders       string              `json:"response_headers"`
-	RespHeadersParsed map[string][]string `json:"response_headers_parsed,omitempty"`
-	RespBody          string              `json:"response_body"`
-	RespSize          int                 `json:"response_size"`
 }
 
 // =============================================================================
@@ -327,28 +320,6 @@ type CrawlSession struct {
 	Label     string `json:"label,omitempty"`
 	State     string `json:"state"`
 	CreatedAt string `json:"created_at"`
-}
-
-// CrawlGetResponse is the response for crawl_get.
-type CrawlGetResponse struct {
-	FlowID            string              `json:"flow_id"`
-	Method            string              `json:"method"`
-	URL               string              `json:"url"`
-	FoundOn           string              `json:"found_on,omitempty"`
-	Depth             int                 `json:"depth"`
-	ReqHeaders        string              `json:"request_headers"`
-	ReqHeadersParsed  map[string][]string `json:"request_headers_parsed,omitempty"`
-	ReqBody           string              `json:"request_body"`
-	ReqSize           int                 `json:"request_size"`
-	Status            int                 `json:"status"`
-	StatusLine        string              `json:"status_line"`
-	RespHeaders       string              `json:"response_headers"`
-	RespHeadersParsed map[string][]string `json:"response_headers_parsed,omitempty"`
-	RespBody          string              `json:"response_body"`
-	RespSize          int                 `json:"response_size"`
-	Truncated         bool                `json:"truncated,omitempty"`
-	Duration          string              `json:"duration"`
-	Note              string              `json:"note,omitempty"`
 }
 
 // =============================================================================

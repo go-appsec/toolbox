@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -154,7 +153,7 @@ func send(mcpURL string, flow, bundleArg, file, body, target string, headers, re
 	}
 
 	fmt.Printf("%s\n\n", cliutil.Bold("Replay Result"))
-	fmt.Printf("Replay ID: %s\n", cliutil.ID(resp.ReplayID))
+	fmt.Printf("Flow ID: %s\n", cliutil.ID(resp.FlowID))
 	fmt.Printf("Duration: %s\n\n", resp.Duration)
 
 	fmt.Printf("%s\n\n", cliutil.Bold("Response"))
@@ -170,7 +169,7 @@ func send(mcpURL string, flow, bundleArg, file, body, target string, headers, re
 	return nil
 }
 
-func get(mcpURL string, replayID string) error {
+func get(mcpURL string, flowID string) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -179,14 +178,18 @@ func get(mcpURL string, replayID string) error {
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.ReplayGet(ctx, replayID)
+	resp, err := client.FlowGet(ctx, flowID, mcpclient.FlowGetOpts{
+		Scope: "response_headers,response_body",
+	})
 	if err != nil {
 		return fmt.Errorf("replay get failed: %w", err)
 	}
 
 	fmt.Printf("%s\n\n", cliutil.Bold("Replay Details"))
-	fmt.Printf("Replay ID: %s\n", cliutil.ID(resp.ReplayID))
-	fmt.Printf("Duration: %s\n", resp.Duration)
+	fmt.Printf("Flow ID: %s\n", cliutil.ID(resp.FlowID))
+	if resp.Duration != "" {
+		fmt.Printf("Duration: %s\n", resp.Duration)
+	}
 	fmt.Printf("Status: %s %s\n", cliutil.FormatStatus(resp.Status), resp.StatusLine)
 	fmt.Printf("Size: %d bytes\n\n", resp.RespSize)
 	if resp.RespHeaders != "" {
@@ -194,12 +197,7 @@ func get(mcpURL string, replayID string) error {
 	}
 
 	if resp.RespBody != "" {
-		body, err := base64.StdEncoding.DecodeString(resp.RespBody)
-		if err != nil {
-			fmt.Printf("Body: %s\n", cliutil.Error(fmt.Sprintf("failed to decode: %v", err)))
-		} else {
-			fmt.Printf("Body:\n%s\n", string(body))
-		}
+		fmt.Printf("Body:\n%s\n", resp.RespBody)
 	}
 
 	return nil
@@ -465,7 +463,7 @@ func parseHeaders(raw []byte) ([]string, error) {
 
 func printReplayResult(resp *protocol.ReplaySendResponse) {
 	fmt.Printf("%s\n\n", cliutil.Bold("Replay Result"))
-	fmt.Printf("Replay ID: %s\n", cliutil.ID(resp.ReplayID))
+	fmt.Printf("Flow ID: %s\n", cliutil.ID(resp.FlowID))
 	fmt.Printf("Duration: %s\n\n", resp.Duration)
 
 	fmt.Printf("%s\n\n", cliutil.Bold("Response"))

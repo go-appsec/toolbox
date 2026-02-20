@@ -29,7 +29,7 @@ func (m *mcpServer) proxyPollTool() mcp.Tool {
 
 Output modes:
 - "summary" (default): Returns traffic grouped by (host, path, method, status). Use first to understand available traffic.
-- "flows": Returns individual flows with flow_id for use with proxy_get or replay_send. Requires at least one filter or limit.
+- "flows": Returns individual flows with flow_id for use with flow_get or replay_send. Requires at least one filter or limit.
 
 Sources: Results include both proxy-captured traffic (source=proxy) and replay-sent traffic (source=replay) in chronological order.
 Filters: host/path/exclude_host/exclude_path use glob (*, ?). method/status are comma-separated (status supports ranges like 2XX).
@@ -51,16 +51,16 @@ Incremental: since accepts flow_id or "last" (cursor). Flows mode only: paginati
 	)
 }
 
-func (m *mcpServer) proxyGetTool() mcp.Tool {
-	return mcp.NewTool("proxy_get",
-		mcp.WithDescription(`Get full request and response data for a proxy history entry.
+func (m *mcpServer) flowGetTool() mcp.Tool {
+	return mcp.NewTool("flow_get",
+		mcp.WithDescription(`Get full request and response for a flow.
 
 Returns headers and body for both request and response. Binary bodies are returned as "<BINARY:N Bytes>" placeholder.
-Use flow_id from proxy_poll (output_mode=flows) to identify the entry.
+Works with flow_id from any source: proxy_poll, replay_send, request_send, or crawl_poll.
 
 Scope: Sections to return (comma-separated): request_headers, request_body, response_headers, response_body, all (default).
 Pattern: Regex search within scoped sections; returns match context instead of full content. Sections without matches are omitted.`),
-		mcp.WithString("flow_id", mcp.Required(), mcp.Description("Flow ID from proxy_poll")),
+		mcp.WithString("flow_id", mcp.Required(), mcp.Description("Flow identifier")),
 		mcp.WithString("scope", mcp.Description("Sections to return (comma-separated): request_headers, request_body, response_headers, response_body, all (default)")),
 		mcp.WithString("pattern", mcp.Description("Regex (RE2) search within scoped sections; returns match context instead of full content")),
 	)
@@ -377,7 +377,7 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 	}
 }
 
-func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (m *mcpServer) handleFlowGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if err := m.requireWorkflow(); err != nil {
 		return err, nil
 	}
@@ -417,14 +417,6 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 	rawReq := resolved.RawRequest
 	rawResp := resolved.RawResponse
 
-	// Determine source for logging
-	var source string
-	if _, ok := m.service.replayHistoryStore.Get(flowID); ok {
-		source = SourceReplay
-	} else {
-		source = SourceProxy
-	}
-
 	method, host, path := extractRequestMeta(string(rawReq))
 	reqHeaders, reqBody := splitHeadersBody(rawReq)
 	respHeaders, respBody := splitHeadersBody(rawResp)
@@ -441,7 +433,7 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 	scheme, _, _ := inferSchemeAndPort(host)
 	fullURL := scheme + "://" + host + path
 
-	log.Printf("proxy/get: flow=%s method=%s url=%s source=%s", flowID, method, fullURL, source)
+	log.Printf("flow/get: flow=%s method=%s url=%s source=%s", flowID, method, fullURL, resolved.Source)
 
 	// Decompress bodies lazily: only when scope/pattern needs them
 	needsReqBody := scopeSet["request_body"]
@@ -457,12 +449,27 @@ func (m *mcpServer) handleProxyGet(ctx context.Context, req mcp.CallToolRequest)
 	// Build response map: always include metadata
 	result := map[string]interface{}{
 		"flow_id":       flowID,
+		"source":        resolved.Source,
 		"method":        method,
 		"url":           fullURL,
 		"status":        respCode,
 		"status_line":   respStatusLine,
 		"request_size":  len(reqBody),
 		"response_size": len(respBody),
+	}
+
+	// Source-specific metadata
+	if resolved.Duration > 0 {
+		result["duration"] = resolved.Duration.Round(time.Millisecond).String()
+	}
+	if resolved.FoundOn != "" {
+		result["found_on"] = resolved.FoundOn
+	}
+	if resolved.Depth > 0 {
+		result["depth"] = resolved.Depth
+	}
+	if resolved.Truncated {
+		result["truncated"] = true
 	}
 
 	if patternRe != nil {

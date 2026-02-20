@@ -37,7 +37,7 @@ type ReplayHistoryPayload struct {
 
 // ReplayHistoryEntry stores a replay request/response with positioning info.
 type ReplayHistoryEntry struct {
-	FlowID          string    // Same as replay_id from replay_send
+	FlowID          string
 	CreatedAt       time.Time // When replay was executed
 	ReferenceOffset uint32    // Max proxy offset at time of replay (for ordering)
 

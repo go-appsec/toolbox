@@ -69,7 +69,7 @@ replay send [options]
 
 ---
 
-replay get <replay_id>
+replay get <flow_id>
 
   Retrieve full details of a previous replay.
 
@@ -214,7 +214,7 @@ func parseGet(args []string, mcpURL string) error {
 	fs.SetInterspersed(true)
 
 	fs.Usage = func() {
-		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool replay get <replay_id> [options]
+		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool replay get <flow_id> [options]
 
 Get details of a previous replay.
 
@@ -227,7 +227,7 @@ Options:
 		return err
 	} else if len(fs.Args()) < 1 {
 		fs.Usage()
-		return errors.New("replay_id required (get from 'sectool replay send' output)")
+		return errors.New("flow_id required (get from 'sectool replay send' output)")
 	}
 
 	return get(mcpURL, fs.Args()[0])

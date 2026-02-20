@@ -109,13 +109,12 @@ func TestMCP_ListTools(t *testing.T) {
 
 	expectedTools := []string{
 		"proxy_poll",
-		"proxy_get",
+		"flow_get",
 		"cookie_jar",
 		"proxy_rule_list",
 		"proxy_rule_add",
 		"proxy_rule_delete",
 		"replay_send",
-		"replay_get",
 		"request_send",
 		"oast_create",
 		"oast_poll",
@@ -130,7 +129,6 @@ func TestMCP_ListTools(t *testing.T) {
 		"crawl_seed",
 		"crawl_status",
 		"crawl_poll",
-		"crawl_get",
 		"crawl_sessions",
 		"crawl_stop",
 		"diff_flow",

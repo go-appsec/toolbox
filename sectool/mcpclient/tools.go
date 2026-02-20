@@ -56,8 +56,8 @@ func (c *Client) ProxyPoll(ctx context.Context, opts ProxyPollOpts) (*protocol.P
 	return &resp, nil
 }
 
-// ProxyGet calls proxy_get and returns full request/response data.
-func (c *Client) ProxyGet(ctx context.Context, flowID string, opts ProxyGetOpts) (*protocol.ProxyGetResponse, error) {
+// FlowGet calls flow_get and returns full request/response data.
+func (c *Client) FlowGet(ctx context.Context, flowID string, opts FlowGetOpts) (*protocol.FlowGetResponse, error) {
 	args := map[string]interface{}{"flow_id": flowID}
 	if opts.FullBody {
 		args["full_body"] = true
@@ -68,8 +68,8 @@ func (c *Client) ProxyGet(ctx context.Context, flowID string, opts ProxyGetOpts)
 	if opts.Pattern != "" {
 		args["pattern"] = opts.Pattern
 	}
-	var resp protocol.ProxyGetResponse
-	if err := c.CallToolJSON(ctx, "proxy_get", args, &resp); err != nil {
+	var resp protocol.FlowGetResponse
+	if err := c.CallToolJSON(ctx, "flow_get", args, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -186,16 +186,6 @@ func (c *Client) ReplaySend(ctx context.Context, opts ReplaySendOpts) (*protocol
 
 	var resp protocol.ReplaySendResponse
 	if err := c.CallToolJSON(ctx, "replay_send", args, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// ReplayGet calls replay_get and returns full response data.
-func (c *Client) ReplayGet(ctx context.Context, replayID string) (*protocol.ReplayGetResponse, error) {
-	args := map[string]interface{}{"replay_id": replayID, "full_body": true}
-	var resp protocol.ReplayGetResponse
-	if err := c.CallToolJSON(ctx, "replay_get", args, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -459,25 +449,6 @@ func (c *Client) DiffFlow(ctx context.Context, opts DiffFlowOpts) (*protocol.Dif
 
 	var resp protocol.DiffFlowResponse
 	if err := c.CallToolJSON(ctx, "diff_flow", args, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// CrawlGet calls crawl_get and returns full flow data.
-func (c *Client) CrawlGet(ctx context.Context, flowID string, opts CrawlGetOpts) (*protocol.CrawlGetResponse, error) {
-	args := map[string]interface{}{"flow_id": flowID}
-	if opts.FullBody {
-		args["full_body"] = true
-	}
-	if opts.Scope != "" {
-		args["scope"] = opts.Scope
-	}
-	if opts.Pattern != "" {
-		args["pattern"] = opts.Pattern
-	}
-	var resp protocol.CrawlGetResponse
-	if err := c.CallToolJSON(ctx, "crawl_get", args, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

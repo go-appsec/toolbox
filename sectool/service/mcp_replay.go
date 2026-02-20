@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
 	"log"
 	"net/url"
 	"strings"
@@ -20,7 +19,7 @@ func (m *mcpServer) replaySendTool() mcp.Tool {
 	return mcp.NewTool("replay_send",
 		mcp.WithDescription(`Replay a proxied request (flow_id from proxy_poll) with edits.
 
-Returns: replay_id, status, headers, response_preview. Full body via replay_get.
+Returns: flow_id, status, headers, response_preview. Full body via flow_get.
 
 Edits:
 - method: override HTTP method (GET, POST, PUT, DELETE, etc.)
@@ -37,7 +36,7 @@ Types auto-parsed: null/true/false/numbers/{}/[], else string.
 Processing: remove_* then set_*. Content-Length auto-updated when body is modified and CL not explicitly set.
 Validation: fix issues or use force=true for protocol testing.
 Replayed requests appear in proxy_poll history alongside captured traffic.`),
-		mcp.WithString("flow_id", mcp.Required(), mcp.Description("Flow ID from proxy_poll or crawl_poll to use as base request")),
+		mcp.WithString("flow_id", mcp.Required(), mcp.Description("Flow ID to use as base request")),
 		mcp.WithString("method", mcp.Description("Override HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)")),
 		mcp.WithString("body", mcp.Description("Request body content (replaces existing body)")),
 		mcp.WithString("target", mcp.Description("Override destination (scheme+host[:port]); keeps original path/query")),
@@ -54,22 +53,12 @@ Replayed requests appear in proxy_poll history alongside captured traffic.`),
 	)
 }
 
-func (m *mcpServer) replayGetTool() mcp.Tool {
-	return mcp.NewTool("replay_get",
-		mcp.WithDescription(`Retrieve full response from a previous replay_send.
-
-Returns headers and body. Binary bodies are returned as "<BINARY:N Bytes>" placeholder.
-Results are ephemeral and cleared on service restart.`),
-		mcp.WithString("replay_id", mcp.Required(), mcp.Description("Replay ID from replay_send response")),
-	)
-}
-
 func (m *mcpServer) requestSendTool() mcp.Tool {
 	return mcp.NewTool("request_send",
 		mcp.WithDescription(`Send a request from scratch (no captured flow required).
 
 Use this when you need to send a request to a URL without first capturing it via proxy.
-Returns: replay_id, status, headers, response_preview. Full body via replay_get.
+Returns: flow_id, status, headers, response_preview. Full body via flow_get.
 Sent requests appear in proxy_poll history alongside captured traffic if additional modifications or resending needed.`),
 		mcp.WithString("url", mcp.Required(), mcp.Description("Target URL (e.g., 'https://api.example.com/users')")),
 		mcp.WithString("method", mcp.Description("HTTP method (default: GET)")),
@@ -105,27 +94,12 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 		return errorResult("flow_id is required"), nil
 	}
 
-	// Try replay history, then proxy index, then crawler backend
-	var rawRequest []byte
-	var httpProtocol string // "http/1.1", "h2", or empty (defaults to http/1.1)
-	if replayEntry, ok := m.service.replayHistoryStore.Get(flowID); ok {
-		rawRequest = replayEntry.RawRequest
-		httpProtocol = replayEntry.Protocol
-	} else if offset, ok := m.service.proxyIndex.Offset(flowID); ok {
-		proxyEntries, err := m.service.httpBackend.GetProxyHistory(ctx, 1, offset)
-		if err != nil {
-			return errorResultFromErr("failed to fetch flow: ", err), nil
-		}
-		if len(proxyEntries) == 0 {
-			return errorResult("flow not found in proxy history"), nil
-		}
-		rawRequest = []byte(proxyEntries[0].Request)
-		httpProtocol = proxyEntries[0].Protocol
-	} else if flow, err := m.service.crawlerBackend.GetFlow(ctx, flowID); err == nil && flow != nil {
-		rawRequest = flow.Request
-	} else {
-		return errorResult("flow_id not found: run proxy_poll or crawl_poll to see available flows"), nil
+	resolved, errResult := m.resolveFlow(ctx, flowID)
+	if errResult != nil {
+		return errResult, nil
 	}
+	rawRequest := resolved.RawRequest
+	httpProtocol := resolved.Protocol
 
 	rawRequest = modifyRequestLine(rawRequest, &PathQueryOpts{
 		Method:      req.GetString("method", ""),
@@ -150,50 +124,6 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 	}
 
 	return m.executeSend(ctx, rawRequest, httpProtocol, mods, flowID)
-}
-
-func (m *mcpServer) handleReplayGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if err := m.requireWorkflow(); err != nil {
-		return err, nil
-	}
-
-	replayID := req.GetString("replay_id", "")
-	if replayID == "" {
-		return errorResult("replay_id is required"), nil
-	}
-
-	// Hidden parameter for CLI: returns full base64-encoded body instead of preview
-	fullBody := req.GetBool("full_body", false)
-
-	result, ok := m.service.replayHistoryStore.Get(replayID)
-	if !ok {
-		return errorResult("replay not found: replay results are ephemeral and cleared on service restart"), nil
-	}
-
-	respCode, respStatusLine := parseResponseStatus(result.RespHeaders)
-	log.Printf("replay/get: %s status=%d size=%d", replayID, respCode, len(result.RespBody))
-
-	// Decompress response for display (gzip/deflate) - applies to both modes
-	displayBody, _ := decompressForDisplay(result.RespBody, string(result.RespHeaders))
-
-	// Format body based on full_body flag
-	var respBodyStr string
-	if fullBody { // Full body mode: base64-encode the decompressed content
-		respBodyStr = base64.StdEncoding.EncodeToString(displayBody)
-	} else { // Preview mode: truncated text preview
-		respBodyStr = previewBody(displayBody, fullBodyMaxSize, extractHeader(string(result.RespHeaders), "Content-Type"))
-	}
-
-	return jsonResult(protocol.ReplayGetResponse{
-		ReplayID:          replayID,
-		Duration:          result.Duration.String(),
-		Status:            respCode,
-		StatusLine:        respStatusLine,
-		RespHeaders:       string(result.RespHeaders),
-		RespHeadersParsed: parseHeadersToMap(string(result.RespHeaders)),
-		RespBody:          respBodyStr,
-		RespSize:          len(result.RespBody),
-	})
 }
 
 func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -377,7 +307,7 @@ func (m *mcpServer) executeSend(ctx context.Context, rawRequest []byte, httpProt
 	})
 
 	return jsonResult(protocol.ReplaySendResponse{
-		ReplayID: replayID,
+		FlowID:   replayID,
 		Duration: result.Duration.String(),
 		ResponseDetails: protocol.ResponseDetails{
 			Status:      respCode,

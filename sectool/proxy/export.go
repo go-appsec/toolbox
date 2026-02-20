@@ -17,7 +17,7 @@ func export(mcpURL string, flowID string) error {
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.ProxyGet(ctx, flowID, mcpclient.ProxyGetOpts{FullBody: true})
+	resp, err := client.FlowGet(ctx, flowID, mcpclient.FlowGetOpts{FullBody: true})
 	if err != nil {
 		return fmt.Errorf("get flow: %w", err)
 	}

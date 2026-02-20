@@ -178,7 +178,7 @@ func (m *mcpServer) registerTools() {
 
 func (m *mcpServer) addProxyTools() {
 	m.server.AddTool(m.proxyPollTool(), m.handleProxyPoll)
-	m.server.AddTool(m.proxyGetTool(), m.handleProxyGet)
+	m.server.AddTool(m.flowGetTool(), m.handleFlowGet)
 	m.server.AddTool(m.cookieJarTool(), m.handleCookieJar)
 	m.server.AddTool(m.proxyRuleListTool(), m.handleProxyRuleList)
 	m.server.AddTool(m.proxyRuleAddTool(), m.handleProxyRuleAdd)
@@ -187,7 +187,6 @@ func (m *mcpServer) addProxyTools() {
 
 func (m *mcpServer) addReplayTools() {
 	m.server.AddTool(m.replaySendTool(), m.handleReplaySend)
-	m.server.AddTool(m.replayGetTool(), m.handleReplayGet)
 	m.server.AddTool(m.requestSendTool(), m.handleRequestSend)
 }
 
@@ -219,7 +218,6 @@ func (m *mcpServer) addCrawlTools() {
 	m.server.AddTool(m.crawlPollTool(), m.handleCrawlPoll)
 	m.server.AddTool(m.crawlSessionsTool(), m.handleCrawlSessions)
 	m.server.AddTool(m.crawlStopTool(), m.handleCrawlStop)
-	m.server.AddTool(m.crawlGetTool(), m.handleCrawlGet)
 }
 
 func (m *mcpServer) addDiffTools() {
@@ -300,7 +298,7 @@ When approved:
 - crawl_create with seed_flows from proxy_poll to inherit authentication
 - crawl_status to monitor progress; crawl_poll for aggregated results
 - crawl_poll with output_mode="forms" to find input vectors for testing
-- Crawler flows work with replay_send and crawl_get just like proxy flows with proxy_get
+- Crawler flows work with replay_send and flow_get just like proxy flows
 `
 
 var workflowTestReportContent = `# Vulnerability Validation Workflow
@@ -357,6 +355,12 @@ func translateTimeoutError(err error) string {
 type resolvedFlow struct {
 	RawRequest  []byte
 	RawResponse []byte
+	Source      string        // "proxy", "replay", "crawl"
+	Protocol    string        // "http/1.1", "h2", or empty (defaults to http/1.1)
+	Duration    time.Duration // replay, crawl (zero = not available)
+	FoundOn     string        // crawl only
+	Depth       int           // crawl only
+	Truncated   bool          // crawl only
 }
 
 // resolveFlow looks up a flow by ID across replay, proxy, and crawler backends.
@@ -366,6 +370,9 @@ func (m *mcpServer) resolveFlow(ctx context.Context, flowID string) (*resolvedFl
 		return &resolvedFlow{
 			RawRequest:  entry.RawRequest,
 			RawResponse: slices.Concat(entry.RespHeaders, entry.RespBody),
+			Source:      SourceReplay,
+			Protocol:    entry.Protocol,
+			Duration:    entry.Duration,
 		}, nil
 	}
 	if offset, ok := m.service.proxyIndex.Offset(flowID); ok {
@@ -379,12 +386,19 @@ func (m *mcpServer) resolveFlow(ctx context.Context, flowID string) (*resolvedFl
 		return &resolvedFlow{
 			RawRequest:  []byte(entries[0].Request),
 			RawResponse: []byte(entries[0].Response),
+			Source:      SourceProxy,
+			Protocol:    entries[0].Protocol,
 		}, nil
 	}
 	if flow, err := m.service.crawlerBackend.GetFlow(ctx, flowID); err == nil && flow != nil {
 		return &resolvedFlow{
 			RawRequest:  flow.Request,
 			RawResponse: flow.Response,
+			Source:      SourceCrawl,
+			Duration:    flow.Duration,
+			FoundOn:     flow.FoundOn,
+			Depth:       flow.Depth,
+			Truncated:   flow.Truncated,
 		}, nil
 	}
 	return nil, errorResult("flow_id not found: run proxy_poll or crawl_poll to see available flows")

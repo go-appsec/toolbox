@@ -38,7 +38,7 @@ func TestHandleReplaySend(t *testing.T) {
 		sendResp := CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
 			"flow_id": flowID,
 		})
-		assert.NotEmpty(t, sendResp.ReplayID)
+		assert.NotEmpty(t, sendResp.FlowID)
 		assert.NotEmpty(t, sendResp.Duration)
 	})
 
@@ -88,7 +88,7 @@ func TestHandleReplaySend(t *testing.T) {
 		resp := CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
 			"flow_id": crawlFlowID,
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 	})
 
 	t.Run("set_headers_array", func(t *testing.T) {
@@ -114,7 +114,7 @@ func TestHandleReplaySend(t *testing.T) {
 			"flow_id":     flowID,
 			"set_headers": []interface{}{"X-Test-Header: ArrayFormat"},
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		assert.Contains(t, sent, "X-Test-Header: ArrayFormat")
 	})
@@ -144,7 +144,7 @@ func TestHandleReplaySend(t *testing.T) {
 				"X-Test-Header": "ObjectFormat",
 			},
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		assert.Contains(t, sent, "X-Test-Header: ObjectFormat")
 	})
@@ -172,7 +172,7 @@ func TestHandleReplaySend(t *testing.T) {
 			"flow_id": flowID,
 			"path":    "/api/v2/users",
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		assert.Contains(t, sent, "POST /api/v2/users HTTP/1.1")
 	})
@@ -200,7 +200,7 @@ func TestHandleReplaySend(t *testing.T) {
 			"flow_id":   flowID,
 			"set_query": []interface{}{"page=1", "limit=10"},
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		assert.Contains(t, sent, "page=1")
 		assert.Contains(t, sent, "limit=10")
@@ -230,7 +230,7 @@ func TestHandleReplaySend(t *testing.T) {
 			"set_json":    map[string]interface{}{"name": "modified", "email": "test@example.com"},
 			"remove_json": []interface{}{"temp"},
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		parts := strings.SplitN(sent, "\r\n\r\n", 2)
 		require.Len(t, parts, 2)
@@ -264,7 +264,7 @@ func TestHandleReplaySend(t *testing.T) {
 			"flow_id":          flowID,
 			"follow_redirects": true,
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 	})
 
 	t.Run("with_body_replacement", func(t *testing.T) {
@@ -290,7 +290,7 @@ func TestHandleReplaySend(t *testing.T) {
 			"flow_id": flowID,
 			"body":    `{"completely":"new"}`,
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		parts := strings.SplitN(sent, "\r\n\r\n", 2)
 		require.Len(t, parts, 2)
@@ -321,7 +321,7 @@ func TestHandleReplaySend(t *testing.T) {
 			"flow_id": flowID,
 			"body":    newBody,
 		})
-		require.NotEmpty(t, sendResp.ReplayID)
+		require.NotEmpty(t, sendResp.FlowID)
 
 		sentRequest := mockMCP.LastSentRequest()
 		require.NotEmpty(t, sentRequest)
@@ -357,7 +357,7 @@ func TestHandleReplaySend(t *testing.T) {
 		sendResp := CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
 			"flow_id": flowID,
 		})
-		require.NotEmpty(t, sendResp.ReplayID)
+		require.NotEmpty(t, sendResp.FlowID)
 
 		sentRequest := mockMCP.LastSentRequest()
 		parts := strings.SplitN(sentRequest, "\r\n\r\n", 2)
@@ -389,7 +389,7 @@ func TestHandleReplaySend(t *testing.T) {
 			"flow_id":  flowID,
 			"set_json": map[string]interface{}{"key": "modified"},
 		})
-		require.NotEmpty(t, sendResp.ReplayID)
+		require.NotEmpty(t, sendResp.FlowID)
 
 		sentRequest := mockMCP.LastSentRequest()
 		parts := strings.SplitN(sentRequest, "\r\n\r\n", 2)
@@ -401,7 +401,7 @@ func TestHandleReplaySend(t *testing.T) {
 	})
 }
 
-func TestHandleReplayGet(t *testing.T) {
+func TestHandleFlowGetForReplay(t *testing.T) {
 	t.Parallel()
 
 	t.Run("happy_path", func(t *testing.T) {
@@ -427,26 +427,29 @@ func TestHandleReplayGet(t *testing.T) {
 			"flow_id": flowID,
 		})
 
-		getResp := CallMCPToolJSONOK[protocol.ReplayGetResponse](t, mcpClient, "replay_get", map[string]interface{}{
-			"replay_id": sendResp.ReplayID,
+		var raw map[string]interface{}
+		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
+			"flow_id": sendResp.FlowID,
 		})
-		assert.Equal(t, sendResp.ReplayID, getResp.ReplayID)
-		assert.NotEmpty(t, getResp.RespHeaders)
+		require.NoError(t, json.Unmarshal([]byte(text), &raw))
+		assert.Equal(t, sendResp.FlowID, raw["flow_id"])
+		assert.Equal(t, "replay", raw["source"])
+		assert.Contains(t, raw, "response_headers")
 	})
 
-	t.Run("missing_replay_id", func(t *testing.T) {
+	t.Run("missing_flow_id", func(t *testing.T) {
 		_, mcpClient, _, _, _ := setupMockMCPServer(t)
 
-		result := CallMCPTool(t, mcpClient, "replay_get", map[string]interface{}{})
+		result := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{})
 		assert.True(t, result.IsError)
-		assert.Contains(t, ExtractMCPText(t, result), "replay_id is required")
+		assert.Contains(t, ExtractMCPText(t, result), "flow_id is required")
 	})
 
-	t.Run("invalid_replay_id", func(t *testing.T) {
+	t.Run("invalid_flow_id", func(t *testing.T) {
 		_, mcpClient, _, _, _ := setupMockMCPServer(t)
 
-		result := CallMCPTool(t, mcpClient, "replay_get", map[string]interface{}{
-			"replay_id": "nonexistent",
+		result := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{
+			"flow_id": "nonexistent",
 		})
 		assert.True(t, result.IsError)
 		assert.Contains(t, ExtractMCPText(t, result), "not found")
@@ -474,15 +477,15 @@ func TestHandleReplayGet(t *testing.T) {
 		sendResp := CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
 			"flow_id": flowID,
 		})
-		require.NotEmpty(t, sendResp.ReplayID)
+		require.NotEmpty(t, sendResp.FlowID)
 
-		getResult := CallMCPTool(t, mcpClient, "replay_get", map[string]interface{}{
-			"replay_id": sendResp.ReplayID,
+		getResult := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{
+			"flow_id":   sendResp.FlowID,
 			"full_body": true,
 		})
 		require.False(t, getResult.IsError)
 
-		var getResp protocol.ReplayGetResponse
+		var getResp protocol.FlowGetResponse
 		require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, getResult)), &getResp))
 
 		decodedBody, err := base64.StdEncoding.DecodeString(getResp.RespBody)
@@ -503,7 +506,7 @@ func TestHandleRequestSend(t *testing.T) {
 		resp := CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "request_send", map[string]interface{}{
 			"url": "https://example.com/test",
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		assert.Equal(t, 200, resp.Status)
 	})
 
@@ -540,7 +543,7 @@ func TestHandleRequestSend(t *testing.T) {
 				"X-Test-Header": "ObjectFormat",
 			},
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		assert.Contains(t, sent, "X-Test-Header: ObjectFormat")
 	})
@@ -558,7 +561,7 @@ func TestHandleRequestSend(t *testing.T) {
 				"X-Test-Header: ArrayFormat",
 			},
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		assert.Contains(t, sent, "X-Test-Header: ArrayFormat")
 	})
@@ -574,7 +577,7 @@ func TestHandleRequestSend(t *testing.T) {
 			"method":  "GET",
 			"headers": `["X-String-Header: from-string-array"]`,
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		assert.Contains(t, sent, "X-String-Header: from-string-array")
 	})
@@ -590,7 +593,7 @@ func TestHandleRequestSend(t *testing.T) {
 			"method":  "GET",
 			"headers": `{"X-String-Header": "from-string-object"}`,
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		assert.Contains(t, sent, "X-String-Header: from-string-object")
 	})
@@ -612,7 +615,7 @@ func TestHandleRequestSend(t *testing.T) {
 			},
 			"body": originalBody,
 		})
-		require.NotEmpty(t, sendResp.ReplayID)
+		require.NotEmpty(t, sendResp.FlowID)
 
 		sentRequest := mockMCP.LastSentRequest()
 		require.NotEmpty(t, sentRequest)
@@ -641,7 +644,7 @@ func TestHandleRequestSend(t *testing.T) {
 			},
 			"body": originalBody,
 		})
-		require.NotEmpty(t, sendResp.ReplayID)
+		require.NotEmpty(t, sendResp.FlowID)
 
 		sentRequest := mockMCP.LastSentRequest()
 		parts := strings.SplitN(sentRequest, "\r\n\r\n", 2)
@@ -801,7 +804,7 @@ func TestExecuteSend_WireFidelity(t *testing.T) {
 			"set_headers": []interface{}{"Transfer-Encoding:  chunked"},
 			"force":       true,
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		assert.Contains(t, sent, "Transfer-Encoding:  chunked")
 	})
@@ -857,7 +860,7 @@ func TestExecuteSend_WireFidelity(t *testing.T) {
 			"set_headers": []interface{}{"X-Test: value\r\nX-Injected: crlf"},
 			"force":       true,
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		assert.Contains(t, sent, "X-Test: value")
 		assert.Contains(t, sent, "X-Injected: crlf")
@@ -873,7 +876,7 @@ func TestExecuteSend_WireFidelity(t *testing.T) {
 			"set_headers": []interface{}{"Transfer-Encoding: chunked\r\nX-Injected: crlf"},
 			"force":       true,
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 		sent := mockMCP.LastSentRequest()
 		assert.Contains(t, sent, "Transfer-Encoding: chunked")
 		assert.Contains(t, sent, "X-Injected: crlf")
@@ -1043,6 +1046,6 @@ func TestExecuteSend_DomainScoping(t *testing.T) {
 		resp := CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "request_send", map[string]interface{}{
 			"url": "https://allowed.test/ok",
 		})
-		assert.NotEmpty(t, resp.ReplayID)
+		assert.NotEmpty(t, resp.FlowID)
 	})
 }

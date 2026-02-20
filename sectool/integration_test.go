@@ -377,7 +377,7 @@ func TestIntegration_ProxyList(t *testing.T) {
 	})
 }
 
-func TestIntegration_ProxyGet(t *testing.T) {
+func TestIntegration_FlowGet(t *testing.T) {
 	runForAllBackends(t, func(t *testing.T, client *mcpclient.Client) {
 		t.Helper()
 
@@ -392,7 +392,7 @@ func TestIntegration_ProxyGet(t *testing.T) {
 		flowID := listResp.Flows[0].FlowID
 
 		t.Run("valid_flow_id", func(t *testing.T) {
-			resp, err := client.ProxyGet(t.Context(), flowID, mcpclient.ProxyGetOpts{})
+			resp, err := client.FlowGet(t.Context(), flowID, mcpclient.FlowGetOpts{})
 			require.NoError(t, err)
 
 			assert.Equal(t, flowID, resp.FlowID)
@@ -406,7 +406,7 @@ func TestIntegration_ProxyGet(t *testing.T) {
 		})
 
 		t.Run("invalid_flow_id", func(t *testing.T) {
-			_, err := client.ProxyGet(t.Context(), "nonexistent", mcpclient.ProxyGetOpts{})
+			_, err := client.FlowGet(t.Context(), "nonexistent", mcpclient.FlowGetOpts{})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "not found")
 		})
@@ -550,11 +550,11 @@ func TestIntegration_Replay(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			assert.NotEmpty(t, resp.ReplayID)
+			assert.NotEmpty(t, resp.FlowID)
 			assert.NotEmpty(t, resp.Duration)
-			replayID = resp.ReplayID
+			replayID = resp.FlowID
 
-			t.Logf("replay %s: status=%d duration=%s", resp.ReplayID, resp.Status, resp.Duration)
+			t.Logf("replay %s: status=%d duration=%s", resp.FlowID, resp.Status, resp.Duration)
 		})
 
 		t.Run("get_replay_result", func(t *testing.T) {
@@ -562,15 +562,18 @@ func TestIntegration_Replay(t *testing.T) {
 				t.Skip("no replay ID from previous test")
 			}
 
-			resp, err := env.mcpClient.ReplayGet(t.Context(), replayID)
+			resp, err := env.mcpClient.FlowGet(t.Context(), replayID, mcpclient.FlowGetOpts{
+				Scope: "response_headers,response_body",
+			})
 			require.NoError(t, err)
 
-			assert.Equal(t, replayID, resp.ReplayID)
+			assert.Equal(t, replayID, resp.FlowID)
+			assert.Equal(t, "replay", resp.Source)
 			assert.NotEmpty(t, resp.RespHeaders)
 			assert.True(t, strings.HasPrefix(resp.RespHeaders, "HTTP/"),
 				"unexpected prefix: %s", resp.RespHeaders)
 
-			t.Logf("replay_get %s: status=%d body_size=%d", resp.ReplayID, resp.Status, resp.RespSize)
+			t.Logf("flow_get %s: status=%d body_size=%d", resp.FlowID, resp.Status, resp.RespSize)
 		})
 
 		t.Run("send_with_header_mods", func(t *testing.T) {
@@ -580,7 +583,7 @@ func TestIntegration_Replay(t *testing.T) {
 				RemoveHeaders: []string{"Accept-Encoding"},
 			})
 			require.NoError(t, err)
-			assert.NotEmpty(t, resp.ReplayID)
+			assert.NotEmpty(t, resp.FlowID)
 			t.Logf("replay with mods: status=%d", resp.Status)
 		})
 
@@ -593,7 +596,7 @@ func TestIntegration_Replay(t *testing.T) {
 		})
 
 		t.Run("get_invalid_replay", func(t *testing.T) {
-			_, err := env.mcpClient.ReplayGet(t.Context(), "nonexistent")
+			_, err := env.mcpClient.FlowGet(t.Context(), "nonexistent", mcpclient.FlowGetOpts{})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "not found")
 		})
@@ -620,7 +623,7 @@ func TestIntegration_ReplayWithQueryMods(t *testing.T) {
 				SetQuery: []string{"test_param=test_value", "another=123"},
 			})
 			require.NoError(t, err)
-			assert.NotEmpty(t, resp.ReplayID)
+			assert.NotEmpty(t, resp.FlowID)
 		})
 
 		t.Run("replace_query_string", func(t *testing.T) {
@@ -629,7 +632,7 @@ func TestIntegration_ReplayWithQueryMods(t *testing.T) {
 				Query:  "completely=new&query=string",
 			})
 			require.NoError(t, err)
-			assert.NotEmpty(t, resp.ReplayID)
+			assert.NotEmpty(t, resp.FlowID)
 		})
 	})
 }
@@ -711,7 +714,7 @@ func TestIntegration_ReplayQueryModsVerified(t *testing.T) {
 			RemoveQuery: []string{"remove_me"},
 		})
 		require.NoError(t, err)
-		assert.NotEmpty(t, replayResp.ReplayID)
+		assert.NotEmpty(t, replayResp.FlowID)
 		t.Logf("replay_send returned: status=%d", replayResp.Status)
 
 		// Check what the server received
@@ -738,7 +741,7 @@ func TestIntegration_ReplayQueryModsVerified(t *testing.T) {
 			SetQuery: []string{"new_param=new_value"},
 		})
 		require.NoError(t, err)
-		assert.NotEmpty(t, replayResp.ReplayID)
+		assert.NotEmpty(t, replayResp.FlowID)
 
 		// Check what the server received
 		select {
@@ -762,7 +765,7 @@ func TestIntegration_RequestSend(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			assert.NotEmpty(t, resp.ReplayID)
+			assert.NotEmpty(t, resp.FlowID)
 			assert.Equal(t, 200, resp.Status)
 			t.Logf("request_send GET: status=%d duration=%s", resp.Status, resp.Duration)
 		})
@@ -991,7 +994,7 @@ func TestIntegration_HTTPSProxy(t *testing.T) {
 		flowID := listResp.Flows[0].FlowID
 
 		// Get the full URL which includes the https:// scheme
-		flowDetails, err := mcpClient.ProxyGet(t.Context(), flowID, mcpclient.ProxyGetOpts{})
+		flowDetails, err := mcpClient.FlowGet(t.Context(), flowID, mcpclient.FlowGetOpts{})
 		require.NoError(t, err)
 
 		// Pass the target URL explicitly to preserve HTTPS scheme
@@ -1680,7 +1683,7 @@ func TestIntegration_HTTP2Proxy(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, listResp.Flows, 1)
 
-		flowResp, err := client.ProxyGet(t.Context(), listResp.Flows[0].FlowID, mcpclient.ProxyGetOpts{})
+		flowResp, err := client.FlowGet(t.Context(), listResp.Flows[0].FlowID, mcpclient.FlowGetOpts{})
 		require.NoError(t, err)
 
 		assert.Equal(t, "GET", flowResp.Method)
@@ -2019,7 +2022,7 @@ func TestIntegration_ChunkedEncoding(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, listResp.Flows, 1)
 
-			flowResp, err := env.mcpClient.ProxyGet(t.Context(), listResp.Flows[0].FlowID, mcpclient.ProxyGetOpts{})
+			flowResp, err := env.mcpClient.FlowGet(t.Context(), listResp.Flows[0].FlowID, mcpclient.FlowGetOpts{})
 			require.NoError(t, err)
 			assert.Equal(t, 200, flowResp.Status)
 		})
@@ -3453,7 +3456,7 @@ func TestIntegration_HTTP2Replay(t *testing.T) {
 	flowID := listResp.Flows[0].FlowID
 
 	// Get full flow details to get the target URL
-	flowDetails, err := client.ProxyGet(t.Context(), flowID, mcpclient.ProxyGetOpts{})
+	flowDetails, err := client.FlowGet(t.Context(), flowID, mcpclient.FlowGetOpts{})
 	require.NoError(t, err)
 
 	t.Run("h2_request_replayed_as_h2", func(t *testing.T) {

@@ -101,12 +101,12 @@ func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
 	require.NotEmpty(t, listResp.Flows)
 	assert.Equal(t, flowID, listResp.Flows[0].FlowID)
 
-	getResult := CallMCPTool(t, mcpClient, "crawl_get", map[string]interface{}{
+	getResult := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{
 		"flow_id": flowID,
 	})
 	require.False(t, getResult.IsError,
-		"crawl_get failed: %s", ExtractMCPText(t, getResult))
-	var getResp protocol.CrawlGetResponse
+		"flow_get failed: %s", ExtractMCPText(t, getResult))
+	var getResp protocol.FlowGetResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, getResult)), &getResp))
 	assert.Equal(t, flowID, getResp.FlowID)
 	assert.Equal(t, 200, getResp.Status)
@@ -239,7 +239,7 @@ func TestMCP_CrawlSeedWithMock(t *testing.T) {
 	assert.Equal(t, queuedBefore+2, statusAfter.URLsQueued)
 }
 
-func TestMCP_CrawlGetDecompressesGzipBody(t *testing.T) {
+func TestMCP_FlowGetDecompressesGzipBody(t *testing.T) {
 	t.Parallel()
 
 	_, mcpClient, _, _, mockCrawler := setupMockMCPServer(t)
@@ -271,13 +271,13 @@ func TestMCP_CrawlGetDecompressesGzipBody(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test full_body=true returns decompressed content
-	getResult := CallMCPTool(t, mcpClient, "crawl_get", map[string]interface{}{
+	getResult := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{
 		"flow_id":   flowID,
 		"full_body": true,
 	})
 	require.False(t, getResult.IsError)
 
-	var getResp protocol.CrawlGetResponse
+	var getResp protocol.FlowGetResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, getResult)), &getResp))
 
 	// Decode base64 body and verify it's decompressed
@@ -385,13 +385,13 @@ func TestMCP_CrawlValidation(t *testing.T) {
 	})
 
 	t.Run("get_missing_flow_id", func(t *testing.T) {
-		result := CallMCPTool(t, mcpClient, "crawl_get", map[string]interface{}{})
+		result := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{})
 		assert.True(t, result.IsError)
 		assert.Contains(t, ExtractMCPText(t, result), "flow_id is required")
 	})
 
 	t.Run("get_invalid_flow_id", func(t *testing.T) {
-		result := CallMCPTool(t, mcpClient, "crawl_get", map[string]interface{}{
+		result := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id": "nonexistent",
 		})
 		assert.True(t, result.IsError)
@@ -502,7 +502,7 @@ func TestMCP_CrawlPollSearch(t *testing.T) {
 	})
 }
 
-func TestMCP_CrawlGetWithScope(t *testing.T) {
+func TestMCP_FlowGetWithCrawlScope(t *testing.T) {
 	t.Parallel()
 
 	_, mcpClient, _, _, mockCrawler := setupMockMCPServer(t)
@@ -526,7 +526,7 @@ func TestMCP_CrawlGetWithScope(t *testing.T) {
 
 	t.Run("response_body_only", func(t *testing.T) {
 		var raw map[string]interface{}
-		text := CallMCPToolTextOK(t, mcpClient, "crawl_get", map[string]interface{}{
+		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id": "scope-flow",
 			"scope":   "response_body",
 		})
@@ -538,7 +538,7 @@ func TestMCP_CrawlGetWithScope(t *testing.T) {
 
 	t.Run("pattern_matches", func(t *testing.T) {
 		var raw map[string]interface{}
-		text := CallMCPToolTextOK(t, mcpClient, "crawl_get", map[string]interface{}{
+		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id": "scope-flow",
 			"scope":   "response_body",
 			"pattern": "resp.*content",
@@ -552,7 +552,7 @@ func TestMCP_CrawlGetWithScope(t *testing.T) {
 
 	t.Run("pattern_no_match_omits", func(t *testing.T) {
 		var raw map[string]interface{}
-		text := CallMCPToolTextOK(t, mcpClient, "crawl_get", map[string]interface{}{
+		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id": "scope-flow",
 			"scope":   "response_body",
 			"pattern": "NONEXISTENT_xyz",

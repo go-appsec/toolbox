@@ -21,8 +21,8 @@ type ProxyPollOpts struct {
 	Offset       int // list mode
 }
 
-// ProxyGetOpts are options for ProxyGet.
-type ProxyGetOpts struct {
+// FlowGetOpts are options for FlowGet.
+type FlowGetOpts struct {
 	Scope    string
 	Pattern  string
 	FullBody bool // base64-encoded for exact export
@@ -102,13 +102,6 @@ type CrawlPollOpts struct {
 	Since        string // flows mode
 	Limit        int
 	Offset       int
-}
-
-// CrawlGetOpts are options for CrawlGet.
-type CrawlGetOpts struct {
-	Scope    string
-	Pattern  string
-	FullBody bool // base64-encoded
 }
 
 // CookieJarOpts are options for CookieJar.

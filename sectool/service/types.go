@@ -13,6 +13,7 @@ import (
 const (
 	SourceProxy  = "proxy"
 	SourceReplay = "replay"
+	SourceCrawl  = "crawl"
 )
 
 // Output mode constants for poll tools.

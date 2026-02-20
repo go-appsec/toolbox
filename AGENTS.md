@@ -44,9 +44,9 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 
 - `sectool/service/server.go` - MCP server lifecycle and backend coordination
 - `sectool/service/mcp_server.go` - MCP server setup, tool registration, workflow handling
-- `sectool/service/mcp_proxy.go` - Proxy tool handlers (poll, get, cookie_jar, rules)
-- `sectool/service/mcp_replay.go` - Replay tool handlers (send, get, request_send)
-- `sectool/service/mcp_crawl.go` - Crawl tool handlers (create, seed, status, poll, get, sessions, stop)
+- `sectool/service/mcp_proxy.go` - Proxy and flow_get tool handlers (poll, flow_get, cookie_jar, rules)
+- `sectool/service/mcp_replay.go` - Replay tool handlers (send, request_send)
+- `sectool/service/mcp_crawl.go` - Crawl tool handlers (create, seed, status, poll, sessions, stop)
 - `sectool/service/mcp_oast.go` - OAST tool handlers (create, poll, get, list, delete)
 - `sectool/service/mcp_encode.go` - Encode/decode tool handlers (url, base64, html)
 - `sectool/service/mcp_hash.go` - Hash tool handler (md5, sha1, sha256, sha512, HMAC)
@@ -179,7 +179,7 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 
 - `workflow` - select mode (explore/test-report) for task-specific instructions
 - `proxy_poll` - query proxy history: summary or list with filters
-- `proxy_get` - full request/response for a flow
+- `flow_get` - full request/response for any flow (proxy, replay, or crawl)
 - `cookie_jar` - extract and deduplicate cookies; overview without filters, full values and JWT decode with name/domain filter
 - `proxy_rule_list` - list match/replace rules
 - `proxy_rule_add` - add match/replace rule
@@ -188,12 +188,10 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 - `crawl_seed` - add seeds to running crawl
 - `crawl_status` - crawl progress metrics
 - `crawl_poll` - query results: summary, flows, forms, or errors
-- `crawl_get` - full request/response for crawled flow
 - `crawl_sessions` - list all crawl sessions
 - `crawl_stop` - stop a running crawl session
-- `replay_send` - send with modifications (headers, body, JSON, query params)
-- `replay_get` - retrieve replay response
-- `request_send` - send new HTTP request from scratch
+- `replay_send` - send with modifications; returns flow_id for use with flow_get
+- `request_send` - send new HTTP request from scratch; returns flow_id for use with flow_get
 - `oast_create` - create OAST session for out-of-band testing
 - `oast_poll` - poll events: summary or list
 - `oast_get` - full details of specific OAST event

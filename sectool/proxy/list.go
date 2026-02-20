@@ -102,7 +102,7 @@ func get(mcpURL string, flowID, scope, pattern string) error {
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.ProxyGet(ctx, flowID, mcpclient.ProxyGetOpts{
+	resp, err := client.FlowGet(ctx, flowID, mcpclient.FlowGetOpts{
 		Scope:   scope,
 		Pattern: pattern,
 	})

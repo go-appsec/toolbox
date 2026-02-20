@@ -356,7 +356,7 @@ func get(mcpURL string, flowID, scope, pattern string) error {
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.CrawlGet(ctx, flowID, mcpclient.CrawlGetOpts{
+	resp, err := client.FlowGet(ctx, flowID, mcpclient.FlowGetOpts{
 		Scope:   scope,
 		Pattern: pattern,
 	})
@@ -369,7 +369,9 @@ func get(mcpURL string, flowID, scope, pattern string) error {
 	fmt.Printf("Method: %s\n", resp.Method)
 	fmt.Printf("URL: %s\n", resp.URL)
 	fmt.Printf("Status: %s %s\n", cliutil.FormatStatus(resp.Status), resp.StatusLine)
-	fmt.Printf("Duration: %s\n", resp.Duration)
+	if resp.Duration != "" {
+		fmt.Printf("Duration: %s\n", resp.Duration)
+	}
 	if resp.FoundOn != "" {
 		fmt.Printf("Found On: %s\n", resp.FoundOn)
 	}
@@ -411,7 +413,7 @@ func export(mcpURL string, flowID string) error {
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.CrawlGet(ctx, flowID, mcpclient.CrawlGetOpts{FullBody: true})
+	resp, err := client.FlowGet(ctx, flowID, mcpclient.FlowGetOpts{FullBody: true})
 	if err != nil {
 		return fmt.Errorf("get flow: %w", err)
 	}

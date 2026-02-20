@@ -281,7 +281,7 @@ func TestMCP_ProxyPoll(t *testing.T) {
 			sinceResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mc, "proxy_poll", map[string]interface{}{
 				"output_mode": "flows",
 				"host":        "test.com",
-				"since":       sendResp.ReplayID,
+				"since":       sendResp.FlowID,
 			})
 			require.NotEmpty(t, sinceResp.Flows)
 
@@ -323,16 +323,16 @@ func TestMCP_ProxyPoll(t *testing.T) {
 			sinceResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mc, "proxy_poll", map[string]interface{}{
 				"output_mode": "flows",
 				"source":      "replay",
-				"since":       replay1.ReplayID,
+				"since":       replay1.FlowID,
 			})
 			require.NotEmpty(t, sinceResp.Flows)
 
 			var foundReplay2 bool
 			for _, flow := range sinceResp.Flows {
-				if flow.FlowID == replay2.ReplayID {
+				if flow.FlowID == replay2.FlowID {
 					foundReplay2 = true
 				}
-				assert.NotEqual(t, replay1.ReplayID, flow.FlowID)
+				assert.NotEqual(t, replay1.FlowID, flow.FlowID)
 			}
 			assert.True(t, foundReplay2)
 		})
@@ -452,7 +452,7 @@ func TestMCP_ProxyPollDomainScoping(t *testing.T) {
 		replayResp := CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
 			"flow_id": allowedFlowID,
 		})
-		require.NotEmpty(t, replayResp.ReplayID)
+		require.NotEmpty(t, replayResp.FlowID)
 
 		// Poll again: should only see allowed.com entries (proxy + replay)
 		all := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
@@ -465,7 +465,7 @@ func TestMCP_ProxyPollDomainScoping(t *testing.T) {
 	})
 }
 
-func TestMCP_ProxyGet(t *testing.T) {
+func TestMCP_FlowGet(t *testing.T) {
 	t.Parallel()
 
 	_, mcpClient, mockMCP, _, _ := setupMockMCPServer(t)
@@ -484,7 +484,7 @@ func TestMCP_ProxyGet(t *testing.T) {
 	flowID := listResp.Flows[0].FlowID
 
 	t.Run("basic", func(t *testing.T) {
-		resp := CallMCPToolJSONOK[protocol.ProxyGetResponse](t, mcpClient, "proxy_get", map[string]interface{}{
+		resp := CallMCPToolJSONOK[protocol.FlowGetResponse](t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id": flowID,
 		})
 		assert.Equal(t, flowID, resp.FlowID)
@@ -494,7 +494,7 @@ func TestMCP_ProxyGet(t *testing.T) {
 	})
 
 	t.Run("full_body_base64", func(t *testing.T) {
-		resp := CallMCPToolJSONOK[protocol.ProxyGetResponse](t, mcpClient, "proxy_get", map[string]interface{}{
+		resp := CallMCPToolJSONOK[protocol.FlowGetResponse](t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id":   flowID,
 			"full_body": true,
 		})
@@ -505,7 +505,7 @@ func TestMCP_ProxyGet(t *testing.T) {
 
 	t.Run("scope_response_body", func(t *testing.T) {
 		var raw map[string]interface{}
-		text := CallMCPToolTextOK(t, mcpClient, "proxy_get", map[string]interface{}{
+		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id": flowID,
 			"scope":   "response_body",
 		})
@@ -521,7 +521,7 @@ func TestMCP_ProxyGet(t *testing.T) {
 
 	t.Run("scope_request_headers", func(t *testing.T) {
 		var raw map[string]interface{}
-		text := CallMCPToolTextOK(t, mcpClient, "proxy_get", map[string]interface{}{
+		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id": flowID,
 			"scope":   "request_headers",
 		})
@@ -533,7 +533,7 @@ func TestMCP_ProxyGet(t *testing.T) {
 
 	t.Run("pattern_match", func(t *testing.T) {
 		var raw map[string]interface{}
-		text := CallMCPToolTextOK(t, mcpClient, "proxy_get", map[string]interface{}{
+		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id": flowID,
 			"scope":   "response_body",
 			"pattern": "resp.*here",
@@ -549,7 +549,7 @@ func TestMCP_ProxyGet(t *testing.T) {
 
 	t.Run("pattern_no_match", func(t *testing.T) {
 		var raw map[string]interface{}
-		text := CallMCPToolTextOK(t, mcpClient, "proxy_get", map[string]interface{}{
+		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id": flowID,
 			"scope":   "response_body",
 			"pattern": "NOMATCH_xyz",
@@ -559,7 +559,7 @@ func TestMCP_ProxyGet(t *testing.T) {
 	})
 
 	t.Run("invalid_scope", func(t *testing.T) {
-		result := CallMCPTool(t, mcpClient, "proxy_get", map[string]interface{}{
+		result := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id": flowID,
 			"scope":   "bogus",
 		})
@@ -568,13 +568,13 @@ func TestMCP_ProxyGet(t *testing.T) {
 	})
 
 	t.Run("missing_flow_id", func(t *testing.T) {
-		result := CallMCPTool(t, mcpClient, "proxy_get", map[string]interface{}{})
+		result := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{})
 		assert.True(t, result.IsError)
 		assert.Contains(t, ExtractMCPText(t, result), "flow_id is required")
 	})
 
 	t.Run("invalid_flow_id", func(t *testing.T) {
-		result := CallMCPTool(t, mcpClient, "proxy_get", map[string]interface{}{
+		result := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{
 			"flow_id": "nonexistent",
 		})
 		assert.True(t, result.IsError)
@@ -582,7 +582,7 @@ func TestMCP_ProxyGet(t *testing.T) {
 	})
 }
 
-// Note: Gzip decompression for full_body is tested via TestMCP_CrawlGetDecompressesGzipBody
+// Note: Gzip decompression for full_body is tested via TestMCP_FlowGetDecompressesGzipBody
 // since the Burp mock server's JSON encoding corrupts binary data.
 // The decompression logic is also covered by TestDecompressForDisplay in httputil_test.go.
 
