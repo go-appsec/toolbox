@@ -163,6 +163,8 @@ func TestHandle(t *testing.T) {
 	t.Parallel()
 
 	t.Run("connection_established", func(t *testing.T) {
+		t.Parallel()
+
 		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
@@ -184,6 +186,8 @@ func TestHandle(t *testing.T) {
 	})
 
 	t.Run("https_end_to_end", func(t *testing.T) {
+		t.Parallel()
+
 		testServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Test-Response", "success")
 			w.WriteHeader(200)
@@ -232,6 +236,8 @@ func TestHandle(t *testing.T) {
 	})
 
 	t.Run("headers_preserved", func(t *testing.T) {
+		t.Parallel()
+
 		var receivedHeaders http.Header
 		testServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			receivedHeaders = r.Header.Clone()

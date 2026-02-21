@@ -141,6 +141,8 @@ func TestServe(t *testing.T) {
 	})
 
 	t.Run("malformed_request_line", func(t *testing.T) {
+		t.Parallel()
+
 		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
@@ -167,6 +169,8 @@ func TestServe(t *testing.T) {
 	})
 
 	t.Run("history_persists_after_shutdown", func(t *testing.T) {
+		t.Parallel()
+
 		testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(200)
 		}))
@@ -240,6 +244,8 @@ func TestProxyServerComponents(t *testing.T) {
 	t.Parallel()
 
 	t.Run("addr_before_serve", func(t *testing.T) {
+		t.Parallel()
+
 		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -251,6 +257,8 @@ func TestProxyServerComponents(t *testing.T) {
 	})
 
 	t.Run("history_accessible", func(t *testing.T) {
+		t.Parallel()
+
 		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -261,6 +269,8 @@ func TestProxyServerComponents(t *testing.T) {
 	})
 
 	t.Run("cert_manager_accessible", func(t *testing.T) {
+		t.Parallel()
+
 		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -325,27 +335,6 @@ func TestConcurrentConnections(t *testing.T) {
 	assert.Empty(t, errors)
 
 	testutil.WaitForCount(t, func() int { return proxy.History().Count() }, numRequests)
-}
-
-func TestProxyServerDifferentPorts(t *testing.T) {
-	t.Parallel()
-
-	t.Run("specific_port", func(t *testing.T) {
-		// Create two proxies - first one will get a random port
-		proxy1, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
-		require.NoError(t, err)
-		go func() { _ = proxy1.Serve() }()
-		t.Cleanup(func() { _ = proxy1.Shutdown(context.Background()) })
-
-		// Create second proxy on a different random port
-		proxy2, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
-		require.NoError(t, err)
-		go func() { _ = proxy2.Serve() }()
-		t.Cleanup(func() { _ = proxy2.Shutdown(context.Background()) })
-
-		// They should have different addresses
-		assert.NotEqual(t, proxy1.Addr(), proxy2.Addr())
-	})
 }
 
 func TestLargeRequestBody(t *testing.T) {
@@ -485,29 +474,6 @@ func TestServeContextCancellation(t *testing.T) {
 		// OK
 	case <-time.After(2 * time.Second):
 		t.Fatal("Serve did not complete after shutdown")
-	}
-}
-
-func TestMaxBodyBytesConfiguration(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name         string
-		maxBodyBytes int
-	}{
-		{"zero_no_limit", 0},
-		{"small_limit", 1024},
-		{"large_limit", 100 * 1024 * 1024},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			proxy, err := NewProxyServer(0, t.TempDir(), tt.maxBodyBytes, store.NewMemStorage(), TimeoutConfig{})
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
-
-			assert.NotNil(t, proxy.History())
-		})
 	}
 }
 

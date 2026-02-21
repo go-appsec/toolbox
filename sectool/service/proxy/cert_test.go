@@ -20,6 +20,8 @@ func TestNewCertManager(t *testing.T) {
 	t.Parallel()
 
 	t.Run("generates_new_ca", func(t *testing.T) {
+		t.Parallel()
+
 		tempDir := t.TempDir()
 
 		cm, err := newCertManager(tempDir)
@@ -41,6 +43,8 @@ func TestNewCertManager(t *testing.T) {
 	})
 
 	t.Run("loads_existing_ca", func(t *testing.T) {
+		t.Parallel()
+
 		tempDir := t.TempDir()
 
 		cm1, err := newCertManager(tempDir)
@@ -57,6 +61,8 @@ func TestNewCertManager(t *testing.T) {
 	})
 
 	t.Run("error_on_orphaned_cert", func(t *testing.T) {
+		t.Parallel()
+
 		tempDir := t.TempDir()
 
 		err := os.WriteFile(filepath.Join(tempDir, "ca.pem"), []byte("dummy"), 0644)
@@ -68,6 +74,8 @@ func TestNewCertManager(t *testing.T) {
 	})
 
 	t.Run("error_on_orphaned_key", func(t *testing.T) {
+		t.Parallel()
+
 		tempDir := t.TempDir()
 
 		err := os.WriteFile(filepath.Join(tempDir, "ca-key.pem"), []byte("dummy"), 0600)
@@ -79,6 +87,8 @@ func TestNewCertManager(t *testing.T) {
 	})
 
 	t.Run("error_on_invalid_cert_pem", func(t *testing.T) {
+		t.Parallel()
+
 		tempDir := t.TempDir()
 
 		// Write invalid PEM content (not a valid PEM block)
@@ -93,6 +103,8 @@ func TestNewCertManager(t *testing.T) {
 	})
 
 	t.Run("error_on_invalid_key_pem", func(t *testing.T) {
+		t.Parallel()
+
 		tempDir := t.TempDir()
 
 		// First generate valid CA to get a valid cert
@@ -110,6 +122,8 @@ func TestNewCertManager(t *testing.T) {
 	})
 
 	t.Run("error_on_invalid_cert_der", func(t *testing.T) {
+		t.Parallel()
+
 		tempDir := t.TempDir()
 
 		// Valid PEM wrapper but garbage DER content
@@ -127,6 +141,8 @@ func TestNewCertManager(t *testing.T) {
 	})
 
 	t.Run("error_on_non_ca_cert", func(t *testing.T) {
+		t.Parallel()
+
 		tempDir := t.TempDir()
 
 		// Generate valid CA first
@@ -149,6 +165,8 @@ func TestNewCertManager(t *testing.T) {
 	})
 
 	t.Run("error_on_expired_ca_cert", func(t *testing.T) {
+		t.Parallel()
+
 		tempDir := t.TempDir()
 
 		// Generate valid CA first to get a valid key
@@ -180,6 +198,8 @@ func TestNewCertManager(t *testing.T) {
 	})
 
 	t.Run("error_on_missing_key_usage_cert_sign", func(t *testing.T) {
+		t.Parallel()
+
 		tempDir := t.TempDir()
 
 		// Generate valid CA first to get a valid key
