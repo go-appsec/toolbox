@@ -655,22 +655,30 @@ func buildRawRequestManual(method string, parsedURL *url.URL, headers []string, 
 	}
 
 	var buf bytes.Buffer
-	buf.WriteString(method + " " + parsedURL.RequestURI() + " HTTP/1.1\r\n")
+	buf.WriteString(method)
+	buf.WriteString(" ")
+	buf.WriteString(parsedURL.RequestURI())
+	buf.WriteString(" HTTP/1.1\r\n")
 
 	if !hasHost {
-		buf.WriteString("Host: " + parsedURL.Host + "\r\n")
+		buf.WriteString("Host: ")
+		buf.WriteString(parsedURL.Host)
+		buf.WriteString("\r\n")
 	}
 	for _, h := range headers {
-		buf.WriteString(h + "\r\n")
+		buf.WriteString(h)
+		buf.WriteString("\r\n")
 	}
 	if !hasUA {
-		buf.WriteString("User-Agent: " + config.UserAgent() + "\r\n")
+		buf.WriteString("User-Agent: ")
+		buf.WriteString(config.UserAgent())
+		buf.WriteString("\r\n")
 	}
 	// Auto-add CL only when body present, no explicit CL, and no TE.
 	// TE and CL are mutually exclusive per RFC 7230; auto-adding CL
 	// alongside TE would change request semantics for smuggling tests.
 	if !hasCL && !hasTE && len(body) > 0 {
-		fmt.Fprintf(&buf, "Content-Length: %d\r\n", len(body))
+		_, _ = fmt.Fprintf(&buf, "Content-Length: %d\r\n", len(body))
 	}
 
 	buf.WriteString("\r\n")

@@ -113,11 +113,12 @@ func Compress(data []byte, encoding string) ([]byte, error) {
 		return data, nil // unknown encoding, return unchanged
 	}
 
+	var buf bytes.Buffer
 	switch normalized {
 	case encodingGzip:
-		var buf bytes.Buffer
 		gw := gzip.NewWriter(&buf)
 		if _, err := gw.Write(data); err != nil {
+			_ = gw.Close()
 			return nil, err
 		} else if err := gw.Close(); err != nil {
 			return nil, err
@@ -126,10 +127,10 @@ func Compress(data []byte, encoding string) ([]byte, error) {
 
 	case encodingDeflate:
 		// Use raw DEFLATE (most interoperable for recompression)
-		var buf bytes.Buffer
 		if fw, err := flate.NewWriter(&buf, flate.DefaultCompression); err != nil {
 			return nil, err
 		} else if _, err := fw.Write(data); err != nil {
+			_ = fw.Close()
 			return nil, err
 		} else if err := fw.Close(); err != nil {
 			return nil, err

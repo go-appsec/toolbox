@@ -176,7 +176,6 @@ func (t *capturingTransport) captureResponse(resp *http.Response) (headers, body
 // Returns the limited body, actual total size, and whether truncation occurred.
 func readBodyLimited(r io.Reader, limit int) ([]byte, int, bool) {
 	var buf bytes.Buffer
-	buf.Grow(limit)
 
 	// Read up to limit into buffer
 	limited := io.LimitReader(r, int64(limit))
@@ -186,7 +185,6 @@ func readBodyLimited(r io.Reader, limit int) ([]byte, int, bool) {
 	remaining, _ := io.Copy(io.Discard, r)
 	totalSize := int(n) + int(remaining)
 	truncated := remaining > 0
-
 	return buf.Bytes(), totalSize, truncated
 }
 
