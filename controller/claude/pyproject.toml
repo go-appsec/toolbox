@@ -1,0 +1,22 @@
+[project]
+name = "sectool-controller"
+version = "0.1.0"
+description = "Autonomous security exploration controller using Claude Agent SDK"
+requires-python = ">=3.10"
+dependencies = [
+    "claude-agent-sdk>=0.1.0",
+    "anthropic>=0.40.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["controller", "config", "findings"]
+
+[tool.setuptools.packages.find]
+include = ["prompts*"]
+
+[project.scripts]
+sectool-controller = "controller:main"
