@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -704,6 +705,35 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "deleted")
 	})
+}
+
+func TestDnsLabelRe(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"lowercase_alpha", "ssrf", true},
+		{"with_hyphen", "test-xxe", true},
+		{"alphanumeric", "a1b2", true},
+		{"single_char", "a", true},
+		{"single_digit", "1", true},
+		{"uppercase_lowered", "SSRF", true},
+		{"mixed_case_lowered", "Test-Xxe", true},
+		{"leading_hyphen", "-start", false},
+		{"trailing_hyphen", "end-", false},
+		{"has_space", "has space", false},
+		{"has_underscore", "under_score", false},
+		{"has_dot", "has.dot", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, dnsLabelRe.MatchString(strings.ToLower(tt.input)))
+		})
+	}
 }
 
 func TestNewInteractshBackend(t *testing.T) {

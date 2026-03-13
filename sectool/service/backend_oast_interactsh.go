@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +21,12 @@ const (
 	interactshPollInterval = 10 * time.Second
 	// sessionCloseTimeout is how long to wait when closing a session.
 	sessionCloseTimeout = 10 * time.Second
+	// maxLabelPrefixLen is the maximum label length to use as a domain prefix.
+	maxLabelPrefixLen = 16
 )
+
+// dnsLabelRe matches a valid DNS label: alphanumeric with optional interior hyphens.
+var dnsLabelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 // InteractshBackend implements OastBackend using Interactsh.
 type InteractshBackend struct {
@@ -81,6 +87,8 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 	if b.serverURL != "" {
 		opts.ServerURLs = []string{b.serverURL}
 	}
+	opts.CorrelationIdLength = 18     // reduce to bare minimum for public servers
+	opts.CorrelationIdNonceLength = 4 // as small as possible, not important with new session per-url
 	c, err := oobclient.New(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create interactsh client: %w", err)
@@ -88,6 +96,11 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 
 	sessionID := ids.Generate(ids.DefaultLength)
 	domain := c.URL()
+	if label != "" && len(label) <= maxLabelPrefixLen {
+		if lower := strings.ToLower(label); dnsLabelRe.MatchString(lower) {
+			domain = lower + "." + domain
+		}
+	}
 
 	sess := &oastSession{
 		info: OastSessionInfo{
