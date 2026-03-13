@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -797,4 +798,52 @@ func TestInteractshBackend_DeleteSession(t *testing.T) {
 		sessions, _ := backend.ListSessions(t.Context())
 		assert.Empty(t, sessions)
 	})
+}
+
+// TestInteractshBackend_LivePoll verifies the full backend flow: create session,
+// trigger an HTTP interaction, and poll for events through the backend API.
+// Uses HTTP (not DNS) to avoid local resolver caching that bypasses the OAST server.
+func TestInteractshBackend_LivePoll(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	backend := NewInteractshBackend("")
+	t.Cleanup(func() { _ = backend.Close() })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	t.Cleanup(cancel)
+
+	sess, err := backend.CreateSession(ctx, "")
+	require.NoError(t, err)
+	t.Logf("session created: id=%s domain=%s", sess.ID, sess.Domain)
+
+	// Trigger HTTP interaction (more reliable than DNS which may be cached by resolvers)
+	httpURL := "http://" + sess.Domain
+	t.Logf("triggering HTTP request to: %s", httpURL)
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, httpErr := httpClient.Get(httpURL)
+	if httpErr != nil {
+		t.Logf("HTTP request error (expected): %v", httpErr)
+	} else {
+		_ = resp.Body.Close()
+		t.Logf("HTTP response status: %d", resp.StatusCode)
+	}
+
+	// Poll for events with wait - the backend polls every 10s, so wait long enough
+	t.Log("polling for events (up to 60s)...")
+	result, err := backend.PollSession(ctx, sess.ID, "", "", 60*time.Second, 0)
+	require.NoError(t, err)
+
+	if len(result.Events) == 0 {
+		t.Fatal("no events received after 60s wait - polling may be broken")
+	}
+
+	t.Logf("received %d event(s)", len(result.Events))
+	for i, e := range result.Events {
+		t.Logf("  event[%d]: id=%s type=%s source=%s subdomain=%s", i, e.ID, e.Type, e.SourceIP, e.Subdomain)
+	}
+
+	assert.NotEmpty(t, result.Events[0].Type)
+	assert.NotEmpty(t, result.Events[0].SourceIP)
 }

@@ -87,8 +87,7 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 	if b.serverURL != "" {
 		opts.ServerURLs = []string{b.serverURL}
 	}
-	opts.CorrelationIdLength = 18     // reduce to bare minimum for public servers
-	opts.CorrelationIdNonceLength = 4 // as small as possible, not important with new session per-url
+	opts.CorrelationIdNonceLength = 4 // short nonce, not important with new session per-url
 	c, err := oobclient.New(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create interactsh client: %w", err)
@@ -208,7 +207,9 @@ func (b *InteractshBackend) pollLoop(sess *oastSession) {
 	sess.mu.Lock()
 	if !sess.stopped {
 		if err := sess.client.StartPolling(interactshPollInterval, callback); err != nil {
-			log.Printf("oast: polling error for session %s: %v", sess.info.ID, err)
+			log.Printf("oast: polling start failed for session %s: %v", sess.info.ID, err)
+		} else {
+			log.Printf("oast: polling started for session %s (interval=%v)", sess.info.ID, interactshPollInterval)
 		}
 	}
 	sess.mu.Unlock()
