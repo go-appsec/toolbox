@@ -204,7 +204,7 @@ Output modes:
 
 Filters apply to summary and flows modes: host/path/exclude_host/exclude_path use glob (*, ?). method/status are comma-separated (status supports ranges like 2XX).
 Search: search_header/search_body use regex; literal if invalid.
-Incremental (summary/flows): since accepts flow_id or "last" (cursor). Flows mode only: pagination with limit/offset.`),
+Incremental (summary/flows): since accepts flow_id or "last" (cursor); use to window summaries to recent traffic. Only flows mode advances the cursor. Limit caps results in all modes; offset is for paging flows only.`),
 		mcp.WithString("session_id", mcp.Required(), mcp.Description("Session ID or label")),
 		mcp.WithString("output_mode", mcp.Description("Output mode: 'summary' (default), 'flows', 'forms', or 'errors'")),
 		mcp.WithString("host", mcp.Description("Filter by host glob. *.example.com = subdomains only; *example.com = domain + subdomains")),
@@ -216,7 +216,7 @@ Incremental (summary/flows): since accepts flow_id or "last" (cursor). Flows mod
 		mcp.WithString("exclude_host", mcp.Description("Exclude hosts matching glob pattern")),
 		mcp.WithString("exclude_path", mcp.Description("Exclude paths matching glob pattern")),
 		mcp.WithString("since", mcp.Description("flow_id or 'last' (cursor)")),
-		mcp.WithNumber("limit", mcp.Description("Maximum number of results (default: 100 for flows/forms/errors)")),
+		mcp.WithNumber("limit", mcp.Description("Max results to return (default: 100 for flows/forms/errors)")),
 		mcp.WithNumber("offset", mcp.Description("Skip first N results for pagination (flows mode)")),
 	)
 }
@@ -232,7 +232,10 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 	}
 
 	outputMode := req.GetString("output_mode", "summary")
-	limit := req.GetInt("limit", 100)
+	limit := req.GetInt("limit", 0)
+	if limit == 0 && outputMode != "summary" {
+		limit = 100
+	}
 
 	switch outputMode {
 	case OutputModeForms:
@@ -377,16 +380,24 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 		aggregates := aggregateByTuple(flows, func(f CrawlFlow) (string, string, string, int) {
 			return f.Host, f.Path, f.Method, f.StatusCode
 		})
+		totalCount := len(aggregates)
+		if limit > 0 && len(aggregates) > limit {
+			aggregates = aggregates[:limit]
+		}
 
 		log.Printf("crawl/poll: session %s %d aggregates from %d flows (limit=%d)", sessionID, len(aggregates), len(flows), limit)
 		noteStr := strings.Join(notes, "; ")
-		return jsonResult(protocol.CrawlPollResponse{
+		resp := protocol.CrawlPollResponse{
 			SessionID:  sessionID,
 			State:      status.State,
 			Duration:   status.Duration.Round(time.Millisecond).String(),
 			Aggregates: aggregates,
 			Note:       noteStr,
-		})
+		}
+		if limit > 0 && totalCount > limit {
+			resp.TotalCount = totalCount
+		}
+		return jsonResult(resp)
 	}
 }
 

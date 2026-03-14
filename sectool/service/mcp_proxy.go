@@ -34,7 +34,7 @@ Output modes:
 Sources: Results include both proxy-captured traffic (source=proxy) and replay-sent traffic (source=replay) in chronological order.
 Filters: host/path/exclude_host/exclude_path use glob (*, ?). method/status are comma-separated (status supports ranges like 2XX).
 Search: search_header/search_body use regex; literal if invalid.
-Incremental: since accepts flow_id or "last" (cursor). Flows mode only: pagination with limit/offset.`),
+Incremental: since accepts flow_id or "last" (cursor); use to window summaries to recent traffic. Only flows mode advances the cursor. Limit caps results in both modes; offset is for paging flows only.`),
 		mcp.WithString("output_mode", mcp.Description("Output mode: 'summary' (default) or 'flows'")),
 		mcp.WithString("source", mcp.Description("Filter by source: 'proxy', 'replay', or empty for both")),
 		mcp.WithString("host", mcp.Description("Filter by host glob. *.example.com = subdomains only; *example.com = domain + subdomains")),
@@ -46,8 +46,8 @@ Incremental: since accepts flow_id or "last" (cursor). Flows mode only: paginati
 		mcp.WithString("since", mcp.Description("Entries after flow_id, or 'last' (cursor)")),
 		mcp.WithString("exclude_host", mcp.Description("Exclude hosts matching glob pattern")),
 		mcp.WithString("exclude_path", mcp.Description("Exclude paths matching glob pattern")),
-		mcp.WithNumber("limit", mcp.Description("List mode: max results to return")),
-		mcp.WithNumber("offset", mcp.Description("List mode: skip first N results (applied after filtering)")),
+		mcp.WithNumber("limit", mcp.Description("Max results to return")),
+		mcp.WithNumber("offset", mcp.Description("Skip first N results (flows mode, applied after filtering)")),
 	)
 }
 
@@ -371,10 +371,18 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 		agg := aggregateByTuple(filtered, func(e flowEntry) (string, string, string, int) {
 			return e.host, e.path, e.method, e.status
 		})
+		totalCount := len(agg)
+		if listReq.Limit > 0 && len(agg) > listReq.Limit {
+			agg = agg[:listReq.Limit]
+		}
 		log.Printf("proxy/poll: %d aggregates from %d entries (host=%q path=%q method=%q status=%q)", len(agg), len(filtered), listReq.Host, listReq.Path, listReq.Method, listReq.Status)
 
 		noteStr := strings.Join(notes, "; ")
-		return jsonResult(&protocol.ProxyPollResponse{Aggregates: agg, Note: noteStr})
+		resp := &protocol.ProxyPollResponse{Aggregates: agg, Note: noteStr}
+		if listReq.Limit > 0 && totalCount > listReq.Limit {
+			resp.TotalCount = totalCount
+		}
+		return jsonResult(resp)
 	}
 }
 

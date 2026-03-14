@@ -53,6 +53,27 @@ func TestProxyPollResponse_MarshalJSON(t *testing.T) {
 		assert.Contains(t, m, "note")
 	})
 
+	t.Run("total_count_present_when_nonzero", func(t *testing.T) {
+		resp := ProxyPollResponse{Aggregates: []SummaryEntry{}, TotalCount: 42}
+		b, err := json.Marshal(resp)
+		require.NoError(t, err)
+
+		var m map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(b, &m))
+		assert.Contains(t, m, "total_count")
+		assert.Equal(t, "42", string(m["total_count"]))
+	})
+
+	t.Run("total_count_omitted_when_zero", func(t *testing.T) {
+		resp := ProxyPollResponse{Aggregates: []SummaryEntry{}}
+		b, err := json.Marshal(resp)
+		require.NoError(t, err)
+
+		var m map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(b, &m))
+		assert.NotContains(t, m, "total_count")
+	})
+
 	t.Run("roundtrip", func(t *testing.T) {
 		resp := ProxyPollResponse{
 			Flows: []FlowEntry{{FlowID: "abc", Method: "GET", Host: "example.com", Path: "/"}},

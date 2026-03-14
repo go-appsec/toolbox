@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -198,6 +199,49 @@ func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
 	for _, flow := range excludeResp.Flows {
 		assert.NotEqual(t, "other.com", flow.Host)
 	}
+
+	// Add more flows for summary limit test
+	for i := 0; i < 3; i++ {
+		err = mockCrawler.AddFlow(createResp.SessionID, CrawlFlow{
+			ID:         fmt.Sprintf("flow-page-%d", i),
+			SessionID:  createResp.SessionID,
+			URL:        fmt.Sprintf("https://example.com/page/%d", i),
+			Host:       "example.com",
+			Path:       fmt.Sprintf("/page/%d", i),
+			Method:     "GET",
+			StatusCode: 200,
+			Request:    []byte(fmt.Sprintf("GET /page/%d HTTP/1.1\r\nHost: example.com\r\n\r\n", i)),
+			Response:   []byte("HTTP/1.1 200 OK\r\n\r\nok"),
+		})
+		require.NoError(t, err)
+	}
+	err = mockCrawler.AddFlow(createResp.SessionID, CrawlFlow{
+		ID:         "flow-404",
+		SessionID:  createResp.SessionID,
+		URL:        "https://example.com/missing",
+		Host:       "example.com",
+		Path:       "/missing",
+		Method:     "GET",
+		StatusCode: 404,
+		Request:    []byte("GET /missing HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+		Response:   []byte("HTTP/1.1 404 Not Found\r\n\r\nnot found"),
+	})
+	require.NoError(t, err)
+
+	// Without limit: multiple aggregates (/, /page/0..2, /missing)
+	allSummary := CallMCPToolJSONOK[protocol.CrawlPollResponse](t, mcpClient, "crawl_poll", map[string]interface{}{
+		"session_id": createResp.SessionID,
+	})
+	require.Greater(t, len(allSummary.Aggregates), 2)
+
+	// With limit=2: only 2 aggregate rows
+	limitSummary := CallMCPToolJSONOK[protocol.CrawlPollResponse](t, mcpClient, "crawl_poll", map[string]interface{}{
+		"session_id": createResp.SessionID,
+		"limit":      2,
+	})
+	assert.Len(t, limitSummary.Aggregates, 2)
+	// TotalCount indicates how many aggregates exist before truncation
+	assert.Greater(t, limitSummary.TotalCount, 2)
 
 	stopResult := CallMCPTool(t, mcpClient, "crawl_stop", map[string]interface{}{
 		"session_id": createResp.SessionID,

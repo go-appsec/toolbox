@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -110,6 +111,52 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 		assert.Equal(t, "event-get-test", resp.EventID)
 		assert.Equal(t, "http", resp.Type)
 		assert.Equal(t, "5.6.7.8", resp.SourceIP)
+	})
+
+	t.Run("summary_limit", func(t *testing.T) {
+		// Add events that aggregate to 3 groups
+		for i := 0; i < 3; i++ {
+			mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+				ID:        fmt.Sprintf("dns-event-%d", i),
+				Time:      time.Now(),
+				Type:      "dns",
+				SourceIP:  "10.0.0.1",
+				Subdomain: "a",
+			})
+		}
+		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+			ID:        "http-event-1",
+			Time:      time.Now(),
+			Type:      "http",
+			SourceIP:  "10.0.0.2",
+			Subdomain: "b",
+		})
+		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+			ID:        "smtp-event-1",
+			Time:      time.Now(),
+			Type:      "smtp",
+			SourceIP:  "10.0.0.3",
+			Subdomain: "c",
+		})
+
+		// Without limit: should have at least 3 aggregate rows
+		allResp := CallMCPToolJSONOK[protocol.OastPollResponse](t, mcpClient, "oast_poll", map[string]interface{}{
+			"oast_id": oastID,
+			"wait":    "0s",
+		})
+		require.GreaterOrEqual(t, len(allResp.Aggregates), 3)
+
+		// With limit=1: only top aggregate row
+		limitResp := CallMCPToolJSONOK[protocol.OastPollResponse](t, mcpClient, "oast_poll", map[string]interface{}{
+			"oast_id": oastID,
+			"wait":    "0s",
+			"limit":   1,
+		})
+		require.Len(t, limitResp.Aggregates, 1)
+		// Top aggregate should have the full count, not truncated by pre-aggregation limit
+		assert.GreaterOrEqual(t, limitResp.Aggregates[0].Count, 3)
+		// TotalCount indicates how many aggregates exist before truncation
+		assert.GreaterOrEqual(t, limitResp.TotalCount, 3)
 	})
 
 	t.Run("delete", func(t *testing.T) {

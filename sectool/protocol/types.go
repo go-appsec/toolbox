@@ -41,8 +41,9 @@ type RequestLine struct {
 
 // ProxyPollResponse is the unified response for proxy_poll.
 type ProxyPollResponse struct {
-	Aggregates []SummaryEntry `json:"aggregates,omitempty"` // summary mode
-	Flows      []FlowEntry    `json:"flows,omitempty"`      // list mode
+	Aggregates []SummaryEntry `json:"aggregates,omitempty"`  // summary mode
+	Flows      []FlowEntry    `json:"flows,omitempty"`       // list mode
+	TotalCount int            `json:"total_count,omitempty"` // total before limit truncation
 	Note       string         `json:"note,omitempty"`
 }
 
@@ -55,6 +56,9 @@ func (r ProxyPollResponse) MarshalJSON() ([]byte, error) {
 	}
 	if r.Flows != nil {
 		m["flows"] = r.Flows
+	}
+	if r.TotalCount > 0 {
+		m["total_count"] = r.TotalCount
 	}
 	if r.Note != "" {
 		m["note"] = r.Note
@@ -131,8 +135,9 @@ type OastSummaryEntry struct {
 
 // OastPollResponse is the response for oast_poll.
 type OastPollResponse struct {
-	Aggregates   []OastSummaryEntry `json:"aggregates,omitempty"` // summary mode
-	Events       []OastEvent        `json:"events,omitempty"`     // list mode
+	Aggregates   []OastSummaryEntry `json:"aggregates,omitempty"`  // summary mode
+	Events       []OastEvent        `json:"events,omitempty"`      // list mode
+	TotalCount   int                `json:"total_count,omitempty"` // total before limit truncation
 	DroppedCount int                `json:"dropped_count,omitempty"`
 }
 
@@ -144,6 +149,9 @@ func (r OastPollResponse) MarshalJSON() ([]byte, error) {
 	}
 	if r.Events != nil {
 		m["events"] = r.Events
+	}
+	if r.TotalCount > 0 {
+		m["total_count"] = r.TotalCount
 	}
 	if r.DroppedCount > 0 {
 		m["dropped_count"] = r.DroppedCount
@@ -241,6 +249,7 @@ type CrawlPollResponse struct {
 	Flows      []CrawlFlow    `json:"flows,omitempty"`
 	Forms      []CrawlForm    `json:"forms,omitempty"`
 	Errors     []CrawlError   `json:"errors,omitempty"`
+	TotalCount int            `json:"total_count,omitempty"` // total before limit truncation
 	Note       string         `json:"note,omitempty"`
 }
 
@@ -266,6 +275,9 @@ func (r CrawlPollResponse) MarshalJSON() ([]byte, error) {
 	}
 	if r.Errors != nil {
 		m["errors"] = r.Errors
+	}
+	if r.TotalCount > 0 {
+		m["total_count"] = r.TotalCount
 	}
 	if r.Note != "" {
 		m["note"] = r.Note

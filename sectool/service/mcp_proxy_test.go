@@ -340,6 +340,19 @@ func TestMCP_ProxyPoll(t *testing.T) {
 		})
 	})
 
+	t.Run("summary_limit", func(t *testing.T) {
+		// limit-test.com entries produce 1 aggregate (5 identical requests).
+		// example.com/other.com/test.com/fallback.com produce more.
+		// With limit=1, only the top aggregate row should be returned.
+		resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"limit": 1,
+		})
+		assert.Len(t, resp.Aggregates, 1)
+		assert.GreaterOrEqual(t, resp.Aggregates[0].Count, 1)
+		// TotalCount indicates how many aggregates exist before truncation
+		assert.Greater(t, resp.TotalCount, 1)
+	})
+
 	t.Run("flows_require_filter", func(t *testing.T) {
 		result := CallMCPTool(t, mcpClient, "proxy_poll", map[string]interface{}{
 			"output_mode": "flows",

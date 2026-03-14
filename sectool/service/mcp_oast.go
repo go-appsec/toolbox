@@ -47,7 +47,7 @@ Response includes events/aggregates and optional dropped_count; use oast_get for
 		mcp.WithString("since", mcp.Description("event_id or 'last' (per-session cursor)")),
 		mcp.WithString("type", mcp.Description("Filter by event type: dns, http, smtp, ftp, ldap, smb, responder")),
 		mcp.WithString("wait", mcp.Description("Long-poll duration (default '30s', max 120s, '0s' to disable)")),
-		mcp.WithNumber("limit", mcp.Description("Maximum number of events to return")),
+		mcp.WithNumber("limit", mcp.Description("Max results to return")),
 	)
 }
 
@@ -119,7 +119,13 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 	eventType := strings.ToLower(req.GetString("type", ""))
 	limit := req.GetInt("limit", 0)
 
-	result, err := m.service.oastBackend.PollSession(ctx, oastID, since, eventType, wait, limit)
+	// In summary mode, fetch all events (limit applied after aggregation)
+	backendLimit := limit
+	if outputMode != "events" {
+		backendLimit = 0
+	}
+
+	result, err := m.service.oastBackend.PollSession(ctx, oastID, since, eventType, wait, backendLimit)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return errorResult("session not found"), nil
@@ -149,11 +155,19 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 
 	default: // summary
 		agg := aggregateOastEvents(result.Events)
+		totalCount := len(agg)
+		if limit > 0 && len(agg) > limit {
+			agg = agg[:limit]
+		}
 		log.Printf("oast/poll: session %s %d aggregates from %d events (wait=%v since=%q type=%q)", oastID, len(agg), len(result.Events), wait, since, eventType)
-		return jsonResult(protocol.OastPollResponse{
+		resp := protocol.OastPollResponse{
 			Aggregates:   agg,
 			DroppedCount: result.DroppedCount,
-		})
+		}
+		if limit > 0 && totalCount > limit {
+			resp.TotalCount = totalCount
+		}
+		return jsonResult(resp)
 	}
 }
 
