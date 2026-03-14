@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-appsec/interactsh-lite/oobclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,8 +92,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 				Domain:    "test.alpha.oastsrv.net",
 				CreatedAt: time.Now(),
 			},
-			notify:      make(chan struct{}),
-			stopPolling: make(chan struct{}),
+			notify: make(chan struct{}),
 		}
 		backend.sessions["test.alpha.oastsrv.net"] = sess
 		backend.byID["test123"] = "test.alpha.oastsrv.net"
@@ -129,8 +129,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 				Domain:    "test2.alpha.oastsrv.net",
 				CreatedAt: time.Now(),
 			},
-			notify:      make(chan struct{}),
-			stopPolling: make(chan struct{}),
+			notify: make(chan struct{}),
 		}
 		backend.sessions["test2.alpha.oastsrv.net"] = sess
 		backend.byID["test456"] = "test2.alpha.oastsrv.net"
@@ -167,8 +166,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 				Domain:    "limit.alpha.oastsrv.net",
 				CreatedAt: time.Now(),
 			},
-			notify:      make(chan struct{}),
-			stopPolling: make(chan struct{}),
+			notify: make(chan struct{}),
 		}
 		backend.sessions["limit.alpha.oastsrv.net"] = sess
 		backend.byID["testlimit"] = "limit.alpha.oastsrv.net"
@@ -203,8 +201,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 				Domain:    domain,
 				CreatedAt: time.Now(),
 			},
-			notify:      make(chan struct{}),
-			stopPolling: make(chan struct{}),
+			notify: make(chan struct{}),
 		}
 		backend.sessions[domain] = sess
 		backend.byID[id] = domain
@@ -214,6 +211,7 @@ func TestInteractshBackend_PollSession(t *testing.T) {
 			backend.sessions = make(map[string]*oastSession)
 			backend.byID = make(map[string]string)
 			backend.byLabel = make(map[string]string)
+			backend.byNonce = make(map[string]string)
 			backend.mu.Unlock()
 		}
 		return backend, sess, cleanup
@@ -519,7 +517,7 @@ func TestOastSession_FilterEvents(t *testing.T) {
 func TestOastSession_BufferRotation(t *testing.T) {
 	t.Parallel()
 
-	// Simulate the buffer rotation logic from pollLoop's callback
+	// Simulate the buffer rotation logic from handleInteraction
 	addEvent := func(sess *oastSession, id string) {
 		sess.mu.Lock()
 		defer sess.mu.Unlock()
@@ -632,8 +630,7 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				ID:     "test123",
 				Domain: "test.alpha.oastsrv.net",
 			},
-			notify:      make(chan struct{}),
-			stopPolling: make(chan struct{}),
+			notify: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e1", Time: time.Now(), Type: "dns"},
 			},
@@ -656,8 +653,7 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				ID:     "test456",
 				Domain: "test2.alpha.oastsrv.net",
 			},
-			notify:      make(chan struct{}),
-			stopPolling: make(chan struct{}),
+			notify: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e1", Time: eventTime, Type: "dns", SourceIP: "1.1.1.1"},
 				{
@@ -692,8 +688,7 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				ID:     "sess1",
 				Domain: "s1.alpha.oastsrv.net",
 			},
-			notify:      make(chan struct{}),
-			stopPolling: make(chan struct{}),
+			notify: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e1", Time: time.Now(), Type: "dns"},
 			},
@@ -703,8 +698,7 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				ID:     "sess2",
 				Domain: "s2.alpha.oastsrv.net",
 			},
-			notify:      make(chan struct{}),
-			stopPolling: make(chan struct{}),
+			notify: make(chan struct{}),
 			events: []OastEventInfo{
 				{ID: "e2", Time: time.Now(), Type: "http", SourceIP: "3.3.3.3"},
 			},
@@ -731,9 +725,8 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 				ID:     "teststopped",
 				Domain: "stopped.alpha.oastsrv.net",
 			},
-			notify:      notify,
-			stopPolling: make(chan struct{}),
-			stopped:     true,
+			notify:  notify,
+			stopped: true,
 			events: []OastEventInfo{
 				{ID: "e1", Time: time.Now(), Type: "dns"},
 			},
@@ -802,8 +795,7 @@ func TestInteractshBackend_DeleteSession(t *testing.T) {
 				ID:     "testdel",
 				Domain: "del.alpha.oastsrv.net",
 			},
-			notify:      make(chan struct{}),
-			stopPolling: make(chan struct{}),
+			notify: make(chan struct{}),
 		}
 		backend.sessions["del.alpha.oastsrv.net"] = sess
 		backend.byID["testdel"] = "del.alpha.oastsrv.net"
@@ -825,8 +817,7 @@ func TestInteractshBackend_DeleteSession(t *testing.T) {
 				ID:     "testdeldomain",
 				Domain: "deldomain.alpha.oastsrv.net",
 			},
-			notify:      make(chan struct{}),
-			stopPolling: make(chan struct{}),
+			notify: make(chan struct{}),
 		}
 		backend.sessions["deldomain.alpha.oastsrv.net"] = sess
 		backend.byID["testdeldomain"] = "deldomain.alpha.oastsrv.net"
@@ -885,4 +876,131 @@ func TestInteractshBackend_LivePoll(t *testing.T) {
 
 	assert.NotEmpty(t, result.Events[0].Type)
 	assert.NotEmpty(t, result.Events[0].SourceIP)
+}
+
+func TestHandleInteraction(t *testing.T) {
+	t.Parallel()
+
+	const testCorrelationID = "testcorrelation"
+	const testNonce = "nonce1aa"
+
+	setup := func() (*InteractshBackend, *oastSession) {
+		b := NewInteractshBackend("")
+		b.correlationID = testCorrelationID
+
+		sess := &oastSession{
+			info: OastSessionInfo{
+				ID:        "sess1",
+				Domain:    "test.oastsrv.net",
+				CreatedAt: time.Now(),
+			},
+			nonce:  testNonce,
+			notify: make(chan struct{}),
+		}
+		b.sessions["test.oastsrv.net"] = sess
+		b.byID["sess1"] = "test.oastsrv.net"
+		b.byNonce[testNonce] = "test.oastsrv.net"
+		return b, sess
+	}
+
+	t.Run("routes_by_nonce", func(t *testing.T) {
+		b, sess := setup()
+
+		b.handleInteraction(&oobclient.Interaction{
+			FullId:   testCorrelationID + testNonce,
+			Protocol: "DNS",
+		})
+
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		assert.Len(t, sess.events, 1)
+	})
+
+	t.Run("prefix_subdomains", func(t *testing.T) {
+		b, sess := setup()
+
+		b.handleInteraction(&oobclient.Interaction{
+			FullId:   "ssrf." + testCorrelationID + testNonce,
+			Protocol: "HTTP",
+		})
+
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		assert.Len(t, sess.events, 1)
+	})
+
+	t.Run("unknown_nonce", func(t *testing.T) {
+		b, sess := setup()
+
+		b.handleInteraction(&oobclient.Interaction{
+			FullId:   testCorrelationID + "unkno99z",
+			Protocol: "DNS",
+		})
+
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		assert.Empty(t, sess.events)
+	})
+
+	t.Run("wrong_correlation_id", func(t *testing.T) {
+		b, sess := setup()
+
+		b.handleInteraction(&oobclient.Interaction{
+			FullId:   "wrongcorrelation" + testNonce,
+			Protocol: "DNS",
+		})
+
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		assert.Empty(t, sess.events)
+	})
+
+	t.Run("stopped_session", func(t *testing.T) {
+		b, sess := setup()
+
+		sess.mu.Lock()
+		sess.stopped = true
+		close(sess.notify)
+		sess.mu.Unlock()
+
+		b.handleInteraction(&oobclient.Interaction{
+			FullId:   testCorrelationID + testNonce,
+			Protocol: "DNS",
+		})
+
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		assert.Empty(t, sess.events)
+	})
+
+	t.Run("populates_event_fields", func(t *testing.T) {
+		b, sess := setup()
+
+		ts := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
+		b.handleInteraction(&oobclient.Interaction{
+			FullId:        testCorrelationID + testNonce,
+			Protocol:      "HTTP",
+			RemoteAddress: "10.0.0.1",
+			Timestamp:     ts,
+			RawRequest:    "GET / HTTP/1.1\r\nHost: example.com",
+			RawResponse:   "HTTP/1.1 200 OK",
+			QType:         "A",
+			SMTPFrom:      "test@example.com",
+		})
+
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		require.Len(t, sess.events, 1)
+
+		e := sess.events[0]
+		assert.NotEmpty(t, e.ID)
+		assert.Equal(t, "http", e.Type)
+		assert.Equal(t, "10.0.0.1", e.SourceIP)
+		assert.Equal(t, testCorrelationID+testNonce, e.Subdomain)
+		assert.Equal(t, ts, e.Time)
+		assert.Equal(t, "GET / HTTP/1.1\r\nHost: example.com", e.Details["raw_request"])
+		assert.Equal(t, "HTTP/1.1 200 OK", e.Details["raw_response"])
+		assert.Equal(t, "A", e.Details["query_type"])
+		assert.Equal(t, "test@example.com", e.Details["smtp_from"])
+	})
 }

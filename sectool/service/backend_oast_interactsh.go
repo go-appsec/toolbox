@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-analyze/bulk"
@@ -19,10 +20,12 @@ import (
 const (
 	// interactshPollInterval is how often the interactsh client polls the server.
 	interactshPollInterval = 10 * time.Second
-	// sessionCloseTimeout is how long to wait when closing a session.
-	sessionCloseTimeout = 10 * time.Second
+	// clientCloseTimeout is how long to wait when closing the shared client.
+	clientCloseTimeout = 10 * time.Second
 	// maxLabelPrefixLen is the maximum label length to use as a domain prefix.
 	maxLabelPrefixLen = 16
+	// correlationIdNonceLength is the per-URL nonce length passed to the interactsh client.
+	correlationIdNonceLength = 8
 )
 
 // dnsLabelRe matches a valid DNS label: alphanumeric with optional interior hyphens.
@@ -35,7 +38,13 @@ type InteractshBackend struct {
 	sessions  map[string]*oastSession // by domain (canonical key)
 	byID      map[string]string       // short ID -> domain
 	byLabel   map[string]string       // label -> domain (only non-empty labels)
+	byNonce   map[string]string       // nonce -> domain (interaction routing)
 	closed    bool
+
+	// Shared client, lazily created on first CreateSession
+	client        atomic.Pointer[oobclient.Client]
+	initMu        sync.Mutex // guards lazy init slow path
+	correlationID string     // from URL(), immutable after init
 }
 
 // Compile-time check that InteractshBackend implements OastBackend
@@ -43,8 +52,8 @@ var _ OastBackend = (*InteractshBackend)(nil)
 
 // oastSession holds the state for a single OAST session.
 type oastSession struct {
-	info   OastSessionInfo
-	client *oobclient.Client
+	info  OastSessionInfo
+	nonce string // unique nonce from URL(), for routing interactions
 
 	mu           sync.Mutex
 	notify       chan struct{} // closed when new events arrive, then replaced
@@ -52,8 +61,7 @@ type oastSession struct {
 	droppedCount int
 	lastPollIdx  int // Index after last poll (for "last" filter)
 
-	stopPolling chan struct{}
-	stopped     bool
+	stopped bool
 }
 
 // NewInteractshBackend creates a new Interactsh-backed OastBackend.
@@ -63,7 +71,137 @@ func NewInteractshBackend(serverURL string) *InteractshBackend {
 		sessions:  make(map[string]*oastSession),
 		byID:      make(map[string]string),
 		byLabel:   make(map[string]string),
+		byNonce:   make(map[string]string),
 	}
+}
+
+// ensureClient lazily creates the shared oobclient.Client and starts polling.
+func (b *InteractshBackend) ensureClient(ctx context.Context) (*oobclient.Client, error) {
+	if c := b.client.Load(); c != nil {
+		return c, nil
+	}
+
+	b.initMu.Lock()
+	defer b.initMu.Unlock()
+
+	if c := b.client.Load(); c != nil {
+		return c, nil
+	}
+
+	b.mu.RLock()
+	closed := b.closed
+	b.mu.RUnlock()
+	if closed {
+		return nil, errors.New("backend is closed")
+	}
+
+	var opts oobclient.Options
+	if b.serverURL != "" {
+		opts.ServerURLs = []string{b.serverURL}
+	}
+	opts.CorrelationIdNonceLength = correlationIdNonceLength
+
+	c, err := oobclient.New(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create interactsh client: %w", err)
+	}
+
+	// Extract correlationID from URL (correlationID + nonce + "." + serverHost).
+	// The first URL's nonce is discarded; CreateSession generates its own.
+	domain := c.Domain()
+	dotIdx := strings.IndexByte(domain, '.')
+	if dotIdx < 0 {
+		_ = c.Close()
+		return nil, fmt.Errorf("oast: domain from interactsh has no dot separator: %q", domain)
+	}
+	if dotIdx < correlationIdNonceLength {
+		_ = c.Close()
+		return nil, fmt.Errorf("oast: domain prefix too short for nonce extraction: %q", domain)
+	}
+	b.correlationID = domain[:dotIdx-correlationIdNonceLength]
+
+	if err := c.StartPolling(interactshPollInterval, b.handleInteraction); err != nil {
+		_ = c.Close()
+		return nil, fmt.Errorf("failed to start polling: %w", err)
+	}
+
+	b.client.Store(c)
+	log.Printf("oast: shared client created, polling started (interval=%v)", interactshPollInterval)
+	return c, nil
+}
+
+// handleInteraction routes an interaction to the correct session.
+// FullId contains subdomain labels only (e.g., "correlationIDnonce" or
+// "prefix.correlationIDnonce"), not a full FQDN.
+func (b *InteractshBackend) handleInteraction(interaction *oobclient.Interaction) {
+	// Extract the leaf label from FullId (handles user-added prefix subdomains)
+	label := interaction.FullId
+	if dotIdx := strings.LastIndexByte(label, '.'); dotIdx >= 0 {
+		label = label[dotIdx+1:]
+	}
+	if !strings.HasPrefix(label, b.correlationID) || len(label) <= len(b.correlationID) {
+		return
+	}
+	nonce := label[len(b.correlationID):]
+
+	b.mu.RLock()
+	domain, ok := b.byNonce[nonce]
+	if !ok {
+		b.mu.RUnlock()
+		return
+	}
+	sess := b.sessions[domain]
+	b.mu.RUnlock()
+
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+
+	if sess.stopped {
+		return
+	}
+
+	var eventTime time.Time
+	if !interaction.Timestamp.IsZero() {
+		eventTime = interaction.Timestamp
+	} else {
+		eventTime = time.Now()
+	}
+
+	details := make(map[string]interface{}, 4)
+	if interaction.RawRequest != "" {
+		details["raw_request"] = interaction.RawRequest
+	}
+	if interaction.RawResponse != "" {
+		details["raw_response"] = interaction.RawResponse
+	}
+	if interaction.QType != "" {
+		details["query_type"] = interaction.QType
+	}
+	if interaction.SMTPFrom != "" {
+		details["smtp_from"] = interaction.SMTPFrom
+	}
+
+	if len(sess.events) >= MaxOastEventsPerSession {
+		sess.events = sess.events[1:]
+		sess.droppedCount++
+		if sess.lastPollIdx > 0 {
+			sess.lastPollIdx--
+		}
+	}
+	event := OastEventInfo{
+		ID:        ids.Generate(ids.DefaultLength),
+		Time:      eventTime,
+		Type:      strings.ToLower(interaction.Protocol),
+		SourceIP:  interaction.RemoteAddress,
+		Subdomain: interaction.FullId,
+		Details:   details,
+	}
+	sess.events = append(sess.events, event)
+
+	close(sess.notify)
+	sess.notify = make(chan struct{})
+
+	log.Printf("oast: session %s received %s event from %s", sess.info.ID, event.Type, event.SourceIP)
 }
 
 func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*OastSessionInfo, error) {
@@ -72,7 +210,7 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 		b.mu.Unlock()
 		return nil, errors.New("backend is closed")
 	}
-	// Check label uniqueness before creating interactsh client
+	// Check label uniqueness before potentially slow client init
 	if label != "" {
 		if existingDomain, exists := b.byLabel[label]; exists {
 			existingSess := b.sessions[existingDomain]
@@ -83,18 +221,24 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 	}
 	b.mu.Unlock()
 
-	var opts oobclient.Options
-	if b.serverURL != "" {
-		opts.ServerURLs = []string{b.serverURL}
-	}
-	opts.CorrelationIdNonceLength = 4 // short nonce, not important with new session per-url
-	c, err := oobclient.New(ctx, opts)
+	c, err := b.ensureClient(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create interactsh client: %w", err)
+		return nil, err
 	}
 
 	sessionID := ids.Generate(ids.DefaultLength)
-	domain := c.URL()
+	domain := c.Domain()
+
+	// Extract nonce: domain = correlationID + nonce + "." + serverHost
+	dotIdx := strings.IndexByte(domain, '.')
+	if dotIdx < 0 {
+		panic(fmt.Sprintf("oast: domain from interactsh has no dot separator: %q", domain))
+	}
+	if len(b.correlationID) > dotIdx {
+		panic(fmt.Sprintf("oast: correlationID %q longer than domain prefix %q", b.correlationID, domain[:dotIdx]))
+	}
+	nonce := domain[len(b.correlationID):dotIdx]
+
 	if label != "" && len(label) <= maxLabelPrefixLen {
 		if lower := strings.ToLower(label); dnsLabelRe.MatchString(lower) {
 			domain = lower + "." + domain
@@ -108,15 +252,13 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 			Label:     label,
 			CreatedAt: time.Now(),
 		},
-		client:      c,
-		notify:      make(chan struct{}),
-		stopPolling: make(chan struct{}),
+		nonce:  nonce,
+		notify: make(chan struct{}),
 	}
 
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
-		_ = c.Close()
 		return nil, errors.New("backend is closed")
 	}
 
@@ -125,7 +267,6 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 		if existingDomain, exists := b.byLabel[label]; exists {
 			existingSess := b.sessions[existingDomain]
 			b.mu.Unlock()
-			_ = c.Close()
 			return nil, fmt.Errorf("%w: %q already in use by session %s; delete it first with: sectool oast delete %s",
 				ErrLabelExists, label, existingSess.info.ID, existingSess.info.ID)
 		}
@@ -139,82 +280,13 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 
 	b.sessions[domain] = sess
 	b.byID[sessionID] = domain
+	b.byNonce[nonce] = domain
 	if label != "" {
 		b.byLabel[label] = domain
 	}
 	b.mu.Unlock()
 
-	go b.pollLoop(sess) // Start background polling
-
 	return &sess.info, nil
-}
-
-// pollLoop runs background polling for a session.
-func (b *InteractshBackend) pollLoop(sess *oastSession) {
-	callback := func(interaction *oobclient.Interaction) {
-		sess.mu.Lock()
-		defer sess.mu.Unlock()
-
-		if sess.stopped {
-			return
-		}
-
-		var eventTime time.Time
-		if !interaction.Timestamp.IsZero() {
-			eventTime = interaction.Timestamp
-		} else {
-			eventTime = time.Now()
-		}
-
-		details := make(map[string]interface{}, 4)
-		if interaction.RawRequest != "" {
-			details["raw_request"] = interaction.RawRequest
-		}
-		if interaction.RawResponse != "" {
-			details["raw_response"] = interaction.RawResponse
-		}
-		if interaction.QType != "" {
-			details["query_type"] = interaction.QType
-		}
-		if interaction.SMTPFrom != "" {
-			details["smtp_from"] = interaction.SMTPFrom
-		}
-
-		if len(sess.events) >= MaxOastEventsPerSession {
-			sess.events = sess.events[1:]
-			sess.droppedCount++
-			if sess.lastPollIdx > 0 {
-				sess.lastPollIdx--
-			}
-		}
-		event := OastEventInfo{
-			ID:        ids.Generate(ids.DefaultLength),
-			Time:      eventTime,
-			Type:      strings.ToLower(interaction.Protocol),
-			SourceIP:  interaction.RemoteAddress,
-			Subdomain: interaction.FullId,
-			Details:   details,
-		}
-		sess.events = append(sess.events, event)
-
-		// Notify waiters by closing channel, then replace for next notification
-		close(sess.notify)
-		sess.notify = make(chan struct{})
-
-		log.Printf("oast: session %s received %s event from %s", sess.info.ID, event.Type, event.SourceIP)
-	}
-
-	sess.mu.Lock()
-	if !sess.stopped {
-		if err := sess.client.StartPolling(interactshPollInterval, callback); err != nil {
-			log.Printf("oast: polling start failed for session %s: %v", sess.info.ID, err)
-		} else {
-			log.Printf("oast: polling started for session %s (interval=%v)", sess.info.ID, interactshPollInterval)
-		}
-	}
-	sess.mu.Unlock()
-
-	<-sess.stopPolling
 }
 
 func (b *InteractshBackend) PollSession(ctx context.Context, idOrDomain string, since string, eventType string, wait time.Duration, limit int) (*OastPollResultInfo, error) {
@@ -385,27 +457,10 @@ func (b *InteractshBackend) deleteSession(sess *oastSession) error {
 	close(sess.notify) // wake any waiters
 	sess.mu.Unlock()
 
-	close(sess.stopPolling)
-
-	if sess.client != nil {
-		done := make(chan error, 1)
-		go func() {
-			done <- sess.client.Close()
-		}()
-
-		select {
-		case err := <-done:
-			if err != nil {
-				log.Printf("oast: error closing session %s: %v", sess.info.ID, err)
-			}
-		case <-time.After(sessionCloseTimeout):
-			log.Printf("oast: timeout closing session %s", sess.info.ID)
-		}
-	}
-
 	b.mu.Lock()
 	delete(b.sessions, sess.info.Domain)
 	delete(b.byID, sess.info.ID)
+	delete(b.byNonce, sess.nonce)
 	if sess.info.Label != "" {
 		delete(b.byLabel, sess.info.Label)
 	}
@@ -415,6 +470,9 @@ func (b *InteractshBackend) deleteSession(sess *oastSession) error {
 }
 
 func (b *InteractshBackend) Close() error {
+	b.initMu.Lock()
+	defer b.initMu.Unlock()
+
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -422,17 +480,42 @@ func (b *InteractshBackend) Close() error {
 	}
 	b.closed = true
 	sessions := bulk.MapValuesSlice(b.sessions)
+
+	// Stop all sessions under the lock.
+	// Safe: sess.mu is a leaf lock, never held while acquiring b.mu.
+	for _, sess := range sessions {
+		sess.mu.Lock()
+		if !sess.stopped {
+			sess.stopped = true
+			close(sess.notify)
+		}
+		sess.mu.Unlock()
+	}
+
+	// Clear maps and nil atomic pointer so ensureClient's fast path
+	// falls through to the slow path where it sees b.closed.
+	b.sessions = make(map[string]*oastSession)
+	b.byID = make(map[string]string)
+	b.byLabel = make(map[string]string)
+	b.byNonce = make(map[string]string)
+	c := b.client.Load()
+	b.client.Store(nil)
 	b.mu.Unlock()
 
-	var wg sync.WaitGroup
-	for _, sess := range sessions {
-		wg.Add(1)
-		go func(s *oastSession) {
-			defer wg.Done()
-			_ = b.deleteSession(s)
-		}(sess)
+	// Close shared client outside the lock (deregistration makes an HTTP call)
+	if c != nil {
+		done := make(chan error, 1)
+		go func() { done <- c.Close() }()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				log.Printf("oast: error closing shared client: %v", err)
+			}
+		case <-time.After(clientCloseTimeout):
+			log.Printf("oast: timeout closing shared client")
+		}
 	}
-	wg.Wait()
 
 	return nil
 }
