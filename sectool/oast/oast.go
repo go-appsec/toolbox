@@ -177,10 +177,9 @@ func get(mcpURL string, eventID string) error {
 			title = strings.Join(words, " ")
 
 			if s, ok := v.(string); ok && len(s) > 0 {
-				fmt.Printf("### %s\n\n", title)
-				fmt.Println("```")
+				fmt.Println()
+				fmt.Println(cliutil.Bold(title))
 				fmt.Println(s)
-				fmt.Println("```")
 			} else {
 				fmt.Printf("%s: %v\n", title, v)
 			}
