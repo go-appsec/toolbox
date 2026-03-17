@@ -114,9 +114,10 @@ func (m *mcpServer) Addr() string {
 	return ""
 }
 
-// Close stops the MCP server.
-func (m *mcpServer) Close(ctx context.Context) error {
+func (m *mcpServer) Close() error {
 	var errs []error
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	// Close HTTP server - use short timeout then force close.
 	// Streaming connections (SSE, MCP) never become idle, so Shutdown blocks.
@@ -134,13 +135,13 @@ func (m *mcpServer) Close(ctx context.Context) error {
 		}
 	}
 
-	if m.sseServer != nil {
-		if err := m.sseServer.Shutdown(ctx); err != nil {
+	if m.streamableServer != nil {
+		if err := m.streamableServer.Shutdown(ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	if m.streamableServer != nil {
-		if err := m.streamableServer.Shutdown(ctx); err != nil {
+	if m.sseServer != nil {
+		if err := m.sseServer.Shutdown(ctx); err != nil {
 			errs = append(errs, err)
 		}
 	}

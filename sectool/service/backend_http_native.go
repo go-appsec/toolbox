@@ -145,7 +145,7 @@ func (b *NativeProxyBackend) Close() error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	return b.server.Shutdown(ctx)

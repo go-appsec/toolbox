@@ -112,17 +112,16 @@ func (b *InteractshBackend) ensureClient(ctx context.Context) (*oobclient.Client
 	dotIdx := strings.IndexByte(domain, '.')
 	if dotIdx < 0 {
 		_ = c.Close()
-		return nil, fmt.Errorf("oast: domain from interactsh has no dot separator: %q", domain)
-	}
-	if dotIdx < correlationIdNonceLength {
+		panic(fmt.Sprintf("BUG: domain from interactsh has no dot separator: %q", domain))
+	} else if dotIdx < correlationIdNonceLength {
 		_ = c.Close()
-		return nil, fmt.Errorf("oast: domain prefix too short for nonce extraction: %q", domain)
+		panic(fmt.Sprintf("BUG: domain prefix too short for nonce extraction: %q", domain))
 	}
 	b.correlationID = domain[:dotIdx-correlationIdNonceLength]
 
 	if err := c.StartPolling(interactshPollInterval, b.handleInteraction); err != nil {
 		_ = c.Close()
-		return nil, fmt.Errorf("failed to start polling: %w", err)
+		return nil, fmt.Errorf("oast failed to start polling: %w", err)
 	}
 
 	b.client.Store(c)
@@ -215,8 +214,8 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 		if existingDomain, exists := b.byLabel[label]; exists {
 			existingSess := b.sessions[existingDomain]
 			b.mu.Unlock()
-			return nil, fmt.Errorf("%w: %q already in use by session %s; delete it first with: sectool oast delete %s",
-				ErrLabelExists, label, existingSess.info.ID, existingSess.info.ID)
+			return nil, fmt.Errorf("%w: %q already in use by session %s; delete it first",
+				ErrLabelExists, label, existingSess.info.ID)
 		}
 	}
 	b.mu.Unlock()
@@ -232,10 +231,9 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 	// Extract nonce: domain = correlationID + nonce + "." + serverHost
 	dotIdx := strings.IndexByte(domain, '.')
 	if dotIdx < 0 {
-		panic(fmt.Sprintf("oast: domain from interactsh has no dot separator: %q", domain))
-	}
-	if len(b.correlationID) > dotIdx {
-		panic(fmt.Sprintf("oast: correlationID %q longer than domain prefix %q", b.correlationID, domain[:dotIdx]))
+		panic(fmt.Sprintf("BUG: domain from interactsh has no dot separator: %q", domain))
+	} else if len(b.correlationID) > dotIdx {
+		panic(fmt.Sprintf("BUG: correlationID %q longer than domain prefix %q", b.correlationID, domain[:dotIdx]))
 	}
 	nonce := domain[len(b.correlationID):dotIdx]
 
@@ -267,8 +265,8 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label string) (*O
 		if existingDomain, exists := b.byLabel[label]; exists {
 			existingSess := b.sessions[existingDomain]
 			b.mu.Unlock()
-			return nil, fmt.Errorf("%w: %q already in use by session %s; delete it first with: sectool oast delete %s",
-				ErrLabelExists, label, existingSess.info.ID, existingSess.info.ID)
+			return nil, fmt.Errorf("%w: %q already in use by session %s; delete it first",
+				ErrLabelExists, label, existingSess.info.ID)
 		}
 	}
 

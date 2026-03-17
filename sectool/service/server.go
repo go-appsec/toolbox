@@ -19,8 +19,7 @@ import (
 )
 
 const (
-	shutdownTimeout = 10 * time.Second
-	caCertFile      = "ca.pem" // CA certificate filename in config directory
+	caCertFile = "ca.pem" // CA certificate filename in config directory
 )
 
 // Server is the sectool MCP server.
@@ -174,34 +173,29 @@ func (s *Server) Run(ctx context.Context) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Setup HTTP backend (Burp or built-in proxy)
+	// Setup Default backends if not already specified
 	if s.httpBackend == nil {
 		if err := s.setupHttpBackend(ctx); err != nil {
 			return fmt.Errorf("failed to setup HTTP backend: %w", err)
 		}
 	}
-
-	// Setup OAST backend
 	if s.oastBackend == nil {
 		s.oastBackend = NewInteractshBackend(s.cfg.InteractshServerURL)
 	}
-
-	// Setup Crawler backend
 	if s.crawlerBackend == nil {
 		s.crawlerBackend = NewCollyBackend(s.cfg, s.proxyIndex, s.httpBackend)
 	}
 
-	// Start MCP server
 	s.mcpServer = newMCPServer(s, s.mcpWorkflowMode)
 	if err := s.mcpServer.Start(s.mcpPort); err != nil {
 		return fmt.Errorf("failed to start MCP server: %w", err)
 	}
 
-	markStarted()
 	log.Printf("MCP server (version=%s) listening on http://%s/mcp", config.Version, s.mcpServer.Addr())
 	if !s.quietLogging {
 		s.printMCPConfig()
 	}
+	markStarted()
 
 	select {
 	case <-ctx.Done():
@@ -217,29 +211,19 @@ func (s *Server) Run(ctx context.Context) error {
 	return s.shutdown()
 }
 
-// shutdown performs graceful shutdown.
 func (s *Server) shutdown() error {
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-
-	// Close MCP server
-	if s.mcpServer != nil {
-		if err := s.mcpServer.Close(ctx); err != nil {
-			log.Printf("MCP server shutdown error: %v", err)
-		}
-	}
-
-	// Close backends and storage in parallel (backends have their own internal timeouts)
 	var wg sync.WaitGroup
 	closeAsync := func(name string, fn func() error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+
 			if err := fn(); err != nil {
 				log.Printf("warning: failed to close %s: %v", name, err)
 			}
 		}()
 	}
+	closeAsync("MCP Server", s.mcpServer.Close)
 	closeAsync("HttpBackend", s.httpBackend.Close)
 	closeAsync("OastBackend", s.oastBackend.Close)
 	closeAsync("CrawlerBackend", s.crawlerBackend.Close)
@@ -248,9 +232,9 @@ func (s *Server) shutdown() error {
 	closeAsync("NoteStore", s.noteStore.Close)
 	closeAsync("HistoryStorage", s.historyStorage.Close)
 	closeAsync("RuleStorage", s.ruleStorage.Close)
+
 	wg.Wait()
 
-	// Remove shared temp directory
 	_ = os.RemoveAll(s.storageTempDir)
 
 	log.Printf("sectool MCP server stopped")
@@ -370,15 +354,13 @@ func (s *Server) startBuiltinProxy() error {
 	}
 
 	// Configure capture exclusion filters
-	captureFilter, err := BuildCaptureFilter(s.cfg.Proxy)
-	if err != nil {
+
+	if captureFilter, err := BuildCaptureFilter(s.cfg.Proxy); err != nil {
 		return fmt.Errorf("invalid capture filter: %w", err)
-	}
-	if captureFilter != nil {
+	} else if captureFilter != nil {
 		backend.SetCaptureFilter(captureFilter)
 	}
 
-	// Start proxy server in background
 	go func() {
 		if err := backend.Serve(); err != nil {
 			log.Printf("proxy: server error: %v", err)
