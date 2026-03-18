@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/agnivade/levenshtein v1.2.1
 	github.com/go-analyze/bulk v0.1.3
-	github.com/go-appsec/interactsh-lite v0.2.3
+	github.com/go-appsec/interactsh-lite v0.2.4
 	github.com/go-appsec/scout v0.1.0
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/google/uuid v1.6.0
@@ -41,7 +41,6 @@ require (
 	github.com/nlnwa/whatwg-url v0.6.2 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
-	github.com/rs/xid v1.6.0 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/temoto/robotstxt v1.1.2 // indirect
