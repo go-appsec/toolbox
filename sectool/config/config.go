@@ -34,7 +34,7 @@ func init() {
 }
 
 func UserAgent() string {
-	return "Mozilla/5.0 (compatible; go-appsec/toolbox sectool-" + Version + ")"
+	return "Mozilla/5.0 (compatible; go-appsec/toolbox sectool@" + Version + ")"
 }
 
 // DefaultPath returns ~/.sectool/config.json.

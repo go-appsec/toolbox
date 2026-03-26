@@ -222,7 +222,9 @@ func (h *http2Handler) Handle(ctx context.Context, clientConn, upstreamConn *tls
 	// Read and validate client preface
 	preface := make([]byte, len(h2Preface))
 	if _, err := io.ReadFull(clientConn, preface); err != nil {
-		log.Printf("h2: failed to read client preface: %v", err)
+		if !isConnClosedErr(err) {
+			log.Printf("h2: failed to read client preface: %v", err)
+		}
 		return
 	}
 	if string(preface) != h2Preface {

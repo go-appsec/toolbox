@@ -173,7 +173,9 @@ func (h *connectHandler) handleTLS(ctx context.Context, clientConn net.Conn, tar
 
 	// Perform handshake (this triggers GetConfigForClient)
 	if err := clientTLS.HandshakeContext(ctx); err != nil {
-		log.Printf("proxy: TLS handshake failed: %v", err)
+		if !isConnClosedErr(err) {
+			log.Printf("proxy: TLS handshake failed: %v", err)
+		}
 		if upstreamConn != nil {
 			_ = upstreamConn.Close()
 		}

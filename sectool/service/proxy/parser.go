@@ -26,10 +26,11 @@ func parseRequest(r io.Reader) (*RawHTTP1Request, error) {
 	if err != nil {
 		if errors.Is(err, io.EOF) && len(line) == 0 {
 			return nil, ErrEmptyRequest
-		} else if len(line) == 0 {
+		} else if !errors.Is(err, io.EOF) {
+			// return as-is instead of trying to parse partial data as a request line
 			return nil, err
 		}
-		// Continue with partial line
+		// EOF with partial data: continue parsing (line without trailing newline)
 	}
 
 	method, path, query, version, err := ParseRequestLine(line)

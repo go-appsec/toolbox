@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/url"
@@ -60,7 +59,7 @@ func (h *http1Handler) handleSinglePlainHTTP(ctx context.Context, clientConn net
 
 	req, err := parseRequest(clientReader)
 	if err != nil {
-		if !errors.Is(err, io.EOF) && !errors.Is(err, ErrEmptyRequest) {
+		if errors.Is(err, ErrInvalidRequest) {
 			log.Printf("proxy: failed to parse request: %v", err)
 			h.sendError(clientConn, 400, "Bad Request")
 		}
@@ -312,7 +311,7 @@ func (h *http1Handler) handleSingleTLS(ctx context.Context, clientConn, upstream
 
 	req, err := parseRequest(clientReader)
 	if err != nil {
-		if !errors.Is(err, io.EOF) && !errors.Is(err, ErrEmptyRequest) {
+		if errors.Is(err, ErrInvalidRequest) {
 			log.Printf("proxy: failed to parse TLS request: %v", err)
 			h.sendError(clientConn, 400, "Bad Request")
 		}

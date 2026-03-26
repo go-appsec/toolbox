@@ -3,8 +3,11 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -239,6 +242,29 @@ func TestParseRequest(t *testing.T) {
 			},
 		},
 		{
+			name:  "eof_no_trailing_newline",
+			input: "GET / HTTP/1.1",
+			want: &RawHTTP1Request{
+				Method:   "GET",
+				Path:     "/",
+				Version:  "HTTP/1.1",
+				Protocol: "http/1.1",
+			},
+		},
+		{
+			name:  "eof_after_headers",
+			input: "GET / HTTP/1.1\r\nHost: example.com",
+			want: &RawHTTP1Request{
+				Method:   "GET",
+				Path:     "/",
+				Version:  "HTTP/1.1",
+				Protocol: "http/1.1",
+				Headers: []Header{
+					{Name: "Host", Value: "example.com"},
+				},
+			},
+		},
+		{
 			name:    "empty_request",
 			input:   "",
 			wantErr: true,
@@ -273,6 +299,21 @@ func TestParseRequest(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("non_eof_error_empty", func(t *testing.T) {
+		_, err := parseRequest(iotest.ErrReader(errors.New("network error")))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "network error")
+	})
+
+	t.Run("non_eof_error_partial", func(t *testing.T) {
+		// Reader returns partial data then a non-EOF error;
+		// parseRequest should return the error, not attempt to parse.
+		r := io.MultiReader(strings.NewReader("GET /"), iotest.ErrReader(errors.New("connection reset")))
+		_, err := parseRequest(r)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "connection reset")
+	})
 
 	t.Run("chunked_body", func(t *testing.T) {
 		input := "POST /upload HTTP/1.1\r\n" +

@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -240,4 +243,14 @@ func (s *ProxyServer) Shutdown(ctx context.Context) error {
 
 	s.history.Close()
 	return s.certManager.Close()
+}
+
+// isConnClosedErr returns true for errors indicating the peer closed the connection.
+// These are expected during normal browser connection lifecycle (preconnect, idle cleanup).
+func isConnClosedErr(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "connection reset") || strings.Contains(s, "broken pipe")
 }
