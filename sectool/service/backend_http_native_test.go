@@ -60,7 +60,7 @@ func TestNativeProxyBackend_GetProxyHistory(t *testing.T) {
 	// Make request through proxy
 	resp, err := client.Get(testServer.URL + "/test")
 	require.NoError(t, err)
-	_ = resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 
 	testutil.WaitForCount(t, func() int { return backend.server.History().Count() }, 1)
 
@@ -100,7 +100,7 @@ func TestNativeProxyBackend_GetProxyHistoryMeta(t *testing.T) {
 	// Make request through proxy
 	resp, err := client.Get(testServer.URL + "/test?q=1")
 	require.NoError(t, err)
-	_ = resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 
 	testutil.WaitForCount(t, func() int { return backend.server.History().Count() }, 1)
 
@@ -409,7 +409,7 @@ func TestNativeProxyBackend_HTTPS_Proxy(t *testing.T) {
 
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	_ = resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 
 	assert.Equal(t, 200, resp.StatusCode)
 	assert.Equal(t, "true", resp.Header.Get("X-HTTPS"))

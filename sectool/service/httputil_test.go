@@ -790,7 +790,7 @@ func TestReadResponseBytes(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			_ = resp.Body.Close()
+			require.NoError(t, resp.Body.Close())
 			assert.Equal(t, tt.wantStatus, resp.StatusCode)
 			assert.Equal(t, tt.wantProto, resp.Proto)
 		})

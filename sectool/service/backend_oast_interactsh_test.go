@@ -856,7 +856,7 @@ func TestInteractshBackend_LivePoll(t *testing.T) {
 	if httpErr != nil {
 		t.Logf("HTTP request error (expected): %v", httpErr)
 	} else {
-		_ = resp.Body.Close()
+		require.NoError(t, resp.Body.Close())
 		t.Logf("HTTP response status: %d", resp.StatusCode)
 	}
 

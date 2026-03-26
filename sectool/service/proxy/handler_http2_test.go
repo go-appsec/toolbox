@@ -620,7 +620,7 @@ func TestHTTP2ProxyHeaderRules(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	_ = resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 
 	assert.Equal(t, "rule-applied", receivedHeader)
 
