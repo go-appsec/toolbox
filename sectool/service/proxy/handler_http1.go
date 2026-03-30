@@ -312,7 +312,8 @@ func (h *http1Handler) handleSingleTLS(ctx context.Context, clientConn, upstream
 	req, err := parseRequest(clientReader)
 	if err != nil {
 		if errors.Is(err, ErrInvalidRequest) {
-			log.Printf("proxy: failed to parse TLS request: %v", err)
+			// Don't log - browsers routinely send non-HTTP data on TLS connections
+			// during connection lifecycle management (preconnect, idle cleanup)
 			h.sendError(clientConn, 400, "Bad Request")
 		}
 		return false
