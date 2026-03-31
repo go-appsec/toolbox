@@ -105,7 +105,7 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 			Details:   map[string]interface{}{"method": "GET", "path": "/"},
 		})
 
-		resp := CallMCPToolJSONOK[protocol.OastGetResponse](t, mcpClient, "oast_get", map[string]interface{}{
+		resp := CallMCPToolJSONOK[protocol.OastEvent](t, mcpClient, "oast_get", map[string]interface{}{
 			"event_id": "event-get-test",
 		})
 		assert.Equal(t, "event-get-test", resp.EventID)

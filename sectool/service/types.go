@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net"
 	"os"
-
-	"github.com/go-appsec/toolbox/sectool/protocol"
 )
 
 // Flow source constants for display and sorting.
@@ -88,24 +86,4 @@ type OastDeleteResponse struct{}
 // CrawlStopResponse is the response for crawl_stop.
 type CrawlStopResponse struct {
 	Stopped bool `json:"stopped"`
-}
-
-// formsToAPI converts DiscoveredForm slice to API format.
-func formsToAPI(forms []DiscoveredForm) []protocol.CrawlForm {
-	result := make([]protocol.CrawlForm, 0, len(forms))
-	for _, f := range forms {
-		inputs := make([]protocol.FormInput, 0, len(f.Inputs))
-		for _, inp := range f.Inputs {
-			inputs = append(inputs, protocol.FormInput(inp))
-		}
-		result = append(result, protocol.CrawlForm{
-			FormID:  f.ID,
-			URL:     f.URL,
-			Action:  f.Action,
-			Method:  f.Method,
-			HasCSRF: f.HasCSRF,
-			Inputs:  inputs,
-		})
-	}
-	return result
 }

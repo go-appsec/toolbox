@@ -271,16 +271,14 @@ func (b *NativeProxyBackend) ListRules(ctx context.Context, websocket bool) ([]p
 	return result, nil
 }
 
-func (b *NativeProxyBackend) AddRule(ctx context.Context, input ProxyRuleInput) (*protocol.RuleEntry, error) {
+func (b *NativeProxyBackend) AddRule(ctx context.Context, input protocol.RuleEntry) (*protocol.RuleEntry, error) {
 	// Validate type (both HTTP and WebSocket types)
 	if !validRuleTypes[input.Type] {
 		return nil, fmt.Errorf("invalid rule type: %q", input.Type)
 	}
 
-	isRegex := input.IsRegex != nil && *input.IsRegex
-
 	var compiled *regexp.Regexp
-	if isRegex {
+	if input.IsRegex {
 		var err error
 		compiled, err = regexp.Compile(input.Match)
 		if err != nil {
@@ -302,7 +300,7 @@ func (b *NativeProxyBackend) AddRule(ctx context.Context, input ProxyRuleInput) 
 		ID:       ids.Generate(0),
 		Label:    input.Label,
 		Type:     input.Type,
-		IsRegex:  isRegex,
+		IsRegex:  input.IsRegex,
 		Match:    input.Match,
 		Replace:  input.Replace,
 		compiled: compiled,

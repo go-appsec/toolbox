@@ -248,7 +248,7 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 		}
 
 		log.Printf("crawl/poll: session %s %d forms (limit=%d)", sessionID, len(forms), limit)
-		return jsonResult(protocol.CrawlPollResponse{SessionID: sessionID, Forms: formsToAPI(forms)})
+		return jsonResult(protocol.CrawlPollResponse{SessionID: sessionID, Forms: forms})
 
 	case OutputModeErrors:
 		errs, err := m.service.crawlerBackend.ListErrors(ctx, sessionID, limit)
@@ -259,16 +259,8 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 			return errorResultFromErr("failed to list errors: ", err), nil
 		}
 
-		apiErrors := make([]protocol.CrawlError, 0, len(errs))
-		for _, e := range errs {
-			apiErrors = append(apiErrors, protocol.CrawlError{
-				URL:    e.URL,
-				Status: e.Status,
-				Error:  e.Error,
-			})
-		}
 		log.Printf("crawl/poll: session %s %d errors (limit=%d)", sessionID, len(errs), limit)
-		return jsonResult(protocol.CrawlPollResponse{SessionID: sessionID, Errors: apiErrors})
+		return jsonResult(protocol.CrawlPollResponse{SessionID: sessionID, Errors: errs})
 
 	case OutputModeFlows:
 		searchHeader := req.GetString("search_header", "")

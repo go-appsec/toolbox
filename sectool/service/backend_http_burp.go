@@ -328,7 +328,7 @@ func (b *BurpBackend) ListRules(ctx context.Context, websocket bool) ([]protocol
 	return rules, nil
 }
 
-func (b *BurpBackend) AddRule(ctx context.Context, input ProxyRuleInput) (*protocol.RuleEntry, error) {
+func (b *BurpBackend) AddRule(ctx context.Context, input protocol.RuleEntry) (*protocol.RuleEntry, error) {
 	httpRules, err := b.getAllRules(ctx, false)
 	if err != nil {
 		return nil, fmt.Errorf("add rule: %w", err)
@@ -365,7 +365,7 @@ func (b *BurpBackend) AddRule(ctx context.Context, input ProxyRuleInput) (*proto
 		StringMatch:   input.Match,
 		StringReplace: input.Replace,
 	}
-	if input.IsRegex != nil && *input.IsRegex {
+	if input.IsRegex {
 		newRule.Category = mcp.RuleCategoryRegex
 	}
 

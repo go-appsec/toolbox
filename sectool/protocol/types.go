@@ -182,16 +182,6 @@ type OastSession struct {
 	CreatedAt string `json:"created_at"`
 }
 
-// OastGetResponse is the response for oast_get.
-type OastGetResponse struct {
-	EventID   string                 `json:"event_id"`
-	Time      string                 `json:"time"`
-	Type      string                 `json:"type"`
-	SourceIP  string                 `json:"source_ip"`
-	Subdomain string                 `json:"subdomain,omitempty"`
-	Details   map[string]interface{} `json:"details,omitempty"`
-}
-
 // =============================================================================
 // Rule Types
 // =============================================================================

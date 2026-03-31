@@ -251,7 +251,7 @@ func TestNativeProxyBackend_Responder_LabelUniqueness(t *testing.T) {
 	require.ErrorIs(t, err, ErrLabelExists)
 
 	// Labels are independent from rules - same label allowed
-	_, err = backend.AddRule(t.Context(), ProxyRuleInput{
+	_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 		Label: "rule-label",
 		Type:  RuleTypeRequestHeader,
 		Match: "test",

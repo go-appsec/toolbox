@@ -239,7 +239,7 @@ func (b *mockHttpBackend) ListRules(ctx context.Context, websocket bool) ([]prot
 	return rules, nil
 }
 
-func (b *mockHttpBackend) AddRule(ctx context.Context, input ProxyRuleInput) (*protocol.RuleEntry, error) {
+func (b *mockHttpBackend) AddRule(ctx context.Context, input protocol.RuleEntry) (*protocol.RuleEntry, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -255,11 +255,9 @@ func (b *mockHttpBackend) AddRule(ctx context.Context, input ProxyRuleInput) (*p
 		RuleID:  ids.Generate(0),
 		Label:   input.Label,
 		Type:    input.Type,
+		IsRegex: input.IsRegex,
 		Match:   input.Match,
 		Replace: input.Replace,
-	}
-	if input.IsRegex != nil && *input.IsRegex {
-		entry.IsRegex = true
 	}
 
 	b.rules = append(b.rules, entry)
@@ -495,8 +493,8 @@ type mockCrawlerBackend struct {
 	byLabel  map[string]string
 	status   map[string]*CrawlStatus
 	flows    map[string]*CrawlFlow
-	forms    map[string][]DiscoveredForm
-	errors   map[string][]CrawlError
+	forms    map[string][]protocol.CrawlForm
+	errors   map[string][]protocol.CrawlError
 }
 
 func newMockCrawlerBackend() *mockCrawlerBackend {
@@ -505,8 +503,8 @@ func newMockCrawlerBackend() *mockCrawlerBackend {
 		byLabel:  make(map[string]string),
 		status:   make(map[string]*CrawlStatus),
 		flows:    make(map[string]*CrawlFlow),
-		forms:    make(map[string][]DiscoveredForm),
-		errors:   make(map[string][]CrawlError),
+		forms:    make(map[string][]protocol.CrawlForm),
+		errors:   make(map[string][]protocol.CrawlError),
 	}
 }
 
@@ -598,7 +596,7 @@ func (b *mockCrawlerBackend) ListFlows(ctx context.Context, sessionID string, op
 	return flows, nil
 }
 
-func (b *mockCrawlerBackend) ListForms(ctx context.Context, sessionID string, limit int) ([]DiscoveredForm, error) {
+func (b *mockCrawlerBackend) ListForms(ctx context.Context, sessionID string, limit int) ([]protocol.CrawlForm, error) {
 	sess, err := b.resolveSession(sessionID)
 	if err != nil {
 		return nil, err
@@ -610,7 +608,7 @@ func (b *mockCrawlerBackend) ListForms(ctx context.Context, sessionID string, li
 	return forms, nil
 }
 
-func (b *mockCrawlerBackend) ListErrors(ctx context.Context, sessionID string, limit int) ([]CrawlError, error) {
+func (b *mockCrawlerBackend) ListErrors(ctx context.Context, sessionID string, limit int) ([]protocol.CrawlError, error) {
 	sess, err := b.resolveSession(sessionID)
 	if err != nil {
 		return nil, err
@@ -659,8 +657,8 @@ func (b *mockCrawlerBackend) Close() error {
 	b.byLabel = make(map[string]string)
 	b.status = make(map[string]*CrawlStatus)
 	b.flows = make(map[string]*CrawlFlow)
-	b.forms = make(map[string][]DiscoveredForm)
-	b.errors = make(map[string][]CrawlError)
+	b.forms = make(map[string][]protocol.CrawlForm)
+	b.errors = make(map[string][]protocol.CrawlError)
 	return nil
 }
 
@@ -678,7 +676,7 @@ func (b *mockCrawlerBackend) AddFlow(sessionID string, flow CrawlFlow) error {
 	return nil
 }
 
-func (b *mockCrawlerBackend) AddForm(sessionID string, form DiscoveredForm) error {
+func (b *mockCrawlerBackend) AddForm(sessionID string, form protocol.CrawlForm) error {
 	sess, err := b.resolveSession(sessionID)
 	if err != nil {
 		return err
@@ -691,7 +689,7 @@ func (b *mockCrawlerBackend) AddForm(sessionID string, form DiscoveredForm) erro
 	return nil
 }
 
-func (b *mockCrawlerBackend) AddError(sessionID string, crawlErr CrawlError) error {
+func (b *mockCrawlerBackend) AddError(sessionID string, crawlErr protocol.CrawlError) error {
 	sess, err := b.resolveSession(sessionID)
 	if err != nil {
 		return err

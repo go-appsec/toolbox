@@ -607,10 +607,10 @@ func (m *mcpServer) handleProxyRuleAdd(ctx context.Context, req mcp.CallToolRequ
 			match = fixed
 		}
 	}
-	rule, err := m.service.httpBackend.AddRule(ctx, ProxyRuleInput{
+	rule, err := m.service.httpBackend.AddRule(ctx, protocol.RuleEntry{
 		Label:   label,
 		Type:    ruleType,
-		IsRegex: &isRegex,
+		IsRegex: isRegex,
 		Match:   match,
 		Replace: replace,
 	})

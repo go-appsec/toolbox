@@ -222,7 +222,7 @@ func (m *mcpServer) handleOastGet(ctx context.Context, req mcp.CallToolRequest) 
 	}
 
 	log.Printf("oast/get: event %s type=%s", eventID, event.Type)
-	return jsonResult(protocol.OastGetResponse{
+	return jsonResult(protocol.OastEvent{
 		EventID:   event.ID,
 		Time:      event.Time.UTC().Format(time.RFC3339),
 		Type:      event.Type,

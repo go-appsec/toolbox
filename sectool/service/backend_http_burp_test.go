@@ -7,10 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/mcp"
 )
-
-func boolPtr(b bool) *bool { return &b }
 
 func TestFormatSectoolComment(t *testing.T) {
 	t.Parallel()
@@ -115,10 +114,10 @@ func TestBurpBackendRules(t *testing.T) {
 			})
 
 			t.Run("add_rule", func(t *testing.T) {
-				rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
+				rule, err := backend.AddRule(t.Context(), protocol.RuleEntry{
 					Label:   "test-add",
 					Type:    tc.ruleType1,
-					IsRegex: boolPtr(false),
+					IsRegex: false,
 					Match:   "",
 					Replace: "X-Test: value",
 				})
@@ -139,10 +138,10 @@ func TestBurpBackendRules(t *testing.T) {
 			})
 
 			t.Run("add_regex_rule", func(t *testing.T) {
-				rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
+				rule, err := backend.AddRule(t.Context(), protocol.RuleEntry{
 					Label:   "test-regex",
 					Type:    tc.ruleType2,
-					IsRegex: boolPtr(true),
+					IsRegex: true,
 					Match:   "^X-Remove.*$",
 					Replace: "",
 				})
@@ -154,7 +153,7 @@ func TestBurpBackendRules(t *testing.T) {
 			})
 
 			t.Run("duplicate_label_rejected", func(t *testing.T) {
-				_, err := backend.AddRule(t.Context(), ProxyRuleInput{
+				_, err := backend.AddRule(t.Context(), protocol.RuleEntry{
 					Label: "test-add",
 					Type:  tc.ruleType1,
 				})
@@ -163,7 +162,7 @@ func TestBurpBackendRules(t *testing.T) {
 			})
 
 			t.Run("delete_by_id", func(t *testing.T) {
-				rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
+				rule, err := backend.AddRule(t.Context(), protocol.RuleEntry{
 					Label: "to-delete-by-id",
 					Type:  tc.ruleType1,
 				})
@@ -180,7 +179,7 @@ func TestBurpBackendRules(t *testing.T) {
 			})
 
 			t.Run("delete_by_label", func(t *testing.T) {
-				rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
+				rule, err := backend.AddRule(t.Context(), protocol.RuleEntry{
 					Label: "to-delete-by-label",
 					Type:  tc.ruleType1,
 				})
@@ -258,14 +257,14 @@ func TestBurpBackendRuleIsolation(t *testing.T) {
 	backend := &BurpBackend{client: client}
 
 	// Add HTTP rule
-	httpRule, err := backend.AddRule(t.Context(), ProxyRuleInput{
+	httpRule, err := backend.AddRule(t.Context(), protocol.RuleEntry{
 		Label: "http-only",
 		Type:  mcp.RuleTypeRequestHeader,
 	})
 	require.NoError(t, err)
 
 	// Add WS rule with ws: prefixed type
-	wsRule, err := backend.AddRule(t.Context(), ProxyRuleInput{
+	wsRule, err := backend.AddRule(t.Context(), protocol.RuleEntry{
 		Label: "ws-only",
 		Type:  "ws:both",
 	})
@@ -293,7 +292,7 @@ func TestBurpBackendConfigEditingDisabled(t *testing.T) {
 		backend, mockServer := newTestBurpBackend(t)
 		mockServer.SetConfigEditingDisabled(true)
 
-		_, err := backend.AddRule(t.Context(), ProxyRuleInput{
+		_, err := backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label: "should-fail",
 			Type:  mcp.RuleTypeRequestHeader,
 			Match: "old",
@@ -306,7 +305,7 @@ func TestBurpBackendConfigEditingDisabled(t *testing.T) {
 		backend, mockServer := newTestBurpBackend(t)
 
 		// Add a rule while editing is enabled
-		rule, err := backend.AddRule(t.Context(), ProxyRuleInput{
+		rule, err := backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label: "to-delete",
 			Type:  mcp.RuleTypeRequestHeader,
 		})

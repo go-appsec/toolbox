@@ -48,21 +48,19 @@ func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	form := DiscoveredForm{
-		ID:        "form-1",
-		SessionID: createResp.SessionID,
-		URL:       "https://example.com/login",
-		Action:    "https://example.com/login",
-		Method:    "POST",
-		Inputs: []FormInput{
+	form := protocol.CrawlForm{
+		FormID: "form-1",
+		URL:    "https://example.com/login",
+		Action: "https://example.com/login",
+		Method: "POST",
+		Inputs: []protocol.FormInput{
 			{Name: "username", Type: "text"},
 		},
 		HasCSRF: true,
 	}
 	require.NoError(t, mockCrawler.AddForm(createResp.SessionID, form))
 
-	crawlErr := CrawlError{
-		FlowID: flowID,
+	crawlErr := protocol.CrawlError{
 		URL:    "https://example.com/bad",
 		Error:  "boom",
 		Status: 500,

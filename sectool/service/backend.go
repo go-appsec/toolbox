@@ -60,8 +60,8 @@ type HttpBackend interface {
 
 	// AddRule creates a new match/replace rule.
 	// WebSocket vs HTTP is inferred from rule.Type (ws:* types are WebSocket).
-	// Returns the created rule with assigned ID.
-	AddRule(ctx context.Context, rule ProxyRuleInput) (*protocol.RuleEntry, error)
+	// RuleID is ignored on input and assigned by the backend.
+	AddRule(ctx context.Context, rule protocol.RuleEntry) (*protocol.RuleEntry, error)
 
 	// DeleteRule removes a rule by ID or label.
 	// Searches both HTTP and WebSocket rules automatically.
@@ -92,16 +92,6 @@ type ProxyEntryMeta struct {
 	RespLen     int
 	Protocol    string
 	ContentType string
-}
-
-// ProxyRuleInput contains parameters for creating a rule.
-// TODO - replace with RuleEntry?
-type ProxyRuleInput struct {
-	Label   string // Optional label for easier reference
-	Type    string // Required on add
-	IsRegex *bool
-	Match   string
-	Replace string
 }
 
 // ProxyEntry represents a single proxy history entry in HttpBackend-agnostic form.
@@ -172,7 +162,6 @@ type OastBackend interface {
 }
 
 // OastSessionInfo represents an active OAST session (internal domain type).
-// TODO - de-duplicate with OastSession?
 type OastSessionInfo struct {
 	ID        string    // Short sectool ID (e.g., "a1b2c3")
 	Domain    string    // Full Interactsh domain (e.g., "xyz123.alpha.oastsrv.net")
@@ -181,7 +170,6 @@ type OastSessionInfo struct {
 }
 
 // OastEventInfo represents a captured out-of-band interaction (internal domain type).
-// TODO - de-duplicate with OastGetResponse?
 type OastEventInfo struct {
 	ID        string                 // Short sectool ID
 	Time      time.Time              // When the interaction occurred
@@ -217,11 +205,11 @@ type CrawlerBackend interface {
 
 	// ListForms returns forms discovered in a session.
 	// sessionID can be the ID or label.
-	ListForms(ctx context.Context, sessionID string, limit int) ([]DiscoveredForm, error)
+	ListForms(ctx context.Context, sessionID string, limit int) ([]protocol.CrawlForm, error)
 
 	// ListErrors returns errors encountered in a session.
 	// sessionID can be the ID or label.
-	ListErrors(ctx context.Context, sessionID string, limit int) ([]CrawlError, error)
+	ListErrors(ctx context.Context, sessionID string, limit int) ([]protocol.CrawlError, error)
 
 	// GetFlow returns a flow by ID. Returns ErrNotFound if flow doesn't exist.
 	GetFlow(ctx context.Context, flowID string) (*CrawlFlow, error)
@@ -320,35 +308,6 @@ type CrawlFlow struct {
 	Truncated      bool          // True if response exceeded max_response_body_bytes
 	Duration       time.Duration // Request/response round-trip time
 	DiscoveredAt   time.Time     // When this flow was captured
-}
-
-// DiscoveredForm represents a form found during crawling.
-type DiscoveredForm struct {
-	ID        string      // Short sectool ID
-	SessionID string      // Parent session ID
-	URL       string      // Page containing the form
-	Action    string      // Form action URL (resolved to absolute)
-	Method    string      // GET/POST
-	Inputs    []FormInput // Form fields
-	HasCSRF   bool        // Detected CSRF token field
-}
-
-// FormInput represents a single form field.
-// TODO - replace with protocol.FormInput?
-type FormInput struct {
-	Name     string // Field name attribute
-	Type     string // text, password, hidden, select, textarea, etc.
-	Value    string // Default/current value
-	Required bool   // Has required attribute
-}
-
-// CrawlError represents an error encountered during crawling.
-// TODO - replace with protocol.CrawlError?
-type CrawlError struct {
-	FlowID string // May be empty if request never sent
-	URL    string // URL that caused the error
-	Error  string // Error message
-	Status int    // HTTP status if available
 }
 
 // parseSinceTimestamp attempts to parse a string as a timestamp in multiple formats.

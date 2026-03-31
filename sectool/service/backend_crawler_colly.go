@@ -21,6 +21,7 @@ import (
 	"github.com/gocolly/colly/v2"
 
 	"github.com/go-appsec/toolbox/sectool/config"
+	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/ids"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 )
@@ -62,8 +63,8 @@ type crawlSession struct {
 	reconWg         sync.WaitGroup        // Tracks background recon goroutines
 	flowsByID       map[string]*CrawlFlow // by flow ID for lookup
 	flowsOrdered    []*CrawlFlow          // ordered by discovery time
-	forms           []DiscoveredForm
-	errors          []CrawlError
+	forms           []protocol.CrawlForm
+	errors          []protocol.CrawlError
 	urlsSeen        map[string]bool
 	urlsQueued      int
 	requestCount    int // for MaxRequests enforcement
@@ -468,7 +469,7 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 	}
 	if extractForms {
 		c.OnHTML("form", func(e *colly.HTMLElement) {
-			form := extractForm(e, sess.info.ID)
+			form := extractForm(e)
 
 			sess.mu.Lock()
 			sess.forms = append(sess.forms, form)
@@ -503,7 +504,7 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 			}
 		}
 
-		crawlErr := CrawlError{
+		crawlErr := protocol.CrawlError{
 			URL:    r.Request.URL.String(),
 			Error:  err.Error(),
 			Status: r.StatusCode,
@@ -750,7 +751,7 @@ func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts Cra
 	return result, nil
 }
 
-func (b *CollyBackend) ListForms(ctx context.Context, sessionID string, limit int) ([]DiscoveredForm, error) {
+func (b *CollyBackend) ListForms(ctx context.Context, sessionID string, limit int) ([]protocol.CrawlForm, error) {
 	sess, err := b.resolveSession(sessionID)
 	if err != nil {
 		return nil, err
@@ -766,7 +767,7 @@ func (b *CollyBackend) ListForms(ctx context.Context, sessionID string, limit in
 	return slices.Clone(forms), nil
 }
 
-func (b *CollyBackend) ListErrors(ctx context.Context, sessionID string, limit int) ([]CrawlError, error) {
+func (b *CollyBackend) ListErrors(ctx context.Context, sessionID string, limit int) ([]protocol.CrawlError, error) {
 	sess, err := b.resolveSession(sessionID)
 	if err != nil {
 		return nil, err
@@ -1125,7 +1126,7 @@ func isDomainAllowed(urlStr string, allowedDomains []string, includeSubdomains b
 	return false
 }
 
-func extractForm(e *colly.HTMLElement, sessionID string) DiscoveredForm {
+func extractForm(e *colly.HTMLElement) protocol.CrawlForm {
 	action := e.Request.AbsoluteURL(e.Attr("action"))
 	if action == "" {
 		action = e.Request.URL.String()
@@ -1136,12 +1137,11 @@ func extractForm(e *colly.HTMLElement, sessionID string) DiscoveredForm {
 		method = "GET"
 	}
 
-	form := DiscoveredForm{
-		ID:        ids.Generate(ids.DefaultLength),
-		SessionID: sessionID,
-		URL:       e.Request.URL.String(),
-		Action:    action,
-		Method:    method,
+	form := protocol.CrawlForm{
+		FormID: ids.Generate(ids.DefaultLength),
+		URL:    e.Request.URL.String(),
+		Action: action,
+		Method: method,
 	}
 
 	e.ForEach("input, select, textarea", func(_ int, el *colly.HTMLElement) {
@@ -1150,7 +1150,7 @@ func extractForm(e *colly.HTMLElement, sessionID string) DiscoveredForm {
 			return
 		}
 
-		input := FormInput{
+		input := protocol.FormInput{
 			Name:     name,
 			Type:     el.Attr("type"),
 			Value:    el.Attr("value"),
