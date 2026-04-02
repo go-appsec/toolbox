@@ -19,7 +19,7 @@ import (
 
 const (
 	// interactshPollInterval is how often the interactsh client polls the server.
-	interactshPollInterval = 10 * time.Second
+	interactshPollInterval = 4 * time.Second
 	// clientCloseTimeout is how long to wait when closing the shared client.
 	clientCloseTimeout = 10 * time.Second
 	// maxLabelPrefixLen is the maximum label length to use as a domain prefix.
