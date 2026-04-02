@@ -419,7 +419,12 @@ func (p *h2Proxy) readFrames(fromClient bool) {
 		frame, err := src.framer.ReadFrame()
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				log.Printf("h2: read frame error (%v): %v", fromClient, err)
+				select {
+				case <-p.ctx.Done():
+					// shutdown in progress; connection closed intentionally
+				default:
+					log.Printf("h2: read frame error (%v): %v", fromClient, err)
+				}
 			}
 			return
 		}
