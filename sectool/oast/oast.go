@@ -143,7 +143,7 @@ func poll(mcpURL string, oastID, since, eventType string, wait time.Duration, li
 	return nil
 }
 
-func get(mcpURL string, eventID string) error {
+func get(mcpURL string, eventID string, fields string) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -152,7 +152,7 @@ func get(mcpURL string, eventID string) error {
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.OastGet(ctx, eventID)
+	resp, err := client.OastGet(ctx, eventID, fields)
 	if err != nil {
 		return fmt.Errorf("oast get failed: %w", err)
 	}

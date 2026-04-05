@@ -81,9 +81,12 @@ oast poll <oast_id|label|domain> [options]
 
 ---
 
-oast get <event_id>
+oast get <event_id> [options]
 
-  Full details for a specific event without truncation.
+  Details for a specific event.
+
+  Options:
+    --fields <str>     filter fields: target, headers, body (comma-separated)
 
 ---
 
@@ -210,15 +213,15 @@ Options:
 func parseGet(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("oast get", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
+	var fields string
+
+	fs.StringVar(&fields, "fields", "", "filter response fields (target, headers, body)")
 
 	fs.Usage = func() {
-		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool oast get <event_id>
+		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool oast get <event_id> [options]
 
-Get full details for a specific OAST event. Use 'sectool oast poll' to list
+Get details for a specific OAST event. Use 'sectool oast poll' to list
 events and get their event_id values.
-
-This shows the complete raw request/response without truncation, useful for
-analyzing the exact payload that triggered an out-of-band interaction.
 
 Options:
 `)
@@ -232,7 +235,7 @@ Options:
 		return errors.New("event_id required (get from 'sectool oast poll')")
 	}
 
-	return get(mcpURL, fs.Args()[0])
+	return get(mcpURL, fs.Args()[0], fields)
 }
 
 func parseList(args []string, mcpURL string) error {

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -19,7 +20,7 @@ func (m *mcpServer) oastCreateTool() mcp.Tool {
 
 Returns {oast_id, domain} for blind out-of-band detection (DNS/HTTP/SMTP).
 Workflow: create -> inject domain in payload -> trigger target -> oast_poll -> oast_get for details.
-Use cases: blind SSRF, blind XXE, DNS exfiltration, email verification bypass.
+Use cases: blind SSRF, blind XXE, DNS exfiltration, email verification (use oast_get fields=body to extract email content).
 
 Prefer OAST domains over invented random strings. They double as unique tokens with built-in callback detection.`),
 		mcp.WithString("label", mcp.Description("Optional unique label for this session")),
@@ -32,7 +33,7 @@ func (m *mcpServer) oastPollTool() mcp.Tool {
 
 Output modes:
 - "summary" (default): Returns events aggregated by (subdomain, source_ip, type), sorted by count descending.
-- "events": Returns individual events with event_id for use with oast_get.
+- "events": Returns lightweight event metadata (event_id, time, type, source_ip, subdomain). Use oast_get for request contents.
 
 Options:
 - Default: long-poll for 30s
@@ -41,7 +42,7 @@ Options:
 - Incremental: use since parameter, accepts event_id or "last"
 - Filter by type: dns, http, smtp, ftp, ldap, smb, responder
 
-Response includes events/aggregates and optional dropped_count; use oast_get for full event details.`),
+Response includes events/aggregates and optional dropped_count.`),
 		mcp.WithString("oast_id", mcp.Required(), mcp.Description("OAST session ID, label, or domain")),
 		mcp.WithString("output_mode", mcp.Description("Output mode: 'summary' (default) or 'events'")),
 		mcp.WithString("since", mcp.Description("event_id or 'last' (per-session cursor)")),
@@ -53,8 +54,9 @@ Response includes events/aggregates and optional dropped_count; use oast_get for
 
 func (m *mcpServer) oastGetTool() mcp.Tool {
 	return mcp.NewTool("oast_get",
-		mcp.WithDescription("Get full OAST event data: HTTP request/response, DNS query type/answer, SMTP headers/body."),
+		mcp.WithDescription("Get OAST event details: structured headers/body for HTTP/SMTP, query_type for DNS."),
 		mcp.WithString("event_id", mcp.Required(), mcp.Description("Event ID from oast_poll")),
+		mcp.WithString("fields", mcp.Description("Comma-separated filter (target, headers, body). target = request line (HTTP) or envelope from/to (SMTP). Default: all except target. DNS events ignore fields.")),
 	)
 }
 
@@ -143,7 +145,7 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 				Type:      e.Type,
 				SourceIP:  e.SourceIP,
 				Subdomain: e.Subdomain,
-				Details:   e.Details,
+				// Details omitted from poll; use oast_get for event details
 			}
 		}
 
@@ -213,6 +215,11 @@ func (m *mcpServer) handleOastGet(ctx context.Context, req mcp.CallToolRequest) 
 		return errorResult("event_id is required"), nil
 	}
 
+	fields, err := parseOastFields(req.GetString("fields", ""))
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	event, err := m.service.oastBackend.GetEvent(ctx, eventID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -221,6 +228,8 @@ func (m *mcpServer) handleOastGet(ctx context.Context, req mcp.CallToolRequest) 
 		return errorResultFromErr("failed to get event: ", err), nil
 	}
 
+	details := filterOastDetails(event.Details, fields, event.Type)
+
 	log.Printf("oast/get: event %s type=%s", eventID, event.Type)
 	return jsonResult(protocol.OastEvent{
 		EventID:   event.ID,
@@ -228,8 +237,104 @@ func (m *mcpServer) handleOastGet(ctx context.Context, req mcp.CallToolRequest) 
 		Type:      event.Type,
 		SourceIP:  event.SourceIP,
 		Subdomain: event.Subdomain,
-		Details:   event.Details,
+		Details:   details,
 	})
+}
+
+// validOastFields is the set of accepted values for the fields parameter.
+var validOastFields = map[string]bool{"target": true, "headers": true, "body": true}
+
+// parseOastFields parses a comma-separated fields string into a set.
+// Returns nil for empty input (meaning all fields).
+func parseOastFields(s string) (map[string]bool, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	result := make(map[string]bool)
+	for _, f := range strings.Split(s, ",") {
+		f = strings.TrimSpace(f)
+		if !validOastFields[f] {
+			return nil, fmt.Errorf("invalid field %q: valid values are target, headers, body", f)
+		}
+		result[f] = true
+	}
+	return result, nil
+}
+
+// filterOastDetails returns details filtered by the requested fields and event type.
+// nil fields means return all stored keys. DNS events ignore fields.
+func filterOastDetails(details map[string]interface{}, fields map[string]bool, eventType string) map[string]interface{} {
+	if eventType == "dns" {
+		return details
+	}
+	if fields == nil {
+		if eventType == "smtp" {
+			// Default: headers + body (smtp_from/smtp_to only with target)
+			out := make(map[string]interface{}, 2)
+			if h, ok := details["headers"]; ok {
+				out["headers"] = h
+			}
+			if b, ok := details["body"]; ok {
+				out["body"] = b
+			}
+			return out
+		}
+		return details
+	}
+
+	out := make(map[string]interface{}, len(fields))
+
+	switch eventType {
+	case schemeHTTP, schemeHTTPS:
+		if fields["target"] {
+			if h, ok := details["headers"].(string); ok {
+				if nl := strings.IndexAny(h, "\r\n"); nl >= 0 {
+					out["target"] = h[:nl]
+				} else {
+					out["target"] = h
+				}
+			}
+		}
+		if fields["headers"] {
+			if h, ok := details["headers"]; ok {
+				out["headers"] = h
+			}
+		}
+		if fields["body"] {
+			if b, ok := details["body"]; ok {
+				out["body"] = b
+			}
+		}
+
+	case "smtp":
+		if fields["target"] {
+			if v, ok := details["smtp_from"]; ok {
+				out["smtp_from"] = v
+			}
+			if h, ok := details["headers"].(string); ok {
+				if to := extractEmailTo(h); len(to) > 0 {
+					out["smtp_to"] = to
+				}
+			}
+		}
+		if fields["headers"] {
+			if h, ok := details["headers"]; ok {
+				out["headers"] = h
+			}
+		}
+		if fields["body"] {
+			if b, ok := details["body"]; ok {
+				out["body"] = b
+			}
+		}
+
+	default:
+		// Other protocols: return as-is
+		return details
+	}
+
+	return out
 }
 
 func (m *mcpServer) handleOastList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

@@ -662,7 +662,7 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 					Type:      "http",
 					SourceIP:  "2.2.2.2",
 					Subdomain: "test.domain.alpha.oastsrv.net",
-					Details:   map[string]interface{}{"raw_request": "GET / HTTP/1.1\r\nHost: test"},
+					Details:   map[string]interface{}{"headers": "GET / HTTP/1.1\r\nHost: test"},
 				},
 				{ID: "e3", Time: eventTime.Add(2 * time.Minute), Type: "smtp"},
 			},
@@ -676,7 +676,7 @@ func TestInteractshBackend_GetEvent(t *testing.T) {
 		assert.Equal(t, "http", event.Type)
 		assert.Equal(t, "2.2.2.2", event.SourceIP)
 		assert.Equal(t, "test.domain.alpha.oastsrv.net", event.Subdomain)
-		assert.Equal(t, "GET / HTTP/1.1\r\nHost: test", event.Details["raw_request"])
+		assert.Equal(t, "GET / HTTP/1.1\r\nHost: test", event.Details["headers"])
 	})
 
 	t.Run("searches_across_sessions", func(t *testing.T) {
@@ -973,7 +973,7 @@ func TestHandleInteraction(t *testing.T) {
 		assert.Empty(t, sess.events)
 	})
 
-	t.Run("populates_event_fields", func(t *testing.T) {
+	t.Run("http_headers_only", func(t *testing.T) {
 		b, sess := setup()
 
 		ts := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
@@ -985,8 +985,6 @@ func TestHandleInteraction(t *testing.T) {
 			Timestamp:     ts,
 			RawRequest:    "GET / HTTP/1.1\r\nHost: example.com",
 			RawResponse:   "HTTP/1.1 200 OK",
-			QType:         "A",
-			SMTPFrom:      "test@example.com",
 		})
 
 		sess.mu.Lock()
@@ -999,10 +997,71 @@ func TestHandleInteraction(t *testing.T) {
 		assert.Equal(t, "10.0.0.1", e.SourceIP)
 		assert.Equal(t, fullId, e.Subdomain)
 		assert.Equal(t, ts, e.Time)
-		assert.Equal(t, "GET / HTTP/1.1\r\nHost: example.com", e.Details["raw_request"])
-		assert.Equal(t, "HTTP/1.1 200 OK", e.Details["raw_response"])
+		assert.Equal(t, "GET / HTTP/1.1\r\nHost: example.com", e.Details["headers"])
+		assert.Nil(t, e.Details["body"])
+		assert.Nil(t, e.Details["raw_request"])
+		assert.Nil(t, e.Details["raw_response"])
+	})
+
+	t.Run("http_headers_and_body", func(t *testing.T) {
+		b, sess := setup()
+
+		b.handleInteraction(&oobclient.Interaction{
+			FullId:     testCorrelationID + "." + testNonce,
+			Protocol:   "HTTP",
+			RawRequest: "POST /callback HTTP/1.1\r\nHost: example.com\r\n\r\n{\"key\":\"value\"}",
+		})
+
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		require.Len(t, sess.events, 1)
+
+		e := sess.events[0]
+		assert.Equal(t, "POST /callback HTTP/1.1\r\nHost: example.com", e.Details["headers"])
+		assert.JSONEq(t, `{"key":"value"}`, e.Details["body"].(string))
+	})
+
+	t.Run("smtp_structured", func(t *testing.T) {
+		b, sess := setup()
+
+		b.handleInteraction(&oobclient.Interaction{
+			FullId:     testCorrelationID + "." + testNonce,
+			Protocol:   "SMTP",
+			SMTPFrom:   "sender@example.com",
+			RawRequest: "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: test\r\n\r\nEmail body here",
+		})
+
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		require.Len(t, sess.events, 1)
+
+		e := sess.events[0]
+		assert.Equal(t, "smtp", e.Type)
+		assert.Equal(t, "sender@example.com", e.Details["smtp_from"])
+		assert.Equal(t, "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: test", e.Details["headers"])
+		assert.Equal(t, "Email body here", e.Details["body"])
+		assert.Nil(t, e.Details["smtp_to"])
+		assert.Nil(t, e.Details["raw_request"])
+	})
+
+	t.Run("dns_unchanged", func(t *testing.T) {
+		b, sess := setup()
+
+		b.handleInteraction(&oobclient.Interaction{
+			FullId:   testCorrelationID + "." + testNonce,
+			Protocol: "DNS",
+			QType:    "A",
+		})
+
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		require.Len(t, sess.events, 1)
+
+		e := sess.events[0]
+		assert.Equal(t, "dns", e.Type)
 		assert.Equal(t, "A", e.Details["query_type"])
-		assert.Equal(t, "test@example.com", e.Details["smtp_from"])
+		assert.Nil(t, e.Details["headers"])
+		assert.Nil(t, e.Details["raw_request"])
 	})
 }
 

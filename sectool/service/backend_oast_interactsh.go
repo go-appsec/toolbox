@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -214,17 +215,28 @@ func (b *InteractshBackend) handleInteraction(interaction *oobclient.Interaction
 	}
 
 	details := make(map[string]interface{}, 4)
-	if interaction.RawRequest != "" {
-		details["raw_request"] = interaction.RawRequest
-	}
-	if interaction.RawResponse != "" {
-		details["raw_response"] = interaction.RawResponse
-	}
-	if interaction.QType != "" {
-		details["query_type"] = interaction.QType
-	}
-	if interaction.SMTPFrom != "" {
-		details["smtp_from"] = interaction.SMTPFrom
+	eventType := strings.ToLower(interaction.Protocol)
+	switch eventType {
+	case "dns":
+		if interaction.QType != "" {
+			details["query_type"] = interaction.QType
+		}
+	case schemeHTTP, schemeHTTPS, "smtp":
+		if interaction.SMTPFrom != "" {
+			details["smtp_from"] = interaction.SMTPFrom
+		}
+		if interaction.RawRequest != "" {
+			h, b := splitHeadersBody([]byte(interaction.RawRequest))
+			details["headers"] = string(bytes.TrimRight(h, "\r\n"))
+			if len(b) > 0 {
+				details["body"] = string(b)
+			}
+		}
+	default:
+		// Uncommon protocols (ftp, ldap, smb, responder): keep raw
+		if interaction.RawRequest != "" {
+			details["raw_request"] = interaction.RawRequest
+		}
 	}
 
 	if len(sess.events) >= MaxOastEventsPerSession {
@@ -237,7 +249,7 @@ func (b *InteractshBackend) handleInteraction(interaction *oobclient.Interaction
 	event := OastEventInfo{
 		ID:        ids.Generate(ids.DefaultLength),
 		Time:      eventTime,
-		Type:      strings.ToLower(interaction.Protocol),
+		Type:      eventType,
 		SourceIP:  interaction.RemoteAddress,
 		Subdomain: interaction.FullId,
 		Details:   details,

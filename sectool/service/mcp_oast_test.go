@@ -95,14 +95,16 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 	})
 
 	t.Run("get_valid_event", func(t *testing.T) {
-		// Add another event
 		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
 			ID:        "event-get-test",
 			Time:      time.Now(),
 			Type:      "http",
 			SourceIP:  "5.6.7.8",
 			Subdomain: "test",
-			Details:   map[string]interface{}{"method": "GET", "path": "/"},
+			Details: map[string]interface{}{
+				"headers": "GET /callback HTTP/1.1\r\nHost: example.com",
+				"body":    "test body",
+			},
 		})
 
 		resp := CallMCPToolJSONOK[protocol.OastEvent](t, mcpClient, "oast_get", map[string]interface{}{
@@ -111,6 +113,105 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 		assert.Equal(t, "event-get-test", resp.EventID)
 		assert.Equal(t, "http", resp.Type)
 		assert.Equal(t, "5.6.7.8", resp.SourceIP)
+		assert.Equal(t, "GET /callback HTTP/1.1\r\nHost: example.com", resp.Details["headers"])
+		assert.Equal(t, "test body", resp.Details["body"])
+	})
+
+	t.Run("get_fields_target_http", func(t *testing.T) {
+		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+			ID:   "event-target-http",
+			Time: time.Now(),
+			Type: "http",
+			Details: map[string]interface{}{
+				"headers": "GET /callback HTTP/1.1\r\nHost: example.com",
+				"body":    "should be excluded",
+			},
+		})
+
+		resp := CallMCPToolJSONOK[protocol.OastEvent](t, mcpClient, "oast_get", map[string]interface{}{
+			"event_id": "event-target-http",
+			"fields":   "target",
+		})
+		assert.Equal(t, "GET /callback HTTP/1.1", resp.Details["target"])
+		assert.Nil(t, resp.Details["headers"])
+		assert.Nil(t, resp.Details["body"])
+	})
+
+	t.Run("get_fields_body_only", func(t *testing.T) {
+		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+			ID:   "event-body-only",
+			Time: time.Now(),
+			Type: "http",
+			Details: map[string]interface{}{
+				"headers": "GET / HTTP/1.1\r\nHost: example.com",
+				"body":    "the body",
+			},
+		})
+
+		resp := CallMCPToolJSONOK[protocol.OastEvent](t, mcpClient, "oast_get", map[string]interface{}{
+			"event_id": "event-body-only",
+			"fields":   "body",
+		})
+		assert.Nil(t, resp.Details["headers"])
+		assert.Equal(t, "the body", resp.Details["body"])
+	})
+
+	t.Run("get_fields_smtp_target", func(t *testing.T) {
+		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+			ID:   "event-smtp-target",
+			Time: time.Now(),
+			Type: "smtp",
+			Details: map[string]interface{}{
+				"smtp_from": "sender@example.com",
+				"headers":   "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: test",
+				"body":      "email body",
+			},
+		})
+
+		resp := CallMCPToolJSONOK[protocol.OastEvent](t, mcpClient, "oast_get", map[string]interface{}{
+			"event_id": "event-smtp-target",
+			"fields":   "target",
+		})
+		assert.Equal(t, "sender@example.com", resp.Details["smtp_from"])
+		assert.Equal(t, []interface{}{"recipient@example.com"}, resp.Details["smtp_to"])
+		assert.Nil(t, resp.Details["headers"])
+		assert.Nil(t, resp.Details["body"])
+	})
+
+	t.Run("get_smtp_default_includes_smtp_to", func(t *testing.T) {
+		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+			ID:   "event-smtp-default",
+			Time: time.Now(),
+			Type: "smtp",
+			Details: map[string]interface{}{
+				"smtp_from": "sender@example.com",
+				"headers":   "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: test",
+				"body":      "email body",
+			},
+		})
+
+		resp := CallMCPToolJSONOK[protocol.OastEvent](t, mcpClient, "oast_get", map[string]interface{}{
+			"event_id": "event-smtp-default",
+		})
+		assert.Nil(t, resp.Details["smtp_from"])
+		assert.Nil(t, resp.Details["smtp_to"])
+		assert.NotNil(t, resp.Details["headers"])
+		assert.NotNil(t, resp.Details["body"])
+	})
+
+	t.Run("get_fields_dns_ignores", func(t *testing.T) {
+		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+			ID:      "event-dns-fields",
+			Time:    time.Now(),
+			Type:    "dns",
+			Details: map[string]interface{}{"query_type": "A"},
+		})
+
+		resp := CallMCPToolJSONOK[protocol.OastEvent](t, mcpClient, "oast_get", map[string]interface{}{
+			"event_id": "event-dns-fields",
+			"fields":   "target",
+		})
+		assert.Equal(t, "A", resp.Details["query_type"])
 	})
 
 	t.Run("summary_limit", func(t *testing.T) {
@@ -224,6 +325,15 @@ func TestMCP_OastValidation(t *testing.T) {
 		result := CallMCPTool(t, mcpClient, "oast_get", map[string]interface{}{})
 		assert.True(t, result.IsError)
 		assert.Contains(t, ExtractMCPText(t, result), "event_id is required")
+	})
+
+	t.Run("get_invalid_fields", func(t *testing.T) {
+		result := CallMCPTool(t, mcpClient, "oast_get", map[string]interface{}{
+			"event_id": "any",
+			"fields":   "invalid",
+		})
+		assert.True(t, result.IsError)
+		assert.Contains(t, ExtractMCPText(t, result), "invalid field")
 	})
 
 	t.Run("get_not_found", func(t *testing.T) {

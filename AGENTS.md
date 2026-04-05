@@ -59,6 +59,7 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/backend_http_native.go` - Native built-in proxy implementation of HttpBackend
 - `sectool/service/backend_http_burp.go` - Burp MCP implementation of HttpBackend
 - `sectool/service/backend_oast_interactsh.go` - Interactsh implementation of OastBackend
+- `sectool/service/smtputil.go` - SMTP email header parsing utilities
 - `sectool/service/backend_crawler_colly.go` - Colly-based crawler implementation
 - `sectool/service/capture_filter.go` - BuildCaptureFilter: compiles proxy exclusion patterns from config
 - `sectool/service/httputil.go` - HTTP request/response parsing utilities
@@ -197,7 +198,7 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 - `request_send` - send new HTTP request from scratch; returns flow_id for use with flow_get
 - `oast_create` - create OAST session for out-of-band testing
 - `oast_poll` - poll events: summary or list
-- `oast_get` - full details of specific OAST event
+- `oast_get` - structured event details; optional `fields` filter (dest, headers, body)
 - `oast_list` - list active OAST sessions
 - `oast_delete` - delete OAST session
 - `encode` - encode a string (url, base64, html)
@@ -216,7 +217,7 @@ CLI requires a running MCP server. Maps to MCP tools via `sectool <module> <sub>
 - `proxy`: `summary`, `list`, `cookies`, `export`, `rule {add,delete,list}`
 - `crawl`: `create`, `seed`, `status`, `summary`, `list`, `export`, `sessions`, `stop`
 - `replay`: `send`, `get`
-- `oast`: `create`, `summary`, `poll`, `list`, `delete`
+- `oast`: `create`, `summary`, `poll`, `get`, `list`, `delete`
 - `encode`: `url`, `base64`, `html`
 - `decode`: `url`, `base64`, `html`
 - `hash`: compute hash digests

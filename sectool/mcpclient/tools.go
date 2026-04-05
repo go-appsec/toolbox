@@ -261,10 +261,13 @@ func (c *Client) OastPoll(ctx context.Context, oastID string, opts OastPollOpts)
 	return &resp, nil
 }
 
-// OastGet calls oast_get and returns full event data.
-func (c *Client) OastGet(ctx context.Context, eventID string) (*protocol.OastEvent, error) {
+// OastGet calls oast_get and returns event data, optionally filtered by fields.
+func (c *Client) OastGet(ctx context.Context, eventID string, fields string) (*protocol.OastEvent, error) {
 	args := map[string]interface{}{
 		"event_id": eventID,
+	}
+	if fields != "" {
+		args["fields"] = fields
 	}
 
 	var resp protocol.OastEvent

@@ -3632,6 +3632,9 @@ func TestIntegration_WebSocketBinaryFrames(t *testing.T) {
 }
 
 func TestIntegration_WebSocketPingPong(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	t.Parallel()
 
 	// Channel to capture ping messages received by server
@@ -3714,6 +3717,7 @@ func TestIntegration_WebSocketPingPong(t *testing.T) {
 		_, err = conn.Write([]byte(req))
 		require.NoError(t, err)
 
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
 		reader := bufio.NewReader(conn)
 		resp, err := http.ReadResponse(reader, nil)
 		require.NoError(t, err)
@@ -3736,9 +3740,10 @@ func TestIntegration_WebSocketPingPong(t *testing.T) {
 		}
 		assert.Empty(t, wsPings)
 
-		// Read pong response (opcode 10)
+		// Read pong response — use the bufio.Reader, not the raw conn,
+		// to avoid losing bytes that ReadResponse may have buffered ahead.
 		require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
-		pongFrame, err := readWebSocketFrame(conn)
+		pongFrame, err := readWebSocketFrame(reader)
 		require.NoError(t, err)
 		assert.Equal(t, byte(10), pongFrame.opcode)
 		assert.Equal(t, pingPayload, pongFrame.payload)
@@ -3766,6 +3771,7 @@ func TestIntegration_WebSocketPingPong(t *testing.T) {
 		_, err = conn.Write([]byte(req))
 		require.NoError(t, err)
 
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
 		reader := bufio.NewReader(conn)
 		resp, err := http.ReadResponse(reader, nil)
 		require.NoError(t, err)
@@ -3779,9 +3785,10 @@ func TestIntegration_WebSocketPingPong(t *testing.T) {
 		_, err = conn.Write(textFrame)
 		require.NoError(t, err)
 
-		// Read echo response
-		require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
-		echoFrame, err := readWebSocketFrame(conn)
+		// Read echo response — use the bufio.Reader, not the raw conn,
+		// to avoid losing bytes that ReadResponse may have buffered ahead.
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
+		echoFrame, err := readWebSocketFrame(reader)
 		require.NoError(t, err)
 		assert.Equal(t, byte(1), echoFrame.opcode)
 		assert.Equal(t, textMsg, echoFrame.payload)
