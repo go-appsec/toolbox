@@ -29,8 +29,8 @@ const (
 	correlationIdNonceLength = 8
 )
 
-// dnsLabelRe matches a valid DNS label: alphanumeric with optional interior hyphens.
-var dnsLabelRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+// dnsLabelRe matches a valid DNS label: alphanumeric with at most one interior hyphen.
+var dnsLabelRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)?$`)
 
 // structuredDomainSuffixes are server hosts that support the structured
 // domain format (correlationID.sessionID.serverHost).

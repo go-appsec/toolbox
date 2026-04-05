@@ -755,6 +755,7 @@ func TestDnsLabelRe(t *testing.T) {
 		{"single_digit", "1", true},
 		{"uppercase_lowered", "SSRF", true},
 		{"mixed_case_lowered", "Test-Xxe", true},
+		{"multiple_hyphens", "test-xxe-rce", false},
 		{"leading_hyphen", "-start", false},
 		{"trailing_hyphen", "end-", false},
 		{"has_space", "has space", false},
