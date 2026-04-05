@@ -218,7 +218,7 @@ func (c *BurpClient) doHealthCheck(ctx context.Context) func() {
 	cancel()
 
 	if err != nil {
-		// Shutdown cancellation — not a real failure
+		// Shutdown cancellation - not a real failure
 		if ctx.Err() != nil {
 			return nil
 		}

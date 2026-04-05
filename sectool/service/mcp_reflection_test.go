@@ -84,7 +84,7 @@ func TestHandleFindReflected(t *testing.T) {
 			"flow_id": listResp.Flows[0].FlowID,
 		})
 
-		// q should be reflected in body (HTML-encoded match) — not raw since it's encoded
+		// q should be reflected in body (HTML-encoded match) - not raw since it's encoded
 		qRef := findReflectionByName(resp.Reflections, "q")
 		require.NotNil(t, qRef)
 		assert.Equal(t, "query", qRef.Source)
@@ -485,7 +485,7 @@ func TestFindReflections(t *testing.T) {
 	})
 
 	t.Run("multiple_body_contexts", func(t *testing.T) {
-		// Raw value in script, HTML-encoded in text — both should appear in contexts
+		// Raw value in script, HTML-encoded in text - both should appear in contexts
 		params := []protocol.Reflection{{Name: "q", Source: "query", Value: "<img src=x>"}}
 		resp := []byte("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" +
 			"<script>var x = '<img src=x>';</script>" +

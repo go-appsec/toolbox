@@ -31,7 +31,7 @@ var ErrClosed = errors.New("storage closed")
 // SpillStoreConfig configures spillStore behavior.
 type SpillStoreConfig struct {
 	Dir                 string  // optional, auto-created if empty
-	FilePrefix          string  // optional prefix for data file name (e.g. "hist" → "hist.spill.bin")
+	FilePrefix          string  // optional prefix for data file name (e.g. "hist" -> "hist.spill.bin")
 	MaxHotBytes         int64   // max value bytes in hot cache
 	EvictTargetRatio    float64 // evict to this ratio, higher values evict less
 	CompactionThreshold int64   // rewrite file when dead bytes exceed this

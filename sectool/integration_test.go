@@ -36,10 +36,10 @@ import (
 	"github.com/go-appsec/toolbox/sectool/service/testutil"
 )
 
-// Integration tests for sectool MCP client → MCP server → real backends.
+// Integration tests for sectool MCP client -> MCP server -> real backends.
 //
 // These tests validate end-to-end functionality through the full stack:
-//   mcpclient.Client → sectool MCP server → Burp MCP backend / OAST backend
+//   mcpclient.Client -> sectool MCP server -> Burp MCP backend / OAST backend
 //
 // Skip automatically if:
 //   - Running with -short flag
@@ -2908,7 +2908,7 @@ func TestIntegration_WebSocketRules(t *testing.T) {
 	mcpClient := startMCPServerAndClient(t, backendNative, backend)
 
 	t.Run("ws_to_server_rule_modifies_client_message", func(t *testing.T) {
-		// Add rule to modify client→server messages
+		// Add rule to modify client->server messages
 		rule, err := mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
 			Type:    service.RuleTypeWSToServer,
 			Label:   "test-ws-to-server",
@@ -2970,7 +2970,7 @@ func TestIntegration_WebSocketRules(t *testing.T) {
 	})
 
 	t.Run("ws_to_client_rule_modifies_server_message", func(t *testing.T) {
-		// Add rule to modify server→client messages
+		// Add rule to modify server->client messages
 		rule, err := mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
 			Type:    service.RuleTypeWSToClient,
 			Label:   "test-ws-to-client",

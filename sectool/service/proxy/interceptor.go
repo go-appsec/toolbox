@@ -39,7 +39,7 @@ func BuildInterceptedH1Response(intercepted *InterceptedResponse) *RawHTTP1Respo
 
 // ParseAuthority extracts host and port from an HTTP/2 :authority pseudo-header.
 // Handles forms like "example.com", "example.com:8443", "[::1]:8080".
-// scheme is used to determine default port ("https" → 443, else 80).
+// scheme is used to determine default port ("https" -> 443, else 80).
 func ParseAuthority(authority, scheme string) (string, int) {
 	defaultPort := 80
 	if scheme == "https" {

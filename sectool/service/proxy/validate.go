@@ -63,7 +63,7 @@ func validateRequest(req *RawHTTP1Request) error {
 
 		// Wire-level checks using RawLine (only available for parsed-from-wire headers)
 		if len(h.RawLine) > 0 {
-			// Obs-fold (continuation lines) deprecated per RFC 7230 §3.2.4
+			// Obs-fold (continuation lines) deprecated per RFC 7230 section 3.2.4
 			if bytes.ContainsAny(h.RawLine, "\r\n") {
 				issues = append(issues, fmt.Sprintf("obs-fold (line continuation) in header %q", h.Name))
 			}

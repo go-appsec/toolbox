@@ -1,7 +1,6 @@
 package service
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -410,101 +409,6 @@ func TestHandleReplaySend(t *testing.T) {
 
 		assert.NotEqual(t, originalJSON, sentBody)
 		assert.NotContains(t, sentBody, `"key"`)
-	})
-}
-
-func TestHandleFlowGetForReplay(t *testing.T) {
-	t.Parallel()
-
-	t.Run("happy_path", func(t *testing.T) {
-		_, mcpClient, mockHTTP, _, _ := setupMockMCPServer(t, nil)
-
-		mockHTTP.AddProxyEntry(
-			"GET /replay-test HTTP/1.1\r\nHost: mock.test\r\n\r\n",
-			"HTTP/1.1 200 OK\r\n\r\noriginal",
-			"",
-		)
-		mockHTTP.SetSendResult(
-			"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n",
-			"replayed response",
-		)
-
-		listResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
-			"output_mode": "flows",
-			"method":      "GET",
-		})
-		require.NotEmpty(t, listResp.Flows)
-		flowID := listResp.Flows[0].FlowID
-
-		sendResp := CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
-			"flow_id": flowID,
-		})
-
-		var raw map[string]interface{}
-		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
-			"flow_id": sendResp.FlowID,
-		})
-		require.NoError(t, json.Unmarshal([]byte(text), &raw))
-		assert.Equal(t, sendResp.FlowID, raw["flow_id"])
-		assert.Equal(t, "replay", raw["source"])
-		assert.Contains(t, raw, "response_headers")
-	})
-
-	t.Run("missing_flow_id", func(t *testing.T) {
-		_, mcpClient, _, _, _ := setupMockMCPServer(t, nil)
-
-		result := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{})
-		assert.True(t, result.IsError)
-		assert.Contains(t, ExtractMCPText(t, result), "flow_id is required")
-	})
-
-	t.Run("invalid_flow_id", func(t *testing.T) {
-		_, mcpClient, _, _, _ := setupMockMCPServer(t, nil)
-
-		result := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{
-			"flow_id": "nonexistent",
-		})
-		assert.True(t, result.IsError)
-		assert.Contains(t, ExtractMCPText(t, result), "not found")
-	})
-
-	t.Run("full_body_base64", func(t *testing.T) {
-		_, mcpClient, mockHTTP, _, _ := setupMockMCPServer(t, nil)
-
-		mockHTTP.AddProxyEntry(
-			"GET /api/replay HTTP/1.1\r\nHost: test.com\r\n\r\n",
-			"HTTP/1.1 200 OK\r\n\r\noriginal",
-			"",
-		)
-		mockHTTP.SetSendResult(
-			"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n",
-			"replay response body",
-		)
-
-		listResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
-			"output_mode": "flows",
-			"host":        "test.com",
-		})
-		require.NotEmpty(t, listResp.Flows)
-		flowID := listResp.Flows[0].FlowID
-
-		sendResp := CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
-			"flow_id": flowID,
-		})
-		require.NotEmpty(t, sendResp.FlowID)
-
-		getResult := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{
-			"flow_id":   sendResp.FlowID,
-			"full_body": true,
-		})
-		require.False(t, getResult.IsError)
-
-		var getResp protocol.FlowGetResponse
-		require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, getResult)), &getResp))
-
-		decodedBody, err := base64.StdEncoding.DecodeString(getResp.RespBody)
-		require.NoError(t, err)
-		assert.Equal(t, "replay response body", string(decodedBody))
 	})
 }
 

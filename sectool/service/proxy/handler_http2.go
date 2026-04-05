@@ -713,7 +713,7 @@ func (p *h2Proxy) handleDataFrame(buf *bytes.Buffer, f *http2.DataFrame, src, ds
 	data := f.Data()
 	endStream := f.StreamEnded()
 
-	// Consume receive window; check for flow control violations per RFC 9113 §6.9
+	// Consume receive window; check for flow control violations per RFC 9113 section 6.9
 	dataLen := len(data)
 	if err := src.consumeRecvWindow(streamID, dataLen); err != nil {
 		var fcErr *flowControlError
@@ -1186,7 +1186,7 @@ func (p *h2Proxy) writeFrames(h *h2Conn, conn net.Conn) {
 // writeHeadersFrame writes a HEADERS frame via the connection's write channel.
 // Splits into HEADERS + CONTINUATION frames if block exceeds max frame size.
 // The entire header block sequence is built into a single buffer and enqueued
-// atomically to prevent interleaving with other frames (RFC 9113 §4.3).
+// atomically to prevent interleaving with other frames (RFC 9113 section 4.3).
 func (p *h2Proxy) writeHeadersFrame(buf *bytes.Buffer, dst *h2Conn, streamID uint32, block []byte, endStream bool) {
 	maxFrame := int(dst.getMaxFrameSize())
 	if maxFrame == 0 {

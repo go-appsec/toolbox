@@ -273,13 +273,13 @@ func (p *wsProxy) run() {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// Client → Upstream: proxy acts as client, MUST mask per RFC 6455 §5.1
+	// Client -> Upstream: proxy acts as client, MUST mask per RFC 6455 section 5.1
 	go func() {
 		defer wg.Done()
 		p.proxyFrames(p.clientBuf, p.upstreamConn, "ws:to-server", true)
 	}()
 
-	// Upstream → Client: proxy acts as server, MUST NOT mask per RFC 6455 §5.1
+	// Upstream -> Client: proxy acts as server, MUST NOT mask per RFC 6455 section 5.1
 	go func() {
 		defer wg.Done()
 		p.proxyFrames(p.upstreamBuf, p.clientConn, "ws:to-client", false)
@@ -290,7 +290,7 @@ func (p *wsProxy) run() {
 }
 
 // proxyFrames reads frames from src and writes to dst.
-// outputMasked controls masking per RFC 6455 (true for client→upstream, false for server→client).
+// outputMasked controls masking per RFC 6455 (true for client->upstream, false for server->client).
 // Rules apply only to complete, uncompressed text frames (opcode=1, fin=true, rsv=0).
 func (p *wsProxy) proxyFrames(src *bufio.Reader, dst net.Conn, direction string, outputMasked bool) {
 	for {
@@ -346,7 +346,7 @@ func (p *wsProxy) storeFrame(frame *wsFrame, direction string) {
 		return
 	}
 
-	// Strip "ws:" prefix from direction for storage (e.g., "ws:to-server" → "to-server")
+	// Strip "ws:" prefix from direction for storage (e.g., "ws:to-server" -> "to-server")
 	dir := direction
 	if len(dir) > 3 && dir[:3] == "ws:" {
 		dir = dir[3:]

@@ -271,7 +271,7 @@ func (s *Sender) sendRequestWithProtocol(ctx context.Context, req *RawHTTP1Reque
 
 		if protocol == "h2" {
 			if negotiated == "h2" {
-				// Send as HTTP/2 — set combined deadline since H2 multiplexes reads/writes
+				// Send as HTTP/2 - set combined deadline since H2 multiplexes reads/writes
 				defer func() { _ = conn.Close() }()
 				if s.Timeouts.ReadTimeout > 0 {
 					_ = conn.SetReadDeadline(time.Now().Add(s.Timeouts.ReadTimeout))

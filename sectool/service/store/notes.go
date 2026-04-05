@@ -61,7 +61,7 @@ func (s *NoteStore) Save(note *NoteMeta) error {
 		if existing, ok := s.getLocked(note.NoteID); ok {
 			oldFlowIDs = existing.FlowIDs
 		} else {
-			// note_id provided but not found — treat as new
+			// note_id provided but not found - treat as new
 			isNew = true
 			note.CreatedAt = now
 		}
@@ -242,7 +242,7 @@ func (s *NoteStore) noteKeys() []string {
 	}, s.storage.KeySet())
 }
 
-// updateReverseIndex maintains _fn:<flow_id> → []note_id mappings.
+// updateReverseIndex maintains _fn:<flow_id> -> []note_id mappings.
 // Caller must hold mu.
 func (s *NoteStore) updateReverseIndex(noteID string, oldFlowIDs, newFlowIDs []string) {
 	oldSet := bulk.SliceToSet(oldFlowIDs)

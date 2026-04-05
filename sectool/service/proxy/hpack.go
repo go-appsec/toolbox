@@ -266,7 +266,7 @@ func (e *flowControlError) Error() string {
 
 // consumeRecvWindow deducts from receive windows when data is received.
 // Returns an error if the peer violated flow control (sent more than allowed).
-// Per RFC 9113 §6.9, exceeding the window is a connection/stream error.
+// Per RFC 9113 section 6.9, exceeding the window is a connection/stream error.
 func (h *h2Conn) consumeRecvWindow(streamID uint32, size int) error {
 	h.flowMu.Lock()
 	defer h.flowMu.Unlock()

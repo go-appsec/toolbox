@@ -19,7 +19,7 @@ func compileSearchPattern(pattern string, caseInsensitive bool) (*regexp.Regexp,
 	p := pattern
 
 	// LLM agents often double-escape regex metacharacters due to extra
-	// JSON encoding layers. Collapse \\X → \X for known metacharacters
+	// JSON encoding layers. Collapse \\X -> \X for known metacharacters
 	// before compilation so patterns like www\\.google\\.com work as
 	// the caller intended (matching www.google.com).
 	if fixed := unDoubleEscapeRegex(p); fixed != p {
@@ -143,16 +143,16 @@ func matchesFlowSearch(request, response []byte, headerRe, bodyRe *regexp.Regexp
 	return false
 }
 
-// unDoubleEscapeRegex collapses double-escaped regex metacharacters (\\X → \X).
+// unDoubleEscapeRegex collapses double-escaped regex metacharacters (\\X -> \X).
 // LLM agents sometimes produce double-escaped patterns (e.g. \\* instead of \*)
 // due to extra JSON encoding of backslashes in tool call arguments.
 func unDoubleEscapeRegex(s string) string {
 	if !strings.Contains(s, `\\`) {
 		return s
 	}
-	// Regex punctuation metacharacters — always collapse \\X → \X
+	// Regex punctuation metacharacters - always collapse \\X -> \X
 	const metachars = `.*+?()[]{}^$|/`
-	// Regex shorthand class letters (\d, \w, \s, etc.) — only collapse when
+	// Regex shorthand class letters (\d, \w, \s, etc.) - only collapse when
 	// the \\ pair is not preceded by another backslash, to avoid mangling
 	// literal-backslash sequences like \\\\server into \\\server.
 	const shorthand = `dDwWsSbBnrtfv`

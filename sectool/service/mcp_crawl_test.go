@@ -1,7 +1,6 @@
 package service
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -281,53 +280,6 @@ func TestMCP_CrawlSeedWithMock(t *testing.T) {
 	assert.Equal(t, queuedBefore+2, statusAfter.URLsQueued)
 }
 
-func TestMCP_FlowGetDecompressesGzipBody(t *testing.T) {
-	t.Parallel()
-
-	_, mcpClient, _, _, mockCrawler := setupMockMCPServer(t, nil)
-
-	// Create crawl session
-	createResp := CallMCPToolJSONOK[protocol.CrawlCreateResponse](t, mcpClient, "crawl_create", map[string]interface{}{
-		"seed_urls": "https://example.com",
-	})
-
-	// Create gzip compressed response body
-	const originalBody = "This is the decompressed crawl response"
-	compressedBody := compressGzip(t, []byte(originalBody))
-
-	const respHeaders = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\n\r\n"
-
-	const flowID = "crawl-compressed-flow"
-	err := mockCrawler.AddFlow(createResp.SessionID, CrawlFlow{
-		ID:             flowID,
-		SessionID:      createResp.SessionID,
-		URL:            "https://example.com/compressed",
-		Host:           "example.com",
-		Path:           "/compressed",
-		Method:         "GET",
-		StatusCode:     200,
-		ResponseLength: len(compressedBody),
-		Request:        []byte("GET /compressed HTTP/1.1\r\nHost: example.com\r\n\r\n"),
-		Response:       append([]byte(respHeaders), compressedBody...),
-	})
-	require.NoError(t, err)
-
-	// Test full_body=true returns decompressed content
-	getResult := CallMCPTool(t, mcpClient, "flow_get", map[string]interface{}{
-		"flow_id":   flowID,
-		"full_body": true,
-	})
-	require.False(t, getResult.IsError)
-
-	var getResp protocol.FlowGetResponse
-	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, getResult)), &getResp))
-
-	// Decode base64 body and verify it's decompressed
-	decodedBody, err := base64.StdEncoding.DecodeString(getResp.RespBody)
-	require.NoError(t, err)
-	assert.Equal(t, originalBody, string(decodedBody))
-}
-
 func TestMCP_CrawlValidation(t *testing.T) {
 	t.Parallel()
 
@@ -541,65 +493,5 @@ func TestMCP_CrawlPollSearch(t *testing.T) {
 		})
 		assert.NotEmpty(t, resp.Note)
 		assert.Contains(t, resp.Note, "treated as literal")
-	})
-}
-
-func TestMCP_FlowGetWithCrawlScope(t *testing.T) {
-	t.Parallel()
-
-	_, mcpClient, _, _, mockCrawler := setupMockMCPServer(t, nil)
-
-	createResp := CallMCPToolJSONOK[protocol.CrawlCreateResponse](t, mcpClient, "crawl_create", map[string]interface{}{
-		"seed_urls": "https://example.com",
-	})
-
-	require.NoError(t, mockCrawler.AddFlow(createResp.SessionID, CrawlFlow{
-		ID:         "scope-flow",
-		SessionID:  createResp.SessionID,
-		URL:        "https://example.com/scoped",
-		Host:       "example.com",
-		Path:       "/scoped",
-		Method:     "GET",
-		StatusCode: 200,
-		Request:    []byte("GET /scoped HTTP/1.1\r\nHost: example.com\r\n\r\nreq body"),
-		Response:   []byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nresp body content"),
-		Duration:   5 * time.Millisecond,
-	}))
-
-	t.Run("response_body_only", func(t *testing.T) {
-		var raw map[string]interface{}
-		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
-			"flow_id": "scope-flow",
-			"scope":   "response_body",
-		})
-		require.NoError(t, json.Unmarshal([]byte(text), &raw))
-		assert.Contains(t, raw, "response_body")
-		assert.NotContains(t, raw, "request_headers")
-		assert.Contains(t, raw, "flow_id")
-	})
-
-	t.Run("pattern_matches", func(t *testing.T) {
-		var raw map[string]interface{}
-		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
-			"flow_id": "scope-flow",
-			"scope":   "response_body",
-			"pattern": "resp.*content",
-		})
-		require.NoError(t, json.Unmarshal([]byte(text), &raw))
-		assert.Contains(t, raw, "response_body")
-		respBody, ok := raw["response_body"].(string)
-		require.True(t, ok)
-		assert.Contains(t, respBody, "resp body content")
-	})
-
-	t.Run("pattern_no_match_omits", func(t *testing.T) {
-		var raw map[string]interface{}
-		text := CallMCPToolTextOK(t, mcpClient, "flow_get", map[string]interface{}{
-			"flow_id": "scope-flow",
-			"scope":   "response_body",
-			"pattern": "NONEXISTENT_xyz",
-		})
-		require.NoError(t, json.Unmarshal([]byte(text), &raw))
-		assert.NotContains(t, raw, "response_body")
 	})
 }

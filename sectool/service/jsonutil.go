@@ -102,7 +102,7 @@ func modifyJSONBodyMap(body []byte, setJSON map[string]interface{}, removeJSON [
 			return nil, fmt.Errorf("set_json %q: %w", keyPath, err)
 		}
 		// If value is a string, run through type inference for CLI parity
-		// (e.g., "5" → 5, "true" → true, "{}" → object)
+		// (e.g., "5" -> 5, "true" -> true, "{}" -> object)
 		if strVal, ok := value.(string); ok {
 			value = inferJSONValue(strVal)
 		}

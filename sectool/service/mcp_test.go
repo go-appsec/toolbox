@@ -290,7 +290,7 @@ func NewTestMCPServer(t *testing.T) *TestMCPServer {
 
 			if ts.configEditingDisabled {
 				// Simulate Burp returning success with a disabled message
-				// (IsError not set — this is the real-world behavior that was causing silent failures)
+				// (IsError not set - this is the real-world behavior that was causing silent failures)
 				return mcp.NewToolResultText("User has disabled configuration editing via the MCP AI settings"), nil
 			}
 

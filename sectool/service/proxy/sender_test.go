@@ -327,7 +327,7 @@ func TestSender_Send(t *testing.T) {
 	t.Run("rejects_nul_header", func(t *testing.T) {
 		sender := &Sender{}
 
-		// NUL byte in header value — validation should reject
+		// NUL byte in header value - validation should reject
 		rawReq := []byte("GET /api HTTP/1.1\r\nHost: localhost\r\nX-Bad: val\x00ue\r\n\r\n")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
@@ -436,7 +436,7 @@ func TestSender_Send(t *testing.T) {
 			Force: true,
 		})
 
-		// Server hangs waiting for chunked terminator → read timeout
+		// Server hangs waiting for chunked terminator -> read timeout
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "read response")
 	})

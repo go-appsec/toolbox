@@ -400,7 +400,7 @@ func classifyReflectionContext(body string, matchStart int) string {
 	lastLT := strings.LastIndex(before, "<")
 	lastGT := strings.LastIndex(before, ">")
 	if lastLT >= 0 && lastLT > lastGT {
-		// Inside a tag — check for URL attributes
+		// Inside a tag - check for URL attributes
 		tagContent := strings.ToLower(before[lastLT:])
 		for _, attr := range []string{"href=", "src=", "action=", "formaction="} {
 			if strings.Contains(tagContent, attr) {

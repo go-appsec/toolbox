@@ -180,7 +180,7 @@ func TestNativeProxyBackend_Rules_Persistence(t *testing.T) {
 
 	require.NoError(t, backend1.Close())
 
-	// Create new backend with same ruleStorage — rules should be loaded
+	// Create new backend with same ruleStorage - rules should be loaded
 	backend2, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), ruleStorage, store.NewMemStorage(), proxy.TimeoutConfig{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = backend2.Close() })
@@ -461,7 +461,7 @@ func TestNativeProxyBackend_SendRequest_AppliesRules(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Rules exist but didn't match — ModifiedRequest should be nil
+		// Rules exist but didn't match - ModifiedRequest should be nil
 		assert.Nil(t, result.ModifiedRequest)
 	})
 }
