@@ -26,6 +26,11 @@ build-cross:
 		if [ "$$os" = "windows" ]; then ext=".exe"; fi; \
 		echo "Building sectool for $$os/$$arch..."; \
 		GOOS=$$os GOARCH=$$arch go build $(LDFLAGS) -o bin/sectool-$$platform$$ext ./sectool; \
+		if [ "$$os" = "windows" ]; then \
+			(cd bin && zip sectool-$$platform.zip sectool-$$platform$$ext && rm sectool-$$platform$$ext); \
+		else \
+			gzip bin/sectool-$$platform; \
+		fi; \
 	done
 
 clean:
