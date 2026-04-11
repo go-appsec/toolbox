@@ -1078,7 +1078,17 @@ func (p *h2Proxy) handleRSTStreamFrame(buf *bytes.Buffer, f *http2.RSTStreamFram
 	_ = framer.WriteRSTStream(f.StreamID, f.ErrCode)
 	dst.enqueueWrite(p.ctx, buf.Bytes())
 
-	// Clean up stream
+	// Store partial exchange before cleanup so a client-cancel after
+	// receiving the response still appears in history.
+	if stream, exists := p.streams.get(f.StreamID); exists {
+		stream.mu.Lock()
+		hasExchange := stream.method != "" && stream.statusCode != 0
+		stream.mu.Unlock()
+		if hasExchange {
+			p.storeStreamInHistory(stream)
+		}
+	}
+
 	p.cleanupStream(f.StreamID)
 }
 

@@ -1918,7 +1918,7 @@ func TestIntegration_WebSocketProxy(t *testing.T) {
 
 		// Echo loop
 		for {
-			frame, err := readWebSocketFrame(conn)
+			frame, err := readWebSocketFrame(bufrw.Reader)
 			if err != nil {
 				return
 			}
@@ -3315,7 +3315,7 @@ func TestIntegration_SecureWebSocket(t *testing.T) {
 		_ = bufrw.Flush()
 
 		for {
-			frame, err := readWebSocketFrame(conn)
+			frame, err := readWebSocketFrame(bufrw.Reader)
 			if err != nil {
 				return
 			}
@@ -3590,7 +3590,7 @@ func TestIntegration_WebSocketBinaryFrames(t *testing.T) {
 
 		// Echo loop for binary frames
 		for {
-			frame, err := readWebSocketFrame(conn)
+			frame, err := readWebSocketFrame(bufrw.Reader)
 			if err != nil {
 				return
 			}
@@ -3708,7 +3708,7 @@ func TestIntegration_WebSocketPingPong(t *testing.T) {
 		_ = bufrw.Flush()
 
 		for {
-			frame, err := readWebSocketFrame(conn)
+			frame, err := readWebSocketFrame(bufrw.Reader)
 			if err != nil {
 				return
 			}

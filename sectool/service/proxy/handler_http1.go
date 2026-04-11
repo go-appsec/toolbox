@@ -158,14 +158,8 @@ func (h *http1Handler) handleSinglePlainHTTP(ctx context.Context, clientConn net
 		resp = h.ruleApplier.ApplyResponseRules(resp)
 	}
 
-	// Forward response to client
-	if h.timeouts.WriteTimeout > 0 {
-		_ = clientConn.SetWriteDeadline(time.Now().Add(h.timeouts.WriteTimeout))
-	}
-	if _, err := clientConn.Write(resp.SerializeRaw(&buf, false)); err != nil {
-		log.Printf("proxy: failed to send response to client: %v", err)
-		return false
-	}
+	// Serialize response before storage so truncation doesn't affect the wire copy
+	respBytes := resp.SerializeRaw(&buf, false)
 
 	// Truncate bodies before storing
 	if h.maxBodyBytes > 0 && len(req.Body) > h.maxBodyBytes {
@@ -175,7 +169,18 @@ func (h *http1Handler) handleSinglePlainHTTP(ctx context.Context, clientConn net
 		resp.Body = resp.Body[:h.maxBodyBytes]
 	}
 
+	// Store before forwarding so history is visible by the time the client sees the response.
+	// Avoids a race with query history after the response arrives but before storeEntry.
 	h.storeEntry(req, resp, startTime)
+
+	// Forward response to client
+	if h.timeouts.WriteTimeout > 0 {
+		_ = clientConn.SetWriteDeadline(time.Now().Add(h.timeouts.WriteTimeout))
+	}
+	if _, err := clientConn.Write(respBytes); err != nil {
+		log.Printf("proxy: failed to send response to client: %v", err)
+		return false
+	}
 
 	connHeader := strings.ToLower(resp.GetHeader("Connection"))
 	return connHeader != connectionClose

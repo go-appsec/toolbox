@@ -904,9 +904,10 @@ func TestSpillStore_CompactionTruncatesEmptyDisk(t *testing.T) {
 	t.Parallel()
 
 	cfg := SpillStoreConfig{
-		MaxHotBytes:         200,
-		EvictTargetRatio:    0.5,
-		CompactionThreshold: 50, // low threshold
+		MaxHotBytes:      200,
+		EvictTargetRatio: 0.5,
+		// Below per-entry on-disk size so every disk delete re-arms compaction.
+		CompactionThreshold: 16,
 		ZSTDLevel:           1,
 	}
 	s, err := newSpillStore(cfg)
