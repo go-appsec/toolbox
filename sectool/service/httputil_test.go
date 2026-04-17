@@ -1334,6 +1334,10 @@ func TestMatchesCookieDomain(t *testing.T) {
 		{"domain_in_subdomain", "example.com.evil.com", "example.com", false},
 		{"empty_domain", "", "example.com", false},
 		{"empty_filter", "example.com", "", false},
+		{"leading_dot_filter", "example.com", ".example.com", true},
+		{"leading_dot_filter_subdomain", "api.example.com", ".example.com", true},
+		{"leading_dot_domain", ".example.com", "example.com", true},
+		{"leading_dot_both", ".example.com", ".example.com", true},
 	}
 
 	for _, tt := range tests {

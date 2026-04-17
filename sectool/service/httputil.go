@@ -708,8 +708,11 @@ func matchesGlob(s, pattern string) bool {
 }
 
 // matchesCookieDomain returns true if domain equals filter or is a subdomain of filter.
-// e.g. filter "example.com" matches "example.com", "api.example.com", "a.b.example.com".
+// A leading dot on either argument is ignored per RFC 6265 (Set-Cookie Domain=.example.com
+// is equivalent to example.com).
 func matchesCookieDomain(domain, filter string) bool {
+	domain = strings.TrimPrefix(domain, ".")
+	filter = strings.TrimPrefix(filter, ".")
 	if strings.EqualFold(domain, filter) {
 		return true
 	}
