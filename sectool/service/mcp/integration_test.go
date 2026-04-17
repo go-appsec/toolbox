@@ -611,9 +611,7 @@ func TestBurpSetMatchReplaceRules(t *testing.T) {
 	})
 }
 
-// TestOASTPublicServers validates the oobclient domain format contract against
-// public OAST servers. The InteractshBackend's extractNonce and custom server
-// routing depend on Domain() returning correlationID + nonce + "." + serverHost.
+// TestOASTPublicServers sanity-checks oobclient against public OAST servers.
 func TestOASTPublicServers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -26,22 +25,14 @@ const (
 	clientCloseTimeout = 10 * time.Second
 	// clientCleanupInterval is how often to check for idle clients with no active sessions.
 	clientCleanupInterval = 120 * time.Second
-	// maxLabelPrefixLen is the maximum label length to use as a domain prefix.
-	maxLabelPrefixLen = 16
-	// correlationIdNonceLength is the per-URL nonce length passed to the interactsh client.
-	correlationIdNonceLength = 8
 )
 
-// dnsLabelRe matches a valid DNS label: alphanumeric with at most one interior hyphen.
-var dnsLabelRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)?$`)
+// interactLiteHostSuffixes are known interactsh-lite server hosts.
+var interactLiteHostSuffixes = [...]string{"oastsrv.net", "oastlab.net"}
 
-// structuredDomainSuffixes are server hosts that support the structured
-// domain format (correlationID.sessionID.serverHost).
-var structuredDomainSuffixes = [...]string{"oastsrv.net", "oastlab.net"}
-
-// isInteractLiteHost reports whether the server host uses the structured domain format.
+// isInteractLiteHost reports whether the server host is a known interactsh-lite host.
 func isInteractLiteHost(serverHost string) bool {
-	return slices.ContainsFunc(structuredDomainSuffixes[:], func(suffix string) bool {
+	return slices.ContainsFunc(interactLiteHostSuffixes[:], func(suffix string) bool {
 		return serverHost == suffix || strings.HasSuffix(serverHost, "."+suffix)
 	})
 }
@@ -53,9 +44,8 @@ type InteractshBackend struct {
 	httpClient        *http.Client // shared HTTP client for all oobclient instances and probes
 	mu                sync.RWMutex
 	sessions          map[string]*oastSession // by domain (canonical key)
-	byID              map[string]string       // short ID -> domain
+	byID              map[string]string       // session ID -> domain
 	byLabel           map[string]string       // label -> domain (only non-empty labels)
-	byNonce           map[string]string       // nonce -> domain (legacy server routing only)
 	closed            bool
 
 	// Clients keyed by redirect target ("" = default/no-redirect), lazily created.
@@ -68,8 +58,7 @@ var _ OastBackend = (*InteractshBackend)(nil)
 
 // oastSession holds the state for a single OAST session.
 type oastSession struct {
-	info  OastSessionInfo
-	nonce string // nonce from Domain(), only set for legacy server sessions
+	info OastSessionInfo
 
 	mu           sync.Mutex
 	notify       chan struct{} // closed when new events arrive, then replaced
@@ -93,7 +82,6 @@ func NewInteractshBackend(serverURL string) *InteractshBackend {
 		sessions: make(map[string]*oastSession),
 		byID:     make(map[string]string),
 		byLabel:  make(map[string]string),
-		byNonce:  make(map[string]string),
 		clients:  make(map[string]*oobclient.Client),
 	}
 }
@@ -194,10 +182,6 @@ func (b *InteractshBackend) ensureClientForRedirectTarget(ctx context.Context, r
 	opts := oobclient.Options{HTTPClient: b.httpClient}
 	if b.serverURL != "" {
 		opts.ServerURLs = []string{b.serverURL}
-	} else {
-		// Shorter nonce for structured domains;
-		// oobclient bumps this automatically if it falls back to oast.* servers.
-		opts.CorrelationIdNonceLength = correlationIdNonceLength
 	}
 	if redirectTarget != "" {
 		opts.Response = &oobclient.ResponseConfig{
@@ -211,7 +195,7 @@ func (b *InteractshBackend) ensureClientForRedirectTarget(ctx context.Context, r
 		return nil, fmt.Errorf("failed to create interactsh client: %w", err)
 	}
 
-	if err := c.StartPolling(interactshPollInterval, b.makeInteractionHandler(c.CorrelationID(), c.ServerHost())); err != nil {
+	if err := c.StartPolling(interactshPollInterval, b.makeInteractionHandler(c.CorrelationID())); err != nil {
 		_ = c.Close()
 		return nil, fmt.Errorf("oast failed to start polling: %w", err)
 	}
@@ -224,69 +208,21 @@ func (b *InteractshBackend) ensureClientForRedirectTarget(ctx context.Context, r
 	return c, nil
 }
 
-// buildStructuredOASTDomain constructs a structured OAST domain from its parts.
-// Format: correlationID.sessionID.serverHost or correlationID.label.sessionID.serverHost.
-func buildStructuredOASTDomain(correlationID, label, sessionID, serverHost string) string {
-	if label != "" && len(label) <= maxLabelPrefixLen {
-		if lower := strings.ToLower(label); dnsLabelRe.MatchString(lower) {
-			return correlationID + "." + lower + "." + sessionID + "." + serverHost
-		}
-	}
-	return correlationID + "." + sessionID + "." + serverHost
-}
-
-// extractNonce extracts the per-domain nonce from an interactsh domain.
-// Domain format: correlationID + nonce + "." + serverHost.
-func extractNonce(domain, correlationID string) string {
-	dotIdx := strings.IndexByte(domain, '.')
-	if dotIdx < 0 || dotIdx <= len(correlationID) {
-		panic(fmt.Sprintf("BUG: unexpected domain format from interactsh: %q (correlationID=%q)", domain, correlationID))
-	}
-	return domain[len(correlationID):dotIdx]
-}
-
-// makeInteractionHandler returns a polling callback bound to a specific client's identity.
-// Each client has its own correlationID, so the closure captures it for routing.
-//
-// Structured servers (oastsrv.net, oastlab.net): FullId is dot-separated
-// ("correlationID.sessionID"), last label is the sessionID routing key.
-//
-// Legacy servers: FullId leaf label is correlationID+nonce concatenated
-// ("correlationIDnonce" or "label.correlationIDnonce").
-func (b *InteractshBackend) makeInteractionHandler(correlationID, serverHost string) func(*oobclient.Interaction) {
-	structured := isInteractLiteHost(serverHost)
-
+// makeInteractionHandler returns a polling callback bound to a specific client's correlationID.
+// FullId leaf label is correlationID+sessionID (optionally prefixed with a subdomain).
+func (b *InteractshBackend) makeInteractionHandler(correlationID string) func(*oobclient.Interaction) {
 	return func(interaction *oobclient.Interaction) {
-		fullId := interaction.FullId
-
-		var domain string
-		var ok bool
+		leaf := interaction.FullId
+		if dotIdx := strings.LastIndexByte(leaf, '.'); dotIdx >= 0 {
+			leaf = leaf[dotIdx+1:]
+		}
+		if !strings.HasPrefix(leaf, correlationID) || len(leaf) <= len(correlationID) {
+			return
+		}
+		sessionID := leaf[len(correlationID):]
 
 		b.mu.RLock()
-
-		if structured {
-			// Structured server: last dot-label = sessionID
-			lastDot := strings.LastIndexByte(fullId, '.')
-			if lastDot < 0 {
-				b.mu.RUnlock()
-				return
-			}
-			nonce := fullId[lastDot+1:]
-			domain, ok = b.byID[nonce]
-		} else {
-			// Legacy server: leaf label = correlationID + nonce
-			leaf := fullId
-			if dotIdx := strings.LastIndexByte(leaf, '.'); dotIdx >= 0 {
-				leaf = leaf[dotIdx+1:]
-			}
-			if !strings.HasPrefix(leaf, correlationID) || len(leaf) <= len(correlationID) {
-				b.mu.RUnlock()
-				return
-			}
-			nonce := leaf[len(correlationID):]
-			domain, ok = b.byNonce[nonce]
-		}
-
+		domain, ok := b.byID[sessionID]
 		if !ok {
 			b.mu.RUnlock()
 			return
@@ -379,15 +315,6 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label, redirectTa
 		return nil, err
 	}
 
-	structured := isInteractLiteHost(c.ServerHost())
-
-	// For legacy servers, generate the base domain outside the lock (c.Domain() uses crypto/rand).
-	var legacyBaseDomain, nonce string
-	if !structured {
-		legacyBaseDomain = c.Domain()
-		nonce = extractNonce(legacyBaseDomain, c.CorrelationID())
-	}
-
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -404,26 +331,11 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label, redirectTa
 		}
 	}
 
-	// Generate unique session ID, then build domain once with the final value
-	var sessionID, domain string
-	if structured {
+	sessionID := strings.ToLower(ids.Generate(ids.EntityLength))
+	for b.byID[sessionID] != "" {
 		sessionID = strings.ToLower(ids.Generate(ids.EntityLength))
-		for b.byID[sessionID] != "" {
-			sessionID = strings.ToLower(ids.Generate(ids.EntityLength))
-		}
-		domain = buildStructuredOASTDomain(c.CorrelationID(), label, sessionID, c.ServerHost())
-	} else {
-		sessionID = ids.Generate(ids.EntityLength)
-		for b.byID[sessionID] != "" {
-			sessionID = ids.Generate(ids.EntityLength)
-		}
-		domain = legacyBaseDomain
-		if label != "" && len(label) <= maxLabelPrefixLen {
-			if lower := strings.ToLower(label); dnsLabelRe.MatchString(lower) {
-				domain = lower + "." + domain
-			}
-		}
 	}
+	domain := c.CorrelationID() + sessionID + "." + c.ServerHost()
 
 	sess := &oastSession{
 		info: OastSessionInfo{
@@ -433,15 +345,11 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label, redirectTa
 			RedirectTarget: redirectTarget,
 			CreatedAt:      time.Now(),
 		},
-		nonce:  nonce,
 		notify: make(chan struct{}),
 	}
 
 	b.sessions[domain] = sess
 	b.byID[sessionID] = domain
-	if nonce != "" {
-		b.byNonce[nonce] = domain
-	}
 	if label != "" {
 		b.byLabel[label] = domain
 	}
@@ -621,9 +529,6 @@ func (b *InteractshBackend) deleteSession(sess *oastSession) error {
 	b.mu.Lock()
 	delete(b.sessions, sess.info.Domain)
 	delete(b.byID, sess.info.ID)
-	if sess.nonce != "" {
-		delete(b.byNonce, sess.nonce)
-	}
 	if sess.info.Label != "" {
 		delete(b.byLabel, sess.info.Label)
 	}
@@ -669,7 +574,6 @@ func (b *InteractshBackend) Close() error {
 	b.sessions = nil
 	b.byID = nil
 	b.byLabel = nil
-	b.byNonce = nil
 	b.clients = nil
 	b.mu.Unlock()
 
