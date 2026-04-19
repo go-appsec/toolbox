@@ -135,6 +135,8 @@ Global config at `~/.sectool/config.json` (auto-created with defaults):
   "include_subdomains": true,
   "allowed_domains": [],
   "exclude_domains": [],
+  "interactsh_server_url": "",
+  "interactsh_auth_token": "",
   "proxy": {
     "exclude_extensions": "<RE2 alternation, see DefaultExcludeExtensions>"
   },

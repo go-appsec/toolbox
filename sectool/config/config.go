@@ -56,6 +56,7 @@ type Config struct {
 	AllowedDomains      []string      `json:"allowed_domains"`
 	ExcludeDomains      []string      `json:"exclude_domains"`
 	InteractshServerURL string        `json:"interactsh_server_url"` // empty = use default public servers
+	InteractshAuthToken string        `json:"interactsh_auth_token"` // optional, for protected servers; INTERACTSH_TOKEN env var used as fallback
 	Proxy               ProxyConfig   `json:"proxy"`
 	Crawler             CrawlerConfig `json:"crawler"`
 }

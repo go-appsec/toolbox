@@ -40,6 +40,7 @@ func isInteractLiteHost(serverHost string) bool {
 // InteractshBackend implements OastBackend using Interactsh.
 type InteractshBackend struct {
 	serverURL         string       // custom server URL, empty = use defaults
+	authToken         string       // optional auth token for protected servers
 	redirectSupported bool         // whether the server supports redirect responses
 	httpClient        *http.Client // shared HTTP client for all oobclient instances and probes
 	mu                sync.RWMutex
@@ -70,9 +71,10 @@ type oastSession struct {
 }
 
 // NewInteractshBackend creates a new Interactsh-backed OastBackend.
-func NewInteractshBackend(serverURL string) *InteractshBackend {
+func NewInteractshBackend(serverURL, authToken string) *InteractshBackend {
 	return &InteractshBackend{
 		serverURL: serverURL,
+		authToken: authToken,
 		httpClient: &http.Client{
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
@@ -132,6 +134,7 @@ func (b *InteractshBackend) ProbeRedirectSupport(ctx context.Context) {
 
 	c, err := oobclient.New(probeCtx, oobclient.Options{
 		ServerURLs: []string{b.serverURL},
+		Token:      b.authToken,
 		HTTPClient: b.httpClient,
 		Response: &oobclient.ResponseConfig{
 			StatusCode: 307,
@@ -179,7 +182,7 @@ func (b *InteractshBackend) ensureClientForRedirectTarget(ctx context.Context, r
 		return nil, errors.New("backend is closed")
 	}
 
-	opts := oobclient.Options{HTTPClient: b.httpClient}
+	opts := oobclient.Options{HTTPClient: b.httpClient, Token: b.authToken}
 	if b.serverURL != "" {
 		opts.ServerURLs = []string{b.serverURL}
 	}

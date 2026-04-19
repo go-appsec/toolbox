@@ -183,7 +183,11 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 	if s.oastBackend == nil {
-		ib := NewInteractshBackend(s.cfg.InteractshServerURL)
+		token := s.cfg.InteractshAuthToken
+		if token == "" {
+			token = os.Getenv("INTERACTSH_TOKEN")
+		}
+		ib := NewInteractshBackend(s.cfg.InteractshServerURL, token)
 		ib.Start(ctx)
 		s.oastBackend = ib
 	}

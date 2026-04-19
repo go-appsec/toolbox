@@ -153,27 +153,27 @@ func TestLoadOrCreatePath(t *testing.T) {
 func TestLoadInteractshServerURL(t *testing.T) {
 	t.Parallel()
 
-	t.Run("present", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "config.json")
+	path := filepath.Join(t.TempDir(), "config.json")
 
-		cfgJSON := `{"interactsh_server_url": "oast.internal.com"}`
-		require.NoError(t, os.WriteFile(path, []byte(cfgJSON), 0644))
+	cfgJSON := `{"interactsh_server_url": "oast.internal.com"}`
+	require.NoError(t, os.WriteFile(path, []byte(cfgJSON), 0644))
 
-		cfg, err := loadConfig(path)
-		require.NoError(t, err)
-		assert.Equal(t, "oast.internal.com", cfg.InteractshServerURL)
-	})
+	cfg, err := loadConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "oast.internal.com", cfg.InteractshServerURL)
+}
 
-	t.Run("absent", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "config.json")
+func TestLoadInteractshAuthToken(t *testing.T) {
+	t.Parallel()
 
-		cfgJSON := `{"mcp_port": 9119}`
-		require.NoError(t, os.WriteFile(path, []byte(cfgJSON), 0644))
+	path := filepath.Join(t.TempDir(), "config.json")
 
-		cfg, err := loadConfig(path)
-		require.NoError(t, err)
-		assert.Empty(t, cfg.InteractshServerURL)
-	})
+	cfgJSON := `{"interactsh_auth_token": "secret-token"}`
+	require.NoError(t, os.WriteFile(path, []byte(cfgJSON), 0644))
+
+	cfg, err := loadConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "secret-token", cfg.InteractshAuthToken)
 }
 
 func TestLoadExcludeExtensionsDefault(t *testing.T) {
