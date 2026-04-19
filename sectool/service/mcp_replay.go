@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -249,19 +250,29 @@ func (m *mcpServer) executeSend(ctx context.Context, rawRequest []byte, httpProt
 		}
 	}
 
-	// Strip body when method changed to bodyless (GET/HEAD) and no explicit body provided.
-	// Prevents stale Content-Length from causing server errors (e.g., 400 on GET+CL).
-	// Use force=true to send GET/HEAD with body intentionally.
+	// Strip body and framing headers on a bodyless method change. force=true keeps them for protocol testing
 	if isBodylessMethod(mods.Method) && !bodyModified && !mods.Force {
 		reqBody = nil
 		headers = removeHeader(headers, "Content-Length")
+		headers = removeHeader(headers, "Transfer-Encoding")
 	}
 
-	// Auto-update CL only when body was modified, user didn't explicitly set CL,
-	// and no Transfer-Encoding is present. TE and CL are mutually exclusive per
-	// RFC 7230; auto-adding CL alongside TE would change request semantics.
-	hasTE := extractHeader(string(headers), "Transfer-Encoding") != ""
-	if bodyModified && !hasTE && !proxy.ContainsHeader(mods.SetHeaders, "Content-Length") {
+	// Re-chunk replacement body when post-mod TE is chunked
+	// Gated on bodyModified so TE-added-without-body-change ships verbatim
+	teValue := extractHeader(string(headers), "Transfer-Encoding")
+	if bodyModified && strings.Contains(strings.ToLower(teValue), "chunked") {
+		var trailers []byte
+		if parsed, err := proxy.ParseRequest(bytes.NewReader(rawRequest)); err == nil && parsed.Wire != nil && parsed.Wire.WasChunked {
+			trailers = parsed.Trailers
+		}
+		var framed bytes.Buffer
+		proxy.EncodeStandardChunkedBody(&framed, reqBody, trailers)
+		reqBody = framed.Bytes()
+	}
+
+	// Auto-update CL only when body was modified, user didn't explicitly set CL, and not chunked
+	// TE and CL are mutually exclusive (RFC 7230); auto-adding CL alongside TE would change request semantics
+	if bodyModified && teValue == "" && !proxy.ContainsHeader(mods.SetHeaders, "Content-Length") {
 		headers = updateContentLength(headers, len(reqBody))
 	}
 

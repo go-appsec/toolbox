@@ -14,7 +14,7 @@ type LineEnding uint8
 const (
 	EndingCRLF   LineEnding = 0 // "\r\n"
 	EndingBareLF LineEnding = 1 // "\n"
-	EndingBareCR LineEnding = 2 // "\r" — HTTP desync vector
+	EndingBareCR LineEnding = 2 // "\r" - HTTP desync vector
 	EndingNone   LineEnding = 3 // no terminator observed (EOF / truncation)
 )
 
@@ -65,6 +65,10 @@ type ChunkFrame struct {
 	// DataEnding is the terminator after the chunk data. On the final 0-chunk it
 	// is the trailer block's closing blank-line terminator, or EndingNone if truncated.
 	DataEnding LineEnding `json:"data_ending,omitempty" msgpack:"de,omitempty"`
+
+	// Malformed marks the trailing frame after a bad hex size; SizeLine holds
+	// the raw bytes verbatim and the parser does not read past it.
+	Malformed bool `json:"malformed,omitempty" msgpack:"mf,omitempty"`
 }
 
 // WireFormat stores summary metadata about the original wire encoding.

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -744,9 +745,8 @@ func TestStripExtensions(t *testing.T) {
 				Method:  "GET",
 				Path:    "/ws",
 				Version: "HTTP/1.1",
-				Headers: make([]Header, len(tt.inputHeaders)),
+				Headers: slices.Clone(tt.inputHeaders),
 			}
-			copy(req.Headers, tt.inputHeaders)
 
 			h.stripExtensions(req)
 
@@ -800,9 +800,8 @@ func TestStripResponseExtensions(t *testing.T) {
 				Version:    "HTTP/1.1",
 				StatusCode: 101,
 				StatusText: "Switching Protocols",
-				Headers:    make([]Header, len(tt.inputHeaders)),
+				Headers:    slices.Clone(tt.inputHeaders),
 			}
-			copy(resp.Headers, tt.inputHeaders)
 
 			h.stripResponseExtensions(resp)
 

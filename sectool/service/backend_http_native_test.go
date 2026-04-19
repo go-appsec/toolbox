@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -986,8 +987,7 @@ func TestApplyResponseRules(t *testing.T) {
 
 		// Invalid brotli data - decompression should fail, body unchanged
 		fakeCompressed := []byte{0x1b, 0x03, 0x00, 0xf8, 0xff}
-		originalBody := make([]byte, len(fakeCompressed))
-		copy(originalBody, fakeCompressed)
+		originalBody := slices.Clone(fakeCompressed)
 
 		resp := &proxy.RawHTTP1Response{
 			Version:    "HTTP/1.1",
@@ -1021,8 +1021,7 @@ func TestApplyResponseRules(t *testing.T) {
 
 		// Multiple encodings should be skipped
 		fakeBody := []byte("some test data")
-		originalBody := make([]byte, len(fakeBody))
-		copy(originalBody, fakeBody)
+		originalBody := slices.Clone(fakeBody)
 
 		resp := &proxy.RawHTTP1Response{
 			Version:    "HTTP/1.1",
@@ -1319,8 +1318,7 @@ func TestApplyRequestBodyOnlyRules(t *testing.T) {
 
 		// Invalid brotli data - decompression fails, body unchanged
 		fakeCompressed := []byte{0x1b, 0x03, 0x00, 0xf8, 0xff}
-		originalBody := make([]byte, len(fakeCompressed))
-		copy(originalBody, fakeCompressed)
+		originalBody := slices.Clone(fakeCompressed)
 
 		headers := []proxy.Header{
 			{Name: "Content-Encoding", Value: "br"},

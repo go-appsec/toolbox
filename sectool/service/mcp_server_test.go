@@ -175,8 +175,7 @@ func (b *mockHttpBackend) GetProxyHistory(ctx context.Context, count int, offset
 		end = len(b.entries)
 	}
 	// Return copies to avoid mutation
-	result := make([]ProxyEntry, end-int(offset))
-	copy(result, b.entries[offset:end])
+	result := slices.Clone(b.entries[offset:end])
 	return result, nil
 }
 
@@ -206,8 +205,7 @@ func (b *mockHttpBackend) SendRequest(ctx context.Context, name string, req Send
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.lastSentReq = make([]byte, len(req.RawRequest))
-	copy(b.lastSentReq, req.RawRequest)
+	b.lastSentReq = slices.Clone(req.RawRequest)
 
 	if len(b.sendResults) > 0 {
 		result := b.sendResults[0]

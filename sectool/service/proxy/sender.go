@@ -632,8 +632,8 @@ func (s *Sender) sendH2Request(ctx context.Context, conn net.Conn, req *RawHTTP1
 		requestPath = req.Path + "?" + req.Query
 	}
 
-	// Derive :authority from Host header (may have been modified during replay).
-	// Fall back to target if Host header is absent.
+	// Derive :authority from Host header (may have been modified during replay)
+	// Fall back to target if Host header is absent
 	authority := req.GetHeader("Host")
 	if authority == "" {
 		authority = target.Hostname
@@ -825,7 +825,7 @@ func (s *Sender) pollForWindowUpdate(ctx context.Context, framer *http2.Framer, 
 			return fmt.Errorf("server sent GOAWAY during body send: %s", string(f.DebugData()))
 
 		case *http2.HeadersFrame, *http2.DataFrame, *http2.ContinuationFrame:
-			// Buffer response frames - server may send early response (e.g., auth failure)
+			// Buffer response frames - server may send early response (auth failure)
 			// before we finish uploading the request body
 			*bufferedFrames = append(*bufferedFrames, f)
 

@@ -5,6 +5,7 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"compress/zlib"
+	"slices"
 	"testing"
 
 	"github.com/andybalholm/brotli"
@@ -384,8 +385,7 @@ func TestDecompressCorruptedChecksum(t *testing.T) {
 
 	// Gzip trailer is last 8 bytes (4-byte CRC32 + 4-byte original size)
 	// Corrupt the CRC32 checksum
-	corruptedGzip := make([]byte, len(validGzip))
-	copy(corruptedGzip, validGzip)
+	corruptedGzip := slices.Clone(validGzip)
 	corruptedGzip[len(corruptedGzip)-5] ^= 0xFF // flip bits in CRC
 
 	got, wasCompressed := Decompress(corruptedGzip, "gzip")

@@ -243,8 +243,10 @@ CLI requires a running MCP server. Maps to MCP tools via `sectool <module> <sub>
 ### Code Style
 
 - Use `var` style for zero-value initialization: `var foo bool` not `foo := false`
+- Prefer `slices.Clone(src)` over `make([]T, len(src)) + copy(dst, src)` for full-slice clones; keep `copy` for subslice writes into an existing buffer
 - Comments should be concise simple and short phrases rather than full sentences when possible
-- Comments should only be added when they describe non-obvious context
+- Comments should only be added when they describe non-obvious context, not a single line of code
+- Godocs should only describe the inputs and outputs, not how the function works
 - Follow existing naming conventions and neighboring code style
 
 ### Testing

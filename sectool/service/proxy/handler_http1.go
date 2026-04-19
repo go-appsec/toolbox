@@ -269,15 +269,17 @@ func isTimeoutError(err error) bool {
 
 // sendError writes an HTTP error response to the client.
 func (h *http1Handler) sendError(conn net.Conn, code int, message string) {
+	body := []byte(message + "\n")
 	resp := &RawHTTP1Response{
 		Version:    "HTTP/1.1",
 		StatusCode: code,
 		StatusText: message,
 		Headers: []Header{
 			{Name: "Content-Type", Value: "text/plain"},
+			{Name: "Content-Length", Value: strconv.Itoa(len(body))},
 			{Name: "Connection", Value: "close"},
 		},
-		Body: []byte(message + "\n"),
+		Body: body,
 	}
 	_, _ = conn.Write(resp.SerializeRaw(bytes.NewBuffer(nil)))
 }

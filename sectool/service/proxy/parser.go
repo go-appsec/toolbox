@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -272,8 +273,7 @@ func readHeadersWithWire(br *bufio.Reader) (headers Headers, usedBareLF, usedBar
 				// Terminator between prior physical line and this continuation
 				rawAccum = append(rawAccum, prevEnding.Bytes()...)
 				rawAccum = append(rawAccum, line...)
-				headers[len(headers)-1].RawLine = make([]byte, len(rawAccum))
-				copy(headers[len(headers)-1].RawLine, rawAccum)
+				headers[len(headers)-1].RawLine = slices.Clone(rawAccum)
 				headers[len(headers)-1].LineEnding = ending
 				// Join with a single space, trimming the leading whitespace
 				headers[len(headers)-1].Value += " " + strings.TrimLeft(string(line), " \t")
@@ -286,8 +286,7 @@ func readHeadersWithWire(br *bufio.Reader) (headers Headers, usedBareLF, usedBar
 		}
 
 		// Start new header - store raw bytes
-		rawAccum = make([]byte, len(line))
-		copy(rawAccum, line)
+		rawAccum = slices.Clone(line)
 
 		header := parseHeaderLine(line)
 		header.RawLine = rawAccum
@@ -392,13 +391,17 @@ func readChunkedBody(br *bufio.Reader) (body, trailers []byte, chunks []ChunkFra
 
 		size, parseErr := strconv.ParseInt(sizeStr, 16, 64)
 		if parseErr != nil {
-			// Invalid chunk size - return what we have
+			// Preserve the bad size line; do not drain further so any pipelined request remains
+			chunks = append(chunks, ChunkFrame{
+				SizeLine:   slices.Clone(sizeLine),
+				SizeEnding: sizeEnding,
+				Malformed:  true,
+			})
 			return bodyBuf.Bytes(), nil, chunks, trailersBareLF, trailersBareCR, nil
 		}
 
 		// Preserve original size-line bytes (including chunk extensions)
-		sizeLineCopy := make([]byte, len(sizeLine))
-		copy(sizeLineCopy, sizeLine)
+		sizeLineCopy := slices.Clone(sizeLine)
 
 		if size == 0 {
 			// Final chunk terminator; read trailers next
@@ -516,10 +519,8 @@ func summaryLineEnd(w *WireFormat) string {
 	return "\r\n"
 }
 
-// SerializeRaw reconstructs wire bytes preserving original formatting when available.
-// Per-line terminators come from RequestLineEnding and each Header.LineEnding;
-// injected lines use the Wire summary (bare CR > bare LF > CRLF). Chunked encoding
-// is preserved when Wire.WasChunked is set.
+// SerializeRaw returns wire bytes reconstructed from the parsed request.
+// Emits headers and body exactly as parsed; no auto-cleanup.
 func (r *RawHTTP1Request) SerializeRaw(buf *bytes.Buffer) []byte {
 	buf.Reset()
 
@@ -539,10 +540,8 @@ func (r *RawHTTP1Request) SerializeRaw(buf *bytes.Buffer) []byte {
 	return buf.Bytes()
 }
 
-// SerializeRaw reconstructs wire bytes preserving original formatting when available.
-// Per-line terminators come from StatusLineEnding and each Header.LineEnding;
-// injected lines use the Wire summary (bare CR > bare LF > CRLF). Chunked encoding
-// is preserved when Wire.WasChunked is set.
+// SerializeRaw returns wire bytes reconstructed from the parsed response.
+// Emits headers and body exactly as parsed; no auto-cleanup.
 func (r *RawHTTP1Response) SerializeRaw(buf *bytes.Buffer) []byte {
 	buf.Reset()
 
@@ -560,37 +559,18 @@ func (r *RawHTTP1Response) SerializeRaw(buf *bytes.Buffer) []byte {
 	return buf.Bytes()
 }
 
-// writeRawHTTP1Body writes headers, header-block terminator, and body for an HTTP/1
-// message whose start line has already been written.
+// writeRawHTTP1Body writes headers, header-block terminator, and body for an
+// HTTP/1 message whose start line has already been written. Headers and body
+// are emitted verbatim; chunked re-framing fires only when Wire.WasChunked
+// is set. Callers are responsible for setting Content-Length when appropriate.
 func writeRawHTTP1Body(buf *bytes.Buffer, headers Headers, body, trailers []byte, chunks []ChunkFrame, wire *WireFormat, blockEnding LineEnding) {
-	useChunked := wire != nil && wire.WasChunked
-
 	for _, h := range headers {
-		// Drop mismatched TE:chunked if we're emitting a non-chunked body
-		if strings.EqualFold(h.Name, "Transfer-Encoding") &&
-			strings.Contains(strings.ToLower(h.Value), "chunked") {
-			if useChunked {
-				writeHeaderRaw(buf, h)
-			}
-			continue
-		}
-		// Chunked framing supersedes Content-Length
-		if useChunked && strings.EqualFold(h.Name, "Content-Length") {
-			continue
-		}
 		writeHeaderRaw(buf, h)
-	}
-
-	// Inject Content-Length when not chunked, body present, and header missing
-	if !useChunked && len(body) > 0 && headers.Get("Content-Length") == "" {
-		buf.WriteString("Content-Length: ")
-		buf.WriteString(strconv.Itoa(len(body)))
-		buf.WriteString(summaryLineEnd(wire))
 	}
 
 	buf.WriteString(blockEnding.Bytes()) // Header terminator
 
-	if useChunked {
+	if wire != nil && wire.WasChunked {
 		writeChunkedBody(buf, body, trailers, chunks, summaryLineEnd(wire))
 	} else {
 		buf.Write(body)
@@ -609,6 +589,12 @@ func writeHeaderRaw(buf *bytes.Buffer, h Header) {
 	buf.WriteString(h.LineEnding.Bytes())
 }
 
+// EncodeStandardChunkedBody writes body + trailers into buf as an HTTP/1.1 chunked body
+// using CRLF terminators. trailers is written verbatim after the 0-chunk.
+func EncodeStandardChunkedBody(buf *bytes.Buffer, body, trailers []byte) {
+	writeChunkedBody(buf, body, trailers, nil, "\r\n")
+}
+
 // writeChunkedBody writes body in chunked transfer encoding format.
 func writeChunkedBody(buf *bytes.Buffer, body, trailers []byte, chunks []ChunkFrame, lineEnd string) {
 	if canReuseChunks(chunks, len(body)) {
@@ -617,6 +603,9 @@ func writeChunkedBody(buf *bytes.Buffer, body, trailers []byte, chunks []ChunkFr
 		for _, c := range chunks {
 			buf.Write(c.SizeLine)
 			buf.WriteString(c.SizeEnding.Bytes())
+			if c.Malformed {
+				return // Stop at the malformed frame
+			}
 			if c.Size == 0 {
 				// Final 0-chunk: DataEnding carries the terminator of the blank
 				// line that closes the trailer block (empty when truncated at EOF)
@@ -651,9 +640,12 @@ func writeChunkedBody(buf *bytes.Buffer, body, trailers []byte, chunks []ChunkFr
 }
 
 // canReuseChunks reports whether recorded chunk frames still describe the current body.
+// A trailing malformed frame always reuses: the wire framing is preserved verbatim.
 func canReuseChunks(chunks []ChunkFrame, bodyLen int) bool {
 	if len(chunks) == 0 {
 		return false
+	} else if chunks[len(chunks)-1].Malformed {
+		return true
 	}
 	var sum int
 	for _, c := range chunks {

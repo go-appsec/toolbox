@@ -843,6 +843,7 @@ func TestRawHTTP1Request_Serialize(t *testing.T) {
 				Headers: []Header{
 					{Name: "Host", Value: "example.com"},
 					{Name: "Content-Type", Value: "text/plain"},
+					{Name: "Content-Length", Value: "5"},
 				},
 				Body: []byte("Hello"),
 			},
@@ -884,7 +885,8 @@ func TestRawHTTP1Request_Serialize(t *testing.T) {
 		})
 	}
 
-	t.Run("removes_chunked", func(t *testing.T) {
+	t.Run("preserves_te_chunked_without_framing", func(t *testing.T) {
+		// Without Wire.WasChunked the serializer emits headers verbatim and writes body raw
 		req := &RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/",
@@ -898,8 +900,8 @@ func TestRawHTTP1Request_Serialize(t *testing.T) {
 
 		serialized := string(req.SerializeRaw(bytes.NewBuffer(nil)))
 
-		assert.NotContains(t, serialized, "Transfer-Encoding")
-		assert.Contains(t, serialized, "Content-Length: 5")
+		assert.Contains(t, serialized, "Transfer-Encoding: chunked")
+		assert.NotContains(t, serialized, "Content-Length")
 	})
 
 	t.Run("idempotent", func(t *testing.T) {
@@ -941,6 +943,7 @@ func TestRawHTTP1Response_Serialize(t *testing.T) {
 				StatusText: "OK",
 				Headers: []Header{
 					{Name: "Content-Type", Value: "text/plain"},
+					{Name: "Content-Length", Value: "5"},
 				},
 				Body: []byte("Hello"),
 			},
@@ -1470,12 +1473,14 @@ func TestReadChunkedBody(t *testing.T) {
 
 	// edge cases
 	t.Run("invalid_hex_chunk_size", func(t *testing.T) {
-		input := "GG\r\nHello\r\n0\r\n\r\n"
+		input := "0x5\r\nhello\r\n0\r\n\r\n"
 		br := bufio.NewReader(bytes.NewReader([]byte(input)))
-		body, _, _, _, _, err := readChunkedBody(br)
-		// Permissive parsing: returns empty body and no error on invalid hex
+		body, _, chunks, _, _, err := readChunkedBody(br)
 		require.NoError(t, err)
 		assert.Empty(t, body)
+		require.Len(t, chunks, 1)
+		assert.True(t, chunks[0].Malformed)
+		assert.Equal(t, "0x5", string(chunks[0].SizeLine))
 	})
 
 	t.Run("large_hex_chunk_size", func(t *testing.T) {
@@ -1509,7 +1514,7 @@ func TestReadChunkedBody(t *testing.T) {
 	})
 
 	t.Run("bare_cr_in_chunk_size", func(t *testing.T) {
-		// Chunk-size line terminated with bare CR — classic desync primitive
+		// Chunk-size line terminated with bare CR - classic desync primitive
 		input := "5\rHello\r\n0\r\n\r\n"
 		br := bufio.NewReader(bytes.NewReader([]byte(input)))
 		body, _, chunks, _, _, err := readChunkedBody(br)
@@ -1553,6 +1558,7 @@ func TestSerializeRequestWithTrailers(t *testing.T) {
 		Version: "HTTP/1.1",
 		Headers: []Header{
 			{Name: "Host", Value: "example.com"},
+			{Name: "Content-Length", Value: "5"},
 		},
 		Body:     []byte("Hello"),
 		Trailers: []byte("Checksum: abc\r\n"),
@@ -1564,7 +1570,6 @@ func TestSerializeRequestWithTrailers(t *testing.T) {
 	assert.Contains(t, string(serialized), "POST /upload HTTP/1.1")
 	assert.Contains(t, string(serialized), "Content-Length: 5")
 	assert.Contains(t, string(serialized), "Hello")
-	// Note: trailers may or may not be included depending on implementation
 }
 
 func TestReadLineWithEnding(t *testing.T) {
@@ -1917,6 +1922,39 @@ func TestSerializeRawChunked(t *testing.T) {
 
 		assert.Contains(t, string(serialized), "Transfer-Encoding: chunked")
 		assert.Contains(t, string(serialized), "5\r\nHello\r\n0\r\n\r\n")
+	})
+
+	t.Run("chunked_preserves_cl", func(t *testing.T) {
+		wire := "POST / HTTP/1.1\r\n" +
+			"Host: example.com\r\n" +
+			"Transfer-Encoding: chunked\r\n" +
+			"Content-Length: 42\r\n" +
+			"\r\n" +
+			"5\r\nhello\r\n0\r\n\r\n"
+
+		req, err := ParseRequest(strings.NewReader(wire))
+		require.NoError(t, err)
+
+		var buf bytes.Buffer
+		serialized := string(req.SerializeRaw(&buf))
+		assert.Contains(t, serialized, "Transfer-Encoding: chunked")
+		assert.Contains(t, serialized, "Content-Length: 42")
+	})
+
+	t.Run("malformed_chunk_size_verbatim", func(t *testing.T) {
+		wire := "POST / HTTP/1.1\r\n" +
+			"Host: example.com\r\n" +
+			"Transfer-Encoding: chunked\r\n" +
+			"\r\n" +
+			"0x5\r\nhello\r\n0\r\n\r\n"
+
+		req, err := ParseRequest(strings.NewReader(wire))
+		require.NoError(t, err)
+
+		var buf bytes.Buffer
+		serialized := string(req.SerializeRaw(&buf))
+		assert.Contains(t, serialized, "0x5\r\n")
+		assert.False(t, strings.HasSuffix(serialized, "0\r\n\r\n"))
 	})
 }
 

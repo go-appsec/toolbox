@@ -3782,7 +3782,7 @@ func TestIntegration_WebSocketPingPong(t *testing.T) {
 		}
 		assert.Empty(t, wsPings)
 
-		// Read pong response — use the bufio.Reader, not the raw conn,
+		// Read pong response - use the bufio.Reader, not the raw conn,
 		// to avoid losing bytes that ReadResponse may have buffered ahead.
 		require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
 		pongFrame, err := readWebSocketFrame(reader)
@@ -3827,7 +3827,7 @@ func TestIntegration_WebSocketPingPong(t *testing.T) {
 		_, err = conn.Write(textFrame)
 		require.NoError(t, err)
 
-		// Read echo response — use the bufio.Reader, not the raw conn,
+		// Read echo response - use the bufio.Reader, not the raw conn,
 		// to avoid losing bytes that ReadResponse may have buffered ahead.
 		require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
 		echoFrame, err := readWebSocketFrame(reader)

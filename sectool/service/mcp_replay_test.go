@@ -898,6 +898,72 @@ func TestExecuteSend_WireFidelity(t *testing.T) {
 		assert.Contains(t, sent, "Content-Length: 5")
 		assert.Contains(t, sent, "hello")
 	})
+
+	t.Run("chunked_body_replacement", func(t *testing.T) {
+		_, mcpClient, mockHTTP, _, _ := setupMockMCPServer(t, nil)
+
+		chunkedReq := "POST /case1 HTTP/1.1\r\n" +
+			"Host: example.com\r\n" +
+			"Transfer-Encoding: chunked\r\n" +
+			"Connection: close\r\n" +
+			"\r\n" +
+			"5\r\nhello\r\n0\r\n\r\n"
+		mockHTTP.AddProxyEntry(chunkedReq, "HTTP/1.1 200 OK\r\n\r\norig", "")
+		mockHTTP.SetSendResult("HTTP/1.1 200 OK\r\n", "ok")
+
+		listResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"method":      "POST",
+		})
+		require.NotEmpty(t, listResp.Flows)
+
+		newBody := "DIFFERENT body now - 42 bytes of fresh con"
+		require.Len(t, newBody, 42)
+		CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
+			"flow_id": listResp.Flows[0].FlowID,
+			"body":    newBody,
+			"force":   true,
+		})
+
+		sent := mockHTTP.LastSentRequest()
+		assert.Contains(t, sent, "Transfer-Encoding: chunked")
+		assert.Contains(t, sent, "\r\n2a\r\n")
+		assert.True(t, strings.HasSuffix(sent, "0\r\n\r\n"))
+	})
+
+	t.Run("chunked_trailer_headers_with_new_body", func(t *testing.T) {
+		_, mcpClient, mockHTTP, _, _ := setupMockMCPServer(t, nil)
+
+		chunkedReq := "POST /case2 HTTP/1.1\r\n" +
+			"Host: example.com\r\n" +
+			"Transfer-Encoding: chunked\r\n" +
+			"TE: trailers\r\n" +
+			"Trailer: X-Trailer-One, X-Trailer-Two\r\n" +
+			"\r\n" +
+			"5\r\nhello\r\n0\r\n" +
+			"X-Trailer-One: a\r\n" +
+			"X-Trailer-Two: b\r\n" +
+			"\r\n"
+		mockHTTP.AddProxyEntry(chunkedReq, "HTTP/1.1 200 OK\r\n\r\norig", "")
+		mockHTTP.SetSendResult("HTTP/1.1 200 OK\r\n", "ok")
+
+		listResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"method":      "POST",
+		})
+		require.NotEmpty(t, listResp.Flows)
+
+		CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
+			"flow_id": listResp.Flows[0].FlowID,
+			"body":    "new body",
+			"force":   true,
+		})
+
+		sent := mockHTTP.LastSentRequest()
+		assert.Contains(t, sent, "Transfer-Encoding: chunked")
+		assert.Contains(t, sent, "\r\n8\r\n")
+		assert.Contains(t, sent, "new body")
+	})
 }
 
 func TestExecuteSend_DomainScoping(t *testing.T) {
