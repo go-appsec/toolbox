@@ -54,14 +54,17 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/mcp_diff.go` - Diff tool handler (structured flow comparison)
 - `sectool/service/mcp_reflection.go` - Reflection tool handler (parameter reflection detection)
 - `sectool/service/mcp_notes.go` - Notes tool handlers (save, list) and flow listing attachment
+- `sectool/service/mcp_respond.go` - Proxy responder tool handlers (respond_add, respond_delete, respond_list); native backend only
 - `sectool/service/flags.go` - MCP server flag parsing (`--port`, `--workflow`, `--config`, `--notes`)
-- `sectool/service/backend.go` - HttpBackend, OastBackend, CrawlerBackend interfaces
+- `sectool/service/backend.go` - HttpBackend, ResponderBackend, OastBackend, CrawlerBackend interfaces
 - `sectool/service/backend_http_native.go` - Native built-in proxy implementation of HttpBackend
+- `sectool/service/backend_http_native_respond.go` - Native backend implementation of ResponderBackend
 - `sectool/service/backend_http_burp.go` - Burp MCP implementation of HttpBackend
 - `sectool/service/backend_oast_interactsh.go` - Interactsh implementation of OastBackend
 - `sectool/service/smtputil.go` - SMTP email header parsing utilities
 - `sectool/service/backend_crawler_colly.go` - Colly-based crawler implementation
 - `sectool/service/capture_filter.go` - BuildCaptureFilter: compiles proxy exclusion patterns from config
+- `sectool/service/search.go` - RE2 pattern compilation with LLM-friendly double-escape correction; flow content matching
 - `sectool/service/httputil.go` - HTTP request/response parsing utilities
 - `sectool/service/jsonutil.go` - JSON field modification utilities
 - `sectool/service/types.go` - Service-specific request and internal types
@@ -79,6 +82,7 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/proxy/cert.go` - CA and per-hostname certificate management
 - `sectool/service/proxy/history.go` - Thread-safe history storage
 - `sectool/service/proxy/filter.go` - CaptureFilter type, SetCaptureFilter/ShouldCapture
+- `sectool/service/proxy/interceptor.go` - ResponseInterceptor interface for serving canned responses in place of upstream requests
 - `sectool/service/proxy/compression.go` - gzip/deflate utilities
 - `sectool/service/proxy/sender.go` - Wire-fidelity request sender (H1 and H2)
 - `sectool/service/proxy/httputil.go` - HTTP method extraction, header grouping, and raw query modification utilities
@@ -122,6 +126,16 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/diff/diff.go` - Diff command implementation (CLI formatting and display)
 - `sectool/reflected/flags.go` - Reflected subcommand parsing
 - `sectool/reflected/reflected.go` - Reflected command implementation
+
+### Shared CLI Utilities
+
+- `sectool/cliutil/output.go` - Output writer and color mode detection (NO_COLOR/FORCE_COLOR aware)
+- `sectool/cliutil/colors.go` - Status-code coloring helpers
+- `sectool/cliutil/styles.go` - go-pretty table styles (light/simple)
+- `sectool/cliutil/table.go` - NewTable helper and row painters
+- `sectool/cliutil/hints.go` - Muted hint and summary print helpers
+- `sectool/cliutil/suggest.go` - "Did you mean" levenshtein suggestions for unknown commands
+- `sectool/util/strutil.go` - TruncateString and other shared string utilities
 
 ### Config
 
@@ -170,6 +184,7 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 
 **Backend Interfaces (`sectool/service/backend.go`):**
 - `HttpBackend` - proxy history (get/regex), request sending, match/replace rules CRUD
+- `ResponderBackend` - custom canned-response registration by origin/path; native proxy only
 - `OastBackend` - OAST session create/delete, event polling, session listing
 - `CrawlerBackend` - crawl session lifecycle and result retrieval
 
@@ -190,6 +205,9 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 - `proxy_rule_list` - list match/replace rules
 - `proxy_rule_add` - add match/replace rule
 - `proxy_rule_delete` - delete rule
+- `proxy_respond_add` - register a canned response for a given origin/path; native proxy only
+- `proxy_respond_delete` - delete a responder by ID or label
+- `proxy_respond_list` - list registered responders
 - `crawl_create` - start crawl from URLs or proxy flow seeds
 - `crawl_seed` - add seeds to running crawl
 - `crawl_status` - crawl progress metrics
