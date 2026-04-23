@@ -2,6 +2,7 @@
 
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/go-appsec/toolbox/blob/main/LICENSE)
 [![Build Status](https://github.com/go-appsec/toolbox/actions/workflows/tests-main.yml/badge.svg)](https://github.com/go-appsec/toolbox/actions/workflows/tests-main.yml)
+[![Vibe-Scale 2: AI-generated, fully understood](https://img.shields.io/badge/Vibe--Scale%202-AI--generated%2C%20fully%20understood-2ca02c)](https://github.com/go-appsec/vibe-scale/blob/main/README.md)
 
 **MCP-based application security testing tools for your coding agent.**
 
