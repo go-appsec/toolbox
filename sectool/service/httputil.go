@@ -249,6 +249,18 @@ func extractHeader(headers string, name string) string {
 	return ""
 }
 
+// isFormEncodedContentType reports whether ct is application/x-www-form-urlencoded.
+func isFormEncodedContentType(ct string) bool {
+	ct = strings.TrimSpace(ct)
+	if ct == "" {
+		return false
+	}
+	if idx := strings.IndexByte(ct, ';'); idx >= 0 {
+		ct = ct[:idx]
+	}
+	return strings.EqualFold(strings.TrimSpace(ct), "application/x-www-form-urlencoded")
+}
+
 // decompressForDisplay decompresses body based on Content-Encoding header.
 // Returns (decompressed body, wasDecompressed).
 // If decompression fails or encoding unsupported, returns original body unchanged.

@@ -247,6 +247,91 @@ func TestHandleReplaySend(t *testing.T) {
 		assert.NotContains(t, body, "temp")
 	})
 
+	t.Run("form_encoded_rejects_set_json", func(t *testing.T) {
+		_, mcpClient, mockHTTP, _, _ := setupMockMCPServer(t, nil)
+
+		mockHTTP.AddProxyEntry(
+			"POST /oauth2/token HTTP/1.1\r\nHost: idp.test\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\ngrant_type=refresh_token&refresh_token=x",
+			"HTTP/1.1 200 OK\r\n\r\nok",
+			"",
+		)
+
+		listResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"method":      "POST",
+		})
+		require.NotEmpty(t, listResp.Flows)
+		flowID := listResp.Flows[0].FlowID
+
+		result := CallMCPTool(t, mcpClient, "replay_send", map[string]interface{}{
+			"flow_id":  flowID,
+			"set_json": map[string]interface{}{"grant_type": "password"},
+		})
+		assert.True(t, result.IsError)
+		text := ExtractMCPText(t, result)
+		assert.Contains(t, text, "application/x-www-form-urlencoded")
+		assert.Contains(t, text, "set_form")
+		assert.NotContains(t, text, "invalid character 'g'")
+	})
+
+	t.Run("set_form_modifies_form_encoded_body", func(t *testing.T) {
+		_, mcpClient, mockHTTP, _, _ := setupMockMCPServer(t, nil)
+
+		mockHTTP.AddProxyEntry(
+			"POST /oauth2/token HTTP/1.1\r\nHost: idp.test\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\ngrant_type=refresh_token&refresh_token=abc",
+			"HTTP/1.1 200 OK\r\n\r\nok",
+			"",
+		)
+		mockHTTP.SetSendResult(
+			"HTTP/1.1 200 OK\r\n",
+			"replayed",
+		)
+
+		listResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"method":      "POST",
+		})
+		require.NotEmpty(t, listResp.Flows)
+		flowID := listResp.Flows[0].FlowID
+
+		resp := CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
+			"flow_id":     flowID,
+			"set_form":    map[string]interface{}{"grant_type": "password", "scope": "read"},
+			"remove_form": []interface{}{"refresh_token"},
+		})
+		assert.NotEmpty(t, resp.FlowID)
+		sent := mockHTTP.LastSentRequest()
+		parts := strings.SplitN(sent, "\r\n\r\n", 2)
+		require.Len(t, parts, 2)
+		assert.Contains(t, parts[1], "grant_type=password")
+		assert.Contains(t, parts[1], "scope=read")
+		assert.NotContains(t, parts[1], "refresh_token")
+	})
+
+	t.Run("form_encoded_rejects_set_json_with_charset", func(t *testing.T) {
+		_, mcpClient, mockHTTP, _, _ := setupMockMCPServer(t, nil)
+
+		mockHTTP.AddProxyEntry(
+			"POST /oauth2/token HTTP/1.1\r\nHost: idp.test\r\nContent-Type: application/x-www-form-urlencoded; charset=utf-8\r\n\r\ngrant_type=refresh_token",
+			"HTTP/1.1 200 OK\r\n\r\nok",
+			"",
+		)
+
+		listResp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+			"output_mode": "flows",
+			"method":      "POST",
+		})
+		require.NotEmpty(t, listResp.Flows)
+		flowID := listResp.Flows[0].FlowID
+
+		result := CallMCPTool(t, mcpClient, "replay_send", map[string]interface{}{
+			"flow_id":  flowID,
+			"set_json": map[string]interface{}{"x": "y"},
+		})
+		assert.True(t, result.IsError)
+		assert.Contains(t, ExtractMCPText(t, result), "application/x-www-form-urlencoded")
+	})
+
 	t.Run("with_follow_redirects", func(t *testing.T) {
 		_, mcpClient, mockHTTP, _, _ := setupMockMCPServer(t, nil)
 

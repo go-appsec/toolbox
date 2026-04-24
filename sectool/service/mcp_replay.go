@@ -32,9 +32,11 @@ Edits:
 - set_headers/remove_headers: header edits. Single entry replaces existing; multiple entries with the same name create duplicates
 - body: replace entire body
 - set_json/remove_json: selective JSON edits; requires body to be valid JSON
+- set_form/remove_form: selective form-field edits for application/x-www-form-urlencoded bodies (e.g. OAuth2 token requests); do NOT use set_json on form bodies
 
 JSON paths: dot notation with array brackets (e.g., "user.email", "items[0].id", "data.users[0].name").
 set_json object: {"user.email": "x", "items[0].id": 5}
+set_form object: {"grant_type": "password", "scope": "read"} (keys are form-field names; values are strings)
 Types auto-parsed: null/true/false/numbers/{}/[], else string.
 Processing: remove_* then set_*. Content-Length auto-updated when body is modified and CL not explicitly set.
 Validation: fix issues or use force=true for protocol testing.
@@ -51,6 +53,8 @@ Replayed requests appear in proxy_poll history alongside captured traffic.`),
 		mcp.WithArray("remove_query", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("Query param names to remove")),
 		mcp.WithObject("set_json", mcp.Description("JSON fields to set as object: {\"path\": value} (e.g., {\"user.email\": \"x\", \"items[0].id\": 5})")),
 		mcp.WithArray("remove_json", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("JSON fields to remove (dot path: 'user.temp', 'items[2]')")),
+		mcp.WithObject("set_form", mcp.Description("Form fields to set as object: {\"field\": \"value\"}. For application/x-www-form-urlencoded bodies (e.g. OAuth2 grant_type, scope). Do NOT use on JSON bodies, use set_json.")),
+		mcp.WithArray("remove_form", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("Form field names to remove (form-encoded bodies only)")),
 		mcp.WithBoolean("follow_redirects", mcp.Description("Follow HTTP redirects (default: false)")),
 		mcp.WithBoolean("force", mcp.Description("Skip validation for protocol-level tests (smuggling, CRLF injection)")),
 	)
@@ -83,6 +87,8 @@ type sendModifications struct {
 	Body            string
 	SetJSON         map[string]interface{}
 	RemoveJSON      []string
+	SetForm         map[string]string
+	RemoveForm      []string
 	Force           bool
 	FollowRedirects bool
 	UserSetHost     bool // user explicitly supplied a Host header
@@ -143,6 +149,8 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 		Body:            req.GetString("body", ""),
 		SetJSON:         getJSONArg(req),
 		RemoveJSON:      req.GetStringSlice("remove_json", nil),
+		SetForm:         getFormArg(req),
+		RemoveForm:      req.GetStringSlice("remove_form", nil),
 		Force:           req.GetBool("force", false),
 		FollowRedirects: req.GetBool("follow_redirects", false),
 		UserSetHost:     proxy.ContainsHeader(setHeaders, "Host"),
@@ -232,12 +240,29 @@ func (m *mcpServer) executeSend(ctx context.Context, rawRequest []byte, httpProt
 		bodyModified = true
 	}
 	if len(mods.SetJSON) > 0 || len(mods.RemoveJSON) > 0 {
+		if isFormEncodedContentType(extractHeader(string(headers), "Content-Type")) {
+			return errorResult(
+				"request body is application/x-www-form-urlencoded; use 'set_form'/'remove_form' to modify fields or 'body' to replace the raw payload. 'set_json' only applies to JSON bodies.",
+			), nil
+		}
 		modifiedBody, err := modifyJSONBodyMap(reqBody, mods.SetJSON, mods.RemoveJSON)
 		if err != nil {
 			return errorResult("JSON body modification failed: " + err.Error()), nil
 		}
 		reqBody = modifiedBody
 		bodyModified = true
+	}
+	if len(mods.SetForm) > 0 || len(mods.RemoveForm) > 0 {
+		modifiedBody, err := modifyFormBodyMap(reqBody, mods.SetForm, mods.RemoveForm)
+		if err != nil {
+			return errorResult("form body modification failed: " + err.Error()), nil
+		}
+		reqBody = modifiedBody
+		bodyModified = true
+		// Fill in Content-Type for request_send with set_form but no headers set
+		if extractHeader(string(headers), "Content-Type") == "" {
+			headers = setHeader(headers, "Content-Type", "application/x-www-form-urlencoded")
+		}
 	}
 
 	// Recompress if body was modified and Content-Encoding is present
@@ -384,4 +409,29 @@ func getJSONArg(req mcp.CallToolRequest) map[string]interface{} {
 		}
 	}
 	return nil
+}
+
+// getFormArg extracts set_form as a string-valued map; non-string values are coerced via fmt.Sprint.
+func getFormArg(req mcp.CallToolRequest) map[string]string {
+	args := req.GetArguments()
+	if args == nil {
+		return nil
+	}
+	raw, ok := args["set_form"]
+	if !ok || raw == nil {
+		return nil
+	}
+	rawMap, ok := raw.(map[string]interface{})
+	if !ok || len(rawMap) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(rawMap))
+	for k, v := range rawMap {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		} else {
+			out[k] = fmt.Sprint(v)
+		}
+	}
+	return out
 }

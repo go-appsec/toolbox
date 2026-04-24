@@ -11,6 +11,29 @@ import (
 	"github.com/go-appsec/toolbox/sectool/config"
 )
 
+func TestIsFormEncodedContentType(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"exact", "application/x-www-form-urlencoded", true},
+		{"with_charset", "application/x-www-form-urlencoded; charset=utf-8", true},
+		{"uppercase", "APPLICATION/X-WWW-FORM-URLENCODED", true},
+		{"leading_space", "  application/x-www-form-urlencoded  ", true},
+		{"json", "application/json", false},
+		{"multipart", "multipart/form-data; boundary=abc", false},
+		{"empty", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, isFormEncodedContentType(c.in))
+		})
+	}
+}
+
 func TestAggregateByTuple(t *testing.T) {
 	t.Parallel()
 

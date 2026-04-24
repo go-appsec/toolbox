@@ -80,9 +80,21 @@ func modifyJSONBodyMap(body []byte, setJSON map[string]interface{}, removeJSON [
 		body = []byte("{}")
 	}
 
+	// Sharper hint than json.Unmarshal's "invalid character" error
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	if len(trimmed) > 0 {
+		first := trimmed[0]
+		if first != '{' && first != '[' {
+			return nil, fmt.Errorf(
+				"body does not look like JSON (first non-whitespace byte: %q); use 'set_form'/'remove_form' for form-encoded bodies, or pass the full replacement via 'body'",
+				first,
+			)
+		}
+	}
+
 	var data interface{}
 	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, fmt.Errorf("body is not valid JSON: %w (hint: export bundle and edit body directly)", err)
+		return nil, fmt.Errorf("body is not valid JSON: %w (hint: pass the full replacement via 'body' if the payload is not JSON)", err)
 	}
 
 	for _, keyPath := range removeJSON {

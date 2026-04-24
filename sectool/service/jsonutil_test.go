@@ -372,6 +372,12 @@ func TestModifyJSONBody(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "form_encoded_body_suggests_set_form",
+			input:   `grant_type=refresh_token&client_id=x`,
+			setJSON: []string{"grant_type=password"},
+			wantErr: true,
+		},
+		{
 			name:    "invalid_encoded_json",
 			input:   `{"data": "{not valid}"}`,
 			setJSON: []string{"data.field=x"},
@@ -406,6 +412,31 @@ func TestModifyJSONBody(t *testing.T) {
 			assert.Equal(t, expectedVal, resultVal)
 		})
 	}
+}
+
+func TestModifyJSONBodyMap_NonJSONHintsSetForm(t *testing.T) {
+	t.Parallel()
+
+	t.Run("form_encoded_body_error_mentions_set_form", func(t *testing.T) {
+		_, err := modifyJSONBodyMap(
+			[]byte("grant_type=refresh_token&client_id=abc"),
+			map[string]interface{}{"grant_type": "password"},
+			nil,
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "set_form")
+		assert.NotContains(t, err.Error(), "invalid character 'g'")
+	})
+
+	t.Run("plain_text_body_error_mentions_body_replacement", func(t *testing.T) {
+		_, err := modifyJSONBodyMap(
+			[]byte("just some text"),
+			map[string]interface{}{"key": "value"},
+			nil,
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "body")
+	})
 }
 
 func TestFlattenJSON(t *testing.T) {
