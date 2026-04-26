@@ -1,6 +1,6 @@
 module github.com/go-appsec/toolbox
 
-go 1.25.0
+go 1.25.5
 
 require (
 	github.com/agnivade/levenshtein v1.2.1
@@ -12,7 +12,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jedib0t/go-pretty/v6 v6.7.9
 	github.com/klauspost/compress v1.18.5
-	github.com/mark3labs/mcp-go v0.48.0
+	github.com/mark3labs/mcp-go v0.49.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
