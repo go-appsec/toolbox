@@ -263,11 +263,20 @@ CLI requires a running MCP server. Maps to MCP tools via `sectool <module> <sub>
 ### Code Style
 
 - Use `var` style for zero-value initialization: `var foo bool` not `foo := false`
-- Prefer `slices.Clone(src)` over `make([]T, len(src)) + copy(dst, src)` for full-slice clones; keep `copy` for subslice writes into an existing buffer
 - Comments should be concise simple and short phrases rather than full sentences when possible
 - Comments should only be added when they describe non-obvious context, not a single line of code
 - Godocs should only describe the inputs and outputs, not how the function works
 - Follow existing naming conventions and neighboring code style
+
+### Collection handling
+
+Reach for stdlib `slices`/`maps`/`strings` and `github.com/go-analyze/bulk` before writing a manual loop. The patterns below come up often:
+
+- **Clone a slice or map**: `slices.Clone(src)` / `maps.Clone(src)`. Do not `make([]T, len(src))` + `copy(dst, src)` for whole-slice clones (`copy` is still correct for sub-slice writes into an existing buffer).
+- **Filter a slice (same element type, no transformation)**: `bulk.SliceFilter(predicate, s)`. Use `bulk.SliceFilterInPlace` when the caller doesn't reuse the input backing array. Use instead of `for _, v := range s { if cond { out = append(out, v) } }`.
+- **Slice → map set**: `bulk.SliceToSet(s)` (returns `map[T]struct{}`). Membership tests use the comma-ok form: `if _, ok := set[k]; ok`.
+- **Map → slice of keys / values**: `bulk.MapKeysSlice(m)` and `bulk.MapValuesSlice(m)`. Don't write `for k := range m { keys = append(keys, k) }`.
+- **Membership check on a slice**: `slices.Contains(s, x)` for comparable element types, `slices.ContainsFunc(s, predicate)` for everything else.
 
 ### Testing
 
