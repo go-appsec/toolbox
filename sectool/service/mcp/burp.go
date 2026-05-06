@@ -420,7 +420,12 @@ func parseHistoryNDJSON(text string) ([]ProxyHistoryEntry, error) {
 
 		var entry ProxyHistoryEntry
 		if err := json.Unmarshal(sanitized, &entry); err != nil {
-			return entries, fmt.Errorf("failed to parse history entry at line %d: %w", lineNum, err)
+			if structEntry, ok := parseStructuralBurpEntry(sanitized); ok {
+				entries = append(entries, structEntry)
+				continue
+			}
+			log.Printf("mcp: skipping unparseable history entry at line %d: %v", lineNum, err)
+			continue
 		}
 		entries = append(entries, entry)
 	}
@@ -549,6 +554,69 @@ func repairTruncatedJSON(sb *bytes.Buffer, s []byte) []byte {
 	}
 
 	return sb.Bytes()
+}
+
+var (
+	burpRequestMarker  = []byte(`"request":"`)
+	burpResponseMarker = []byte(`"response":"`)
+	burpNotesMarker    = []byte(`"notes":"`)
+	burpEntryClose     = []byte(`"}`)
+)
+
+// parseStructuralBurpEntry extracts fields from a Burp history entry by locating known
+// markers; fallback for entries that don't parse as JSON.
+func parseStructuralBurpEntry(s []byte) (ProxyHistoryEntry, bool) {
+	var entry ProxyHistoryEntry
+	s = bytes.TrimSpace(s)
+	if len(s) < 2 || s[0] != '{' || !bytes.HasSuffix(s, burpEntryClose) {
+		return entry, false
+	}
+
+	reqIdx := bytes.Index(s, burpRequestMarker)
+	if reqIdx < 0 {
+		return entry, false
+	}
+	respIdx := bytes.Index(s[reqIdx+len(burpRequestMarker):], burpResponseMarker)
+	if respIdx < 0 {
+		return entry, false
+	}
+	respIdx += reqIdx + len(burpRequestMarker)
+	notesIdx := bytes.Index(s[respIdx+len(burpResponseMarker):], burpNotesMarker)
+	if notesIdx < 0 {
+		return entry, false
+	}
+	notesIdx += respIdx + len(burpResponseMarker)
+
+	// Trim 2 bytes before the next marker: the previous value's close-quote and the separator
+	// `,` normally, but may be corrupted, which is why we don't anchor on it
+	reqStart := reqIdx + len(burpRequestMarker)
+	respStart := respIdx + len(burpResponseMarker)
+	notesStart := notesIdx + len(burpNotesMarker)
+	notesEnd := len(s) - len(burpEntryClose)
+	if respIdx-2 < reqStart || notesIdx-2 < respStart || notesEnd < notesStart {
+		return entry, false
+	}
+	requestRaw := s[reqStart : respIdx-2]
+	responseRaw := s[respStart : notesIdx-2]
+	notesRaw := s[notesStart:notesEnd]
+
+	entry.Request = decodeBurpFieldValue(requestRaw)
+	entry.Response = decodeBurpFieldValue(responseRaw)
+	entry.Notes = decodeBurpFieldValue(notesRaw)
+	return entry, true
+}
+
+// decodeBurpFieldValue decodes a JSON string fragment, falling back to raw bytes on failure.
+func decodeBurpFieldValue(raw []byte) string {
+	quoted := make([]byte, 0, len(raw)+2)
+	quoted = append(quoted, '"')
+	quoted = append(quoted, raw...)
+	quoted = append(quoted, '"')
+	var s string
+	if err := json.Unmarshal(quoted, &s); err == nil {
+		return s
+	}
+	return string(raw)
 }
 
 // SendHTTP1Request sends an HTTP/1.1 request through Burp and returns the response.

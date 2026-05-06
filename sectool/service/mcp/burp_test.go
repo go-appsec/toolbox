@@ -257,6 +257,22 @@ Reached end of items`,
 {"request":"GET /","response":"HTTP/1.1 200","notes":""}`,
 			want: 1,
 		},
+		{
+			name:  "corrupted separator dot before notes",
+			input: `{"request":"GET /","response":"HTTP/1.1 200"."notes":""}`,
+			want:  1,
+		},
+		{
+			name:  "corrupted separator dot before response",
+			input: `{"request":"GET /"."response":"HTTP/1.1 200","notes":""}`,
+			want:  1,
+		},
+		{
+			name: "skip unparseable line keep good lines",
+			input: `{"request":"GET /a","response":"200","notes":""}
+{this is not json at all`,
+			want: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -293,6 +309,82 @@ func TestIsValidHexEscape(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			assert.Equal(t, tt.want, isValidHexEscape([]byte(tt.input)))
+		})
+	}
+}
+
+func TestParseStructuralBurpEntry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		input       string
+		wantOk      bool
+		wantRequest string
+		wantResp    string
+		wantNotes   string
+	}{
+		{
+			name:        "clean entry",
+			input:       `{"request":"GET /","response":"HTTP/1.1 200","notes":""}`,
+			wantOk:      true,
+			wantRequest: "GET /",
+			wantResp:    "HTTP/1.1 200",
+			wantNotes:   "",
+		},
+		{
+			name:        "dot separator before notes",
+			input:       `{"request":"GET /","response":"HTTP/1.1 200"."notes":"n"}`,
+			wantOk:      true,
+			wantRequest: "GET /",
+			wantResp:    "HTTP/1.1 200",
+			wantNotes:   "n",
+		},
+		{
+			name:        "dot separator before response",
+			input:       `{"request":"GET /"."response":"HTTP/1.1 200","notes":""}`,
+			wantOk:      true,
+			wantRequest: "GET /",
+			wantResp:    "HTTP/1.1 200",
+			wantNotes:   "",
+		},
+		{
+			name:   "missing notes marker",
+			input:  `{"request":"GET /","response":"HTTP/1.1 200"}`,
+			wantOk: false,
+		},
+		{
+			name:   "missing closing brace",
+			input:  `{"request":"GET /","response":"HTTP/1.1 200","notes":""`,
+			wantOk: false,
+		},
+		{
+			name:   "not an object",
+			input:  `["array"]`,
+			wantOk: false,
+		},
+		{
+			name:   "adjacent request response markers",
+			input:  `{"request":""response":"x","notes":""}`,
+			wantOk: false,
+		},
+		{
+			name:   "adjacent response notes markers",
+			input:  `{"request":"a","response":""notes":""}`,
+			wantOk: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry, ok := parseStructuralBurpEntry([]byte(tt.input))
+			assert.Equal(t, tt.wantOk, ok)
+			if !tt.wantOk {
+				return
+			}
+			assert.Equal(t, tt.wantRequest, entry.Request)
+			assert.Equal(t, tt.wantResp, entry.Response)
+			assert.Equal(t, tt.wantNotes, entry.Notes)
 		})
 	}
 }
