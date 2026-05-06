@@ -2,7 +2,7 @@
 
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/go-appsec/toolbox/blob/main/LICENSE)
 [![Build Status](https://github.com/go-appsec/toolbox/actions/workflows/tests-main.yml/badge.svg)](https://github.com/go-appsec/toolbox/actions/workflows/tests-main.yml)
-[![Vibe-Scale 1.0(V2|U0|T0): Significant AI, fully reviewed](https://img.shields.io/badge/Vibe--Scale%201.0(V2%7CU0%7CT0)-Significant%20AI%2C%20fully%20reviewed-1f77b4)](https://github.com/vibesdk/vibe-scale/blob/main/README.md)
+[![Vibe-Scale 1.0(V2|U0|T0): Significant AI, fully reviewed](https://img.shields.io/badge/Vibe--Scale%201.0(V2%7CU0%7CT0)-Significant%20AI%2C%20fully%20reviewed-1f77b4)](https://github.com/vibesdk/vibe-scale/blob/main/scale/vibe-1.md#v2-u0-t0-score-10--significant-ai-fully-reviewed)
 
 **MCP-based application security testing tools for your coding agent.**
 
