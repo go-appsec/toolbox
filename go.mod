@@ -7,7 +7,7 @@ require (
 	github.com/andybalholm/brotli v1.2.1
 	github.com/go-analyze/bulk v0.1.3
 	github.com/go-appsec/interactsh-lite v0.3.5
-	github.com/go-appsec/scout v0.1.0
+	github.com/go-appsec/scout v0.1.1
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/google/uuid v1.6.0
 	github.com/jedib0t/go-pretty/v6 v6.7.10
