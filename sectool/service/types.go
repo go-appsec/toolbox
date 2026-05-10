@@ -22,9 +22,6 @@ const (
 	OutputModeErrors  = "errors"
 )
 
-// HealthMetricProvider is a function that returns a metric value for a given key.
-type HealthMetricProvider func() string
-
 // IsTimeoutError returns true if the error is a timeout.
 func IsTimeoutError(err error) bool {
 	if err == nil {

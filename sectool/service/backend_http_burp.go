@@ -421,11 +421,6 @@ func (b *BurpBackend) DeleteProxyEntries(ctx context.Context, flowIDs []string) 
 	return 0, ErrNotSupported
 }
 
-// HistoryCount returns the number of Burp entries the index has observed. Used for the `flows` health metric.
-func (b *BurpBackend) HistoryCount() int {
-	return b.flowIndex.Count()
-}
-
 // resolveCursor maps a flow_id cursor to the next burp offset to fetch.
 // Empty cursor or unknown flow_id starts at offset 0.
 func (b *BurpBackend) resolveCursor(afterFlowID string) (int, error) {

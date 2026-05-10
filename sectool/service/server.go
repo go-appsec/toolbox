@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -17,11 +16,6 @@ import (
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 )
-
-// historyCounter is implemented by HttpBackends that expose their entry count for the `flows` metric.
-type historyCounter interface {
-	HistoryCount() int
-}
 
 const (
 	caCertFile = "ca.pem" // CA certificate filename in config directory
@@ -47,10 +41,6 @@ type Server struct {
 	mcpServer *mcpServer
 	started   chan struct{}
 	startedAt time.Time
-
-	// Health metrics providers
-	mu             sync.RWMutex
-	metricProvider map[string]HealthMetricProvider
 
 	// Backend implementations
 	httpBackend    HttpBackend
@@ -120,7 +110,6 @@ func NewServer(flags MCPServerFlags, hb HttpBackend, ob OastBackend, cb CrawlerB
 		flagRequireBurp:    flags.RequireBurp,
 		mcpWorkflowMode:    flags.WorkflowMode,
 		notesEnabled:       flags.Notes,
-		metricProvider:     make(map[string]HealthMetricProvider),
 		started:            make(chan struct{}),
 		shutdownCh:         make(chan struct{}),
 		storageTempDir:     storageTempDir,
@@ -133,9 +122,6 @@ func NewServer(flags MCPServerFlags, hb HttpBackend, ob OastBackend, cb CrawlerB
 		oastBackend:        ob,
 		crawlerBackend:     cb,
 	}
-
-	s.RegisterHealthMetric("replay_history", func() string { return strconv.Itoa(s.replayHistoryStore.Count()) })
-	s.RegisterHealthMetric("notes", func() string { return strconv.Itoa(s.noteStore.Count()) })
 
 	return s, nil
 }
@@ -174,9 +160,6 @@ func (s *Server) Run(ctx context.Context) error {
 		if err := s.setupHttpBackend(ctx); err != nil {
 			return fmt.Errorf("failed to setup HTTP backend: %w", err)
 		}
-	}
-	if hc, ok := s.httpBackend.(historyCounter); ok {
-		s.RegisterHealthMetric("flows", func() string { return strconv.Itoa(hc.HistoryCount()) })
 	}
 	if s.oastBackend == nil {
 		token := s.cfg.InteractshAuthToken
@@ -246,13 +229,6 @@ func (s *Server) shutdown() error {
 
 	log.Printf("sectool MCP server stopped")
 	return nil
-}
-
-// RegisterHealthMetric registers a health metric provider for the given key.
-func (s *Server) RegisterHealthMetric(key string, provider HealthMetricProvider) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.metricProvider[key] = provider
 }
 
 // RequestShutdown initiates server shutdown.

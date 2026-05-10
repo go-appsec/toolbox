@@ -232,12 +232,6 @@ func (b *NativeProxyBackend) DeleteProxyEntries(ctx context.Context, flowIDs []s
 	return b.server.History().Delete(flowIDs...), nil
 }
 
-// HistoryCount returns the current number of stored proxy history entries.
-// Used for the `flows` health metric.
-func (b *NativeProxyBackend) HistoryCount() int {
-	return b.server.History().Count()
-}
-
 func (b *NativeProxyBackend) SendRequest(ctx context.Context, name string, req SendRequestInput) (*SendRequestResult, error) {
 	protocol := req.Protocol
 	if protocol == "" {
