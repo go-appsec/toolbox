@@ -53,6 +53,9 @@ func TestDecode(t *testing.T) {
 		{name: "url_percent_encoded", input: "a%26b", typ: "url", expect: "a&b"},
 		{name: "url_invalid", input: "%ZZ", typ: "url", wantErr: "URL decode error"},
 		{name: "base64_valid", input: "ZGF0YQ==", typ: "base64", expect: "data"},
+		{name: "base64_unpadded", input: "ZGF0YQ", typ: "base64", expect: "data"},
+		{name: "base64_url_padded", input: "Pz4_PA==", typ: "base64", expect: "?>?<"},
+		{name: "base64_url_unpadded", input: "Pz4_PA", typ: "base64", expect: "?>?<"},
 		{name: "base64_invalid", input: "@@@", typ: "base64", wantErr: "base64 decode error"},
 		{name: "html", input: "&lt;a&gt;", typ: "html", expect: "<a>"},
 	}

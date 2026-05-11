@@ -40,11 +40,16 @@ func Decode(input, typ string) (string, error) {
 		}
 		return decoded, nil
 	case typeBase64:
-		decoded, err := base64.StdEncoding.DecodeString(input)
-		if err != nil {
-			return "", fmt.Errorf("base64 decode error: %w", err)
+		// accept padded/unpadded, standard and URL-safe alphabets
+		for _, enc := range []*base64.Encoding{
+			base64.StdEncoding, base64.RawStdEncoding,
+			base64.URLEncoding, base64.RawURLEncoding,
+		} {
+			if decoded, err := enc.DecodeString(input); err == nil {
+				return string(decoded), nil
+			}
 		}
-		return string(decoded), nil
+		return "", errors.New("base64 decode error: invalid input")
 	case typeHTML:
 		return html.UnescapeString(input), nil
 	default:
