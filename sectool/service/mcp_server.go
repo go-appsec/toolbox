@@ -177,6 +177,7 @@ func (m *mcpServer) registerTools() {
 		m.addReplayTools()
 		m.addOastTools()
 		m.addEncodingTools()
+		m.addUUIDTools()
 		m.addHashTools()
 		m.addJWTTools()
 		m.addCrawlTools()
@@ -187,6 +188,7 @@ func (m *mcpServer) registerTools() {
 		m.addReplayTools()
 		m.addOastTools()
 		m.addEncodingTools()
+		m.addUUIDTools()
 		m.addHashTools()
 		m.addJWTTools()
 		m.addDiffTools()
@@ -198,6 +200,7 @@ func (m *mcpServer) registerTools() {
 		m.addReplayTools()
 		m.addOastTools()
 		m.addEncodingTools()
+		m.addUUIDTools()
 		m.addHashTools()
 		m.addJWTTools()
 		m.addCrawlTools()
@@ -241,6 +244,10 @@ func (m *mcpServer) addOastTools() {
 func (m *mcpServer) addEncodingTools() {
 	m.server.AddTool(m.encodeTool(), m.handleEncode)
 	m.server.AddTool(m.decodeTool(), m.handleDecode)
+}
+
+func (m *mcpServer) addUUIDTools() {
+	m.server.AddTool(m.uuidGenerateTool(), m.handleUUIDGenerate)
 }
 
 func (m *mcpServer) addHashTools() {

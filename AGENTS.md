@@ -49,6 +49,7 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/mcp_crawl.go` - Crawl tool handlers (create, seed, status, poll, sessions, stop)
 - `sectool/service/mcp_oast.go` - OAST tool handlers (create, poll, get, list, delete)
 - `sectool/service/mcp_encode.go` - Encode/decode tool handlers (url, base64, html)
+- `sectool/service/mcp_uuid.go` - UUID generation tool handler (v4, v7)
 - `sectool/service/mcp_hash.go` - Hash tool handler (md5, sha1, sha256, sha512, HMAC)
 - `sectool/service/mcp_jwt.go` - JWT decode tool handler
 - `sectool/service/mcp_diff.go` - Diff tool handler (structured flow comparison)
@@ -223,6 +224,7 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 - `oast_delete` - delete OAST session
 - `encode` - encode a string (url, base64, html)
 - `decode` - decode a string (url, base64, html)
+- `uuid_generate` - generate UUIDs (v4 default, v7 time-ordered)
 - `hash` - compute hash digest (md5, sha1, sha256, sha512, HMAC)
 - `jwt_decode` - decode and inspect JWT tokens
 - `diff_flow` - compare two captured flows with structured, content-type-aware diffing
