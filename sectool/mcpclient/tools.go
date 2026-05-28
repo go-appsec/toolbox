@@ -492,3 +492,13 @@ func (c *Client) FindReflected(ctx context.Context, flowID string) (*protocol.Fi
 	}
 	return &resp, nil
 }
+
+// JSAnalyze calls js_analyze and returns the extracted JS/HTML API surface.
+func (c *Client) JSAnalyze(ctx context.Context, flowID string) (*protocol.JSAnalyzeResponse, error) {
+	args := map[string]interface{}{"flow_id": flowID}
+	var resp protocol.JSAnalyzeResponse
+	if err := c.CallToolJSON(ctx, "js_analyze", args, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

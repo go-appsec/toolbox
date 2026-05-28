@@ -1,11 +1,12 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -215,8 +216,8 @@ func aggregateOastEvents(events []OastEventInfo) []protocol.OastSummaryEntry {
 	}
 
 	// Sort by count descending
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Count > result[j].Count
+	slices.SortFunc(result, func(a, b protocol.OastSummaryEntry) int {
+		return cmp.Compare(b.Count, a.Count)
 	})
 
 	return result
@@ -379,8 +380,8 @@ func (m *mcpServer) handleOastList(ctx context.Context, req mcp.CallToolRequest)
 	}
 
 	// Sort by creation time descending (most recent first)
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+	slices.SortFunc(sessions, func(a, b OastSessionInfo) int {
+		return b.CreatedAt.Compare(a.CreatedAt)
 	})
 
 	if limit > 0 && len(sessions) > limit {

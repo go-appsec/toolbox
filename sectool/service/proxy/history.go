@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"cmp"
 	"log"
 	"net/http"
 	"slices"
@@ -87,9 +88,8 @@ func (h *HistoryStore) recover() {
 		h.flowOrder = append(h.flowOrder, orderedFlow{flowID: meta.FlowID, timestamp: ts})
 		h.timestampByFlow[meta.FlowID] = ts
 	}
-	sort.Slice(h.flowOrder, func(i, j int) bool {
-		return lessOrder(h.flowOrder[i].timestamp, h.flowOrder[i].flowID,
-			h.flowOrder[j].timestamp, h.flowOrder[j].flowID)
+	slices.SortFunc(h.flowOrder, func(a, b orderedFlow) int {
+		return cmp.Or(a.timestamp.Compare(b.timestamp), cmp.Compare(a.flowID, b.flowID))
 	})
 }
 

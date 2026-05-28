@@ -518,6 +518,51 @@ type Reflection struct {
 }
 
 // =============================================================================
+// JS Analyze Types
+// =============================================================================
+
+// JSAnalyzeResponse is the response for js_analyze.
+type JSAnalyzeResponse struct {
+	Source          string              `json:"source"` // "javascript" | "html-inline" | "html"
+	Stats           JSAnalyzeStats      `json:"stats"`
+	Endpoints       []ExtractedEndpoint `json:"endpoints,omitempty"`
+	Routes          []ExtractedRoute    `json:"routes,omitempty"`
+	Secrets         []ExtractedSecret   `json:"secrets,omitempty"`
+	ExternalScripts []string            `json:"external_scripts,omitempty"`
+	SourceMaps      []string            `json:"source_maps,omitempty"`
+	Warnings        []string            `json:"warnings,omitempty"`
+}
+
+// JSAnalyzeStats summarizes parse-time metrics.
+type JSAnalyzeStats struct {
+	InputBytes   int `json:"input_bytes"`
+	ScriptBlocks int `json:"script_blocks,omitempty"`
+	ParseErrors  int `json:"parse_errors,omitempty"`
+}
+
+// ExtractedEndpoint is a URL referenced by JS code: a call site, a WebSocket
+// argument, or a bare URL-shaped literal. Library names the origin and doubles
+// as a confidence signal, where "literal" is the weakest.
+type ExtractedEndpoint struct {
+	Method   string `json:"method,omitempty"`    // GET/POST/... if statically determinable
+	URL      string `json:"url"`                 // template form; preserves ${...} placeholders
+	Library  string `json:"library,omitempty"`   // "fetch" | "xhr" | "axios" | "jquery" | "navigation" | "websocket" | "eventsource" | "beacon" | "import" | "literal"
+	LastFlow string `json:"last_flow,omitempty"` // most recent proxy flow_id matching the URL
+}
+
+// ExtractedRoute is a client-side route definition.
+type ExtractedRoute struct {
+	Path      string `json:"path"`
+	Framework string `json:"framework,omitempty"` // "react-router" | "vue-router" | "angular-router"
+}
+
+// ExtractedSecret is a high-precision credential pattern found in source.
+type ExtractedSecret struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
+// =============================================================================
 // Note Types
 // =============================================================================
 

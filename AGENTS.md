@@ -54,6 +54,8 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/mcp_jwt.go` - JWT decode tool handler
 - `sectool/service/mcp_diff.go` - Diff tool handler (structured flow comparison)
 - `sectool/service/mcp_reflection.go` - Reflection tool handler (parameter reflection detection)
+- `sectool/service/mcp_jsanalyze.go` - JS analyze tool handler (extract API surface from JS/HTML responses)
+- `sectool/service/js/` - JS bundle parser and extractors (tdewolff/parse/v2/js)
 - `sectool/service/mcp_notes.go` - Notes tool handlers (save, list) and flow listing attachment
 - `sectool/service/mcp_respond.go` - Proxy responder tool handlers (respond_add, respond_delete, respond_list); native backend only
 - `sectool/service/flags.go` - MCP server flag parsing (`--port`, `--workflow`, `--config`, `--notes`)
@@ -127,6 +129,8 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/diff/diff.go` - Diff command implementation (CLI formatting and display)
 - `sectool/reflected/flags.go` - Reflected subcommand parsing
 - `sectool/reflected/reflected.go` - Reflected command implementation
+- `sectool/js/flags.go` - JS analyze subcommand parsing
+- `sectool/js/js.go` - JS analyze command implementation
 
 ### Shared CLI Utilities
 
@@ -229,6 +233,7 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 - `jwt_decode` - decode and inspect JWT tokens
 - `diff_flow` - compare two captured flows with structured, content-type-aware diffing
 - `find_reflected` - detect request parameter values reflected in the response
+- `js_analyze` - extract API surface from a JavaScript or HTML flow (endpoints, routes, sockets, URL literals, external scripts)
 - `notes_save` - create, update, or delete notes/findings linked to flows (requires `--notes`)
 - `notes_list` - list saved notes with filters (requires `--notes`)
 
@@ -246,6 +251,7 @@ CLI requires a running MCP server. Maps to MCP tools via `sectool <module> <sub>
 - `jwt`: decode JWT tokens
 - `diff`: `<flow_a> <flow_b> --scope <scope>`
 - `reflected`: `<flow_id>`
+- `js`: `<flow_id>`
 - `version`
 
 ## Development Guidelines
@@ -279,6 +285,7 @@ Reach for stdlib `slices`/`maps`/`strings` and `github.com/go-analyze/bulk` befo
 - **Slice → map set**: `bulk.SliceToSet(s)` (returns `map[T]struct{}`). Membership tests use the comma-ok form: `if _, ok := set[k]; ok`.
 - **Map → slice of keys / values**: `bulk.MapKeysSlice(m)` and `bulk.MapValuesSlice(m)`. Don't write `for k := range m { keys = append(keys, k) }`.
 - **Membership check on a slice**: `slices.Contains(s, x)` for comparable element types, `slices.ContainsFunc(s, predicate)` for everything else.
+- **Sort a slice with a custom comparator**: `slices.SortFunc(s, cmp)` / `slices.SortStableFunc(s, cmp)`. Use instead of `sort.Slice` / `sort.SliceStable`.
 
 ### Testing
 

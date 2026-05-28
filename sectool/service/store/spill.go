@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -11,7 +12,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"sort"
 	"sync"
 
 	"github.com/go-analyze/bulk"
@@ -411,8 +411,9 @@ func (s *spillStore) runEviction() {
 				entries = append(entries, evictionKey{k, e.size, e.accessSeq})
 			}
 		}
-		sort.Slice(entries, func(i, j int) bool { // oldest first (lower seq = older)
-			return entries[i].accessSeq < entries[j].accessSeq
+		// oldest first (lower seq = older)
+		slices.SortFunc(entries, func(a, b evictionKey) int {
+			return cmp.Compare(a.accessSeq, b.accessSeq)
 		})
 		// Reduce entries to only what is needed to meet target
 		bytesToEvict := s.hotBytes - s.evictTargetBytes

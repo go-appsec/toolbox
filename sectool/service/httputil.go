@@ -3,6 +3,7 @@ package service
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -109,8 +110,8 @@ func aggregateByTuple[T any](entries []T, extract func(T) (host, path, method st
 			Count:  count,
 		})
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Count > result[j].Count
+	slices.SortFunc(result, func(a, b protocol.SummaryEntry) int {
+		return cmp.Compare(b.Count, a.Count)
 	})
 
 	return result

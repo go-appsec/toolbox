@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -331,11 +332,8 @@ func findReflections(params []protocol.Reflection, rawResp []byte) []protocol.Re
 		}
 	}
 
-	sort.Slice(reflections, func(i, j int) bool {
-		if reflections[i].Source != reflections[j].Source {
-			return reflections[i].Source < reflections[j].Source
-		}
-		return reflections[i].Name < reflections[j].Name
+	slices.SortFunc(reflections, func(a, b protocol.Reflection) int {
+		return cmp.Or(cmp.Compare(a.Source, b.Source), cmp.Compare(a.Name, b.Name))
 	})
 
 	return reflections

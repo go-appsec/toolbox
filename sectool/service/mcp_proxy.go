@@ -1,6 +1,7 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -9,7 +10,6 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -772,11 +772,8 @@ func (s *Server) fetchAllProxyEntries(ctx context.Context, needsFullText bool) (
 	}
 	all := append(proxyEntries, collectReplayHistory(s.replayHistoryStore, needsFullText)...)
 	// Sort: (timestamp, flow_id) merges proxy and replay chronologically
-	sort.SliceStable(all, func(i, j int) bool {
-		if !all[i].timestamp.Equal(all[j].timestamp) {
-			return all[i].timestamp.Before(all[j].timestamp)
-		}
-		return all[i].flowID < all[j].flowID
+	slices.SortStableFunc(all, func(a, b flowEntry) int {
+		return cmp.Or(a.timestamp.Compare(b.timestamp), cmp.Compare(a.flowID, b.flowID))
 	})
 	return all, nil
 }

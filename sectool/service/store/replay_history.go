@@ -1,8 +1,9 @@
 package store
 
 import (
+	"cmp"
 	"log"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -192,11 +193,8 @@ func (s *ReplayHistoryStore) List() []*ReplayHistoryEntry {
 		}
 	}
 
-	sort.Slice(result, func(i, j int) bool {
-		if !result[i].CreatedAt.Equal(result[j].CreatedAt) {
-			return result[i].CreatedAt.Before(result[j].CreatedAt)
-		}
-		return result[i].FlowID < result[j].FlowID
+	slices.SortFunc(result, func(a, b *ReplayHistoryEntry) int {
+		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.FlowID, b.FlowID))
 	})
 	return result
 }
@@ -220,11 +218,8 @@ func (s *ReplayHistoryStore) ListMeta() []ReplayHistoryMeta {
 		result = append(result, meta)
 	}
 
-	sort.Slice(result, func(i, j int) bool {
-		if !result[i].CreatedAt.Equal(result[j].CreatedAt) {
-			return result[i].CreatedAt.Before(result[j].CreatedAt)
-		}
-		return result[i].FlowID < result[j].FlowID
+	slices.SortFunc(result, func(a, b ReplayHistoryMeta) int {
+		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.FlowID, b.FlowID))
 	})
 	return result
 }

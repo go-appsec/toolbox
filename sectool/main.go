@@ -17,6 +17,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/diff"
 	"github.com/go-appsec/toolbox/sectool/encoding"
 	"github.com/go-appsec/toolbox/sectool/hash"
+	"github.com/go-appsec/toolbox/sectool/js"
 	"github.com/go-appsec/toolbox/sectool/jwt"
 	"github.com/go-appsec/toolbox/sectool/oast"
 	"github.com/go-appsec/toolbox/sectool/proxy"
@@ -64,7 +65,7 @@ func main() {
 		return
 
 	// Commands that need MCP client
-	case "proxy", "replay", "oast", "crawl", "diff", "reflected":
+	case "proxy", "replay", "oast", "crawl", "diff", "reflected", "js":
 		var mcpURL string
 		mcpURL, err = getMCPURL(globalFlags)
 		if err != nil {
@@ -84,10 +85,12 @@ func main() {
 			err = diff.Parse(args[1:], mcpURL)
 		case "reflected":
 			err = reflected.Parse(args[1:], mcpURL)
+		case "js":
+			err = js.Parse(args[1:], mcpURL)
 		}
 
 	default:
-		validCommands := []string{"mcp", "proxy", "replay", "oast", "crawl", "diff", "reflected", "encode", "decode", "hash", "jwt", "version", "help"}
+		validCommands := []string{"mcp", "proxy", "replay", "oast", "crawl", "diff", "reflected", "js", "encode", "decode", "hash", "jwt", "version", "help"}
 		err = cliutil.UnknownCommandError(args[0], validCommands)
 	}
 
@@ -128,6 +131,7 @@ Commands:
   crawl      Web crawler for URL and form discovery
   diff       Compare two captured flows
   reflected  Detect reflected parameters in a flow
+  js         Extract API surface from a JavaScript or HTML flow
   encode     Encode strings (url, base64, html)
   decode     Decode strings (url, base64, html)
   hash       Compute hash digests (md5, sha1, sha256, sha512)

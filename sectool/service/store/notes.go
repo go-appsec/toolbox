@@ -2,7 +2,7 @@ package store
 
 import (
 	"log"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -174,8 +174,8 @@ func (s *NoteStore) List(opts NoteListOptions) []*NoteMeta {
 	}
 
 	// Sort by created_at
-	sort.Slice(notes, func(i, j int) bool {
-		return notes[i].CreatedAt.Before(notes[j].CreatedAt)
+	slices.SortFunc(notes, func(a, b *NoteMeta) int {
+		return a.CreatedAt.Compare(b.CreatedAt)
 	})
 
 	// Apply after_id cursor
