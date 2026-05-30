@@ -16,7 +16,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
-	github.com/tdewolff/parse/v2 v2.8.12
+	github.com/tdewolff/parse/v2 v2.8.13
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	golang.org/x/net v0.55.0
 	golang.org/x/sys v0.45.0
