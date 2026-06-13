@@ -71,8 +71,8 @@ crawl create [options]
     --flow <flow_id>       seed from proxy flow (can specify multiple times)
     --domain <domain>      additional allowed domain (can specify multiple times)
     --label <str>          optional unique label for easier reference
-    --max-depth <n>        maximum crawl depth (0 = unlimited)
-    --max-requests <n>     maximum total requests (0 = unlimited)
+    --max-depth <n>        maximum crawl depth (0 = use config default, 20)
+    --max-requests <n>     maximum total requests (0 = use config default, 2000)
     --delay <dur>          delay between requests (default: 200ms)
     --parallelism <n>      concurrent requests (default: 2)
     --submit-forms         automatically submit discovered forms
@@ -195,8 +195,8 @@ func parseCreate(args []string, mcpURL string) error {
 	fs.StringArrayVar(&flows, "flow", nil, "seed from proxy flow_id (can specify multiple times)")
 	fs.StringArrayVar(&domains, "domain", nil, "additional allowed domain (can specify multiple times)")
 	fs.StringVar(&label, "label", "", "optional unique label for easier reference")
-	fs.IntVar(&maxDepth, "max-depth", 0, "maximum crawl depth (0 = unlimited)")
-	fs.IntVar(&maxRequests, "max-requests", 0, "maximum total requests (0 = unlimited)")
+	fs.IntVar(&maxDepth, "max-depth", 0, "maximum crawl depth (0 = use config default, 20)")
+	fs.IntVar(&maxRequests, "max-requests", 0, "maximum total requests (0 = use config default, 2000)")
 	fs.DurationVar(&delay, "delay", 0, "delay between requests")
 	fs.IntVar(&parallelism, "parallelism", 0, "concurrent requests")
 	fs.BoolVar(&submitForms, "submit-forms", false, "automatically submit discovered forms")

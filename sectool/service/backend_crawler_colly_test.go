@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -187,6 +189,23 @@ func TestBuildDomainFilters(t *testing.T) {
 
 		assert.True(t, filters[0].MatchString("https://example.com/"))
 		assert.True(t, filters[1].MatchString("https://test.org/"))
+	})
+
+	t.Run("matches_query_only_url", func(t *testing.T) {
+		// Host immediately followed by ?/# (no path) must still match in-scope
+		filters := buildDomainFilters([]string{"example.com"})
+
+		assert.True(t, filters[0].MatchString("http://example.com?x=1"))
+		assert.True(t, filters[0].MatchString("https://example.com#frag"))
+		assert.True(t, filters[0].MatchString("https://api.example.com?x=1"))
+
+		// Host boundary must still reject suffix evasion with a query
+		assert.False(t, filters[0].MatchString("https://example.com.evil.com?x=1"))
+		assert.False(t, filters[0].MatchString("https://notexample.com?x=1"))
+
+		// Query/fragment must not be swallowed as a subdomain label
+		assert.False(t, filters[0].MatchString("https://evil.com?x=.example.com"))
+		assert.False(t, filters[0].MatchString("https://evil.com#.example.com"))
 	})
 }
 
@@ -552,4 +571,134 @@ func TestCollyBackend_CreateSession_follows_links(t *testing.T) {
 	crawlErrors, err := b.ListErrors(ctx, sessionID, 0)
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len(crawlErrors), 1)
+}
+
+func TestCollyBackend_capturesErrorStatusFlows(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><body>
+			<a href="/forbidden">Forbidden</a>
+			<a href="/boom">Boom</a>
+		</body></html>`)
+	})
+	mux.HandleFunc("/forbidden", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprint(w, `<html><body>access denied</body></html>`)
+	})
+	mux.HandleFunc("/boom", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprint(w, `<html><body>stack trace</body></html>`)
+	})
+
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	cfg := config.DefaultConfig()
+	cfg.Crawler.DelayMS = 0
+	cfg.Crawler.Parallelism = 4
+
+	b := NewCollyBackend(cfg, nil, nil)
+	t.Cleanup(func() { _ = b.Close() })
+
+	ctx := t.Context()
+
+	info, err := b.CreateSession(ctx, CrawlOptions{
+		Seeds: []CrawlSeed{{URL: ts.URL + "/"}},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, err := b.GetStatus(ctx, info.ID)
+		return err == nil && status.State == crawlStateCompleted
+	}, 20*time.Second, 10*time.Millisecond)
+
+	flows, err := b.ListFlows(ctx, info.ID, CrawlListOptions{})
+	require.NoError(t, err)
+
+	byPath := make(map[string]CrawlFlow, len(flows))
+	for _, f := range flows {
+		byPath[f.Path] = f
+	}
+
+	for path, wantStatus := range map[string]int{"/forbidden": 403, "/boom": 500} {
+		f, ok := byPath[path]
+		require.True(t, ok, "expected %s captured as a flow", path)
+		assert.Equal(t, wantStatus, f.StatusCode)
+		assert.NotEmpty(t, f.Request)
+		assert.NotEmpty(t, f.Response)
+		assert.NotEmpty(t, f.ID)
+
+		got, err := b.GetFlow(ctx, f.ID)
+		require.NoError(t, err)
+		assert.Equal(t, wantStatus, got.StatusCode)
+	}
+
+	// Error statuses are now flows, not entries in the error list
+	crawlErrors, err := b.ListErrors(ctx, info.ID, 0)
+	require.NoError(t, err)
+	assert.Empty(t, crawlErrors)
+}
+
+func TestCollyBackend_addSeeds_completionRace(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><body>ok</body></html>`)
+	})
+
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	cfg := config.DefaultConfig()
+	cfg.Crawler.DelayMS = 0
+	cfg.Crawler.Parallelism = 4
+
+	b := NewCollyBackend(cfg, nil, nil)
+	t.Cleanup(func() { _ = b.Close() })
+
+	ctx := t.Context()
+
+	info, err := b.CreateSession(ctx, CrawlOptions{
+		Seeds: []CrawlSeed{{URL: ts.URL + "/"}},
+	})
+	require.NoError(t, err)
+
+	// Hammer AddSeeds while the initial crawl races toward completion
+	const workers = 20
+	var added atomic.Int64
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			url := fmt.Sprintf("%s/seed%d", ts.URL, n)
+			if err := b.AddSeeds(ctx, info.ID, []CrawlSeed{{URL: url}}); err == nil {
+				added.Add(1)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	require.Eventually(t, func() bool {
+		status, err := b.GetStatus(ctx, info.ID)
+		return err == nil && status.State == crawlStateCompleted
+	}, 20*time.Second, 10*time.Millisecond)
+
+	// Every successfully-added seed must have been crawled (none lost to a premature completion)
+	flows, err := b.ListFlows(ctx, info.ID, CrawlListOptions{})
+	require.NoError(t, err)
+	seedFlows := 0
+	for _, f := range flows {
+		if f.Path != "/" {
+			seedFlows++
+		}
+	}
+	assert.Equal(t, int(added.Load()), seedFlows)
 }

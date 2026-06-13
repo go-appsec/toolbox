@@ -180,8 +180,8 @@ Global config at `~/.sectool/config.json` (auto-created with defaults):
     "disallowed_paths": ["*logout*", "*signout*", "*sign-out*", "*delete*", "*remove*"],
     "delay_ms": 200,
     "parallelism": 2,
-    "max_depth": 10,
-    "max_requests": 1000,
+    "max_depth": 20,
+    "max_requests": 2000,
     "extract_forms": true,
     "submit_forms": false,
     "recon": false

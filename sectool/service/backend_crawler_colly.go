@@ -59,8 +59,11 @@ type crawlSession struct {
 	collector *colly.Collector
 	startedAt time.Time
 
-	mu              sync.RWMutex
-	reconWg         sync.WaitGroup        // Tracks background recon goroutines
+	mu           sync.RWMutex
+	completeCond *sync.Cond // over mu; signaled when pendingRecon/pendingSeeds change or state stops
+	pendingRecon int        // in-flight recon goroutines (guarded by mu)
+	pendingSeeds int        // in-flight AddSeeds calls (guarded by mu)
+
 	flowsByID       map[string]*CrawlFlow // by flow ID for lookup
 	flowsOrdered    []*CrawlFlow          // ordered by discovery time
 	forms           []protocol.CrawlForm
@@ -273,10 +276,12 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		ctx:               sessionCtx,
 		cancel:            cancel,
 	}
+	sess.completeCond = sync.NewCond(&sess.mu)
 
 	c := colly.NewCollector(
 		colly.Async(true),
 		colly.StdlibContext(sessionCtx),
+		colly.ParseHTTPErrorResponse(),
 	)
 
 	// Configure allowed domains with subdomain support
@@ -559,38 +564,82 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		recon = *b.config.Crawler.Recon
 	}
 	if recon && len(allowedDomains) > 0 {
-		sess.reconWg.Add(1)
-		go func() {
-			defer sess.reconWg.Done()
-			b.runReconForSession(sessionCtx, sess, allowedDomains)
-		}()
+		b.startRecon(sess, allowedDomains)
 	}
 
 	// Start crawling seeds in background
 	go func() {
 		for _, seedURL := range seedURLs {
+			sess.visitNew(seedURL)
+		}
+
+		for {
+			// Wait until no recon or AddSeeds work is pending
 			sess.mu.Lock()
-			sess.urlsSeen[seedURL] = true
+			for (sess.pendingRecon > 0 || sess.pendingSeeds > 0) && sess.info.State == crawlStateRunning {
+				sess.completeCond.Wait()
+			}
+			if sess.info.State != crawlStateRunning { // stopped externally
+				sess.mu.Unlock()
+				break
+			}
 			sess.mu.Unlock()
-			_ = c.Visit(seedURL)
+
+			// Wait for all in-flight requests to drain (no lock held)
+			c.Wait()
+
+			// Re-check: if recon/seeds appeared while we waited, loop again
+			sess.mu.Lock()
+			if sess.pendingRecon > 0 || sess.pendingSeeds > 0 {
+				sess.mu.Unlock()
+				continue
+			} else if sess.info.State == crawlStateRunning {
+				sess.info.State = crawlStateCompleted
+			}
+			sess.mu.Unlock()
+			break
 		}
-
-		// Wait for recon to finish discovering URLs
-		sess.reconWg.Wait()
-
-		// Wait for all URLs to be crawled
-		c.Wait()
-
-		sess.mu.Lock()
-		if sess.info.State == crawlStateRunning {
-			sess.info.State = crawlStateCompleted
-		}
-		sess.mu.Unlock()
 
 		log.Printf("crawler: session %s completed", sessionID)
 	}()
 
 	return &sess.info, nil
+}
+
+// visitNew enqueues a collector visit for a not-yet-seen URL.
+// Returns false if the URL was already seen (no visit issued).
+func (sess *crawlSession) visitNew(url string) bool {
+	sess.mu.Lock()
+	if sess.urlsSeen[url] {
+		sess.mu.Unlock()
+		return false
+	}
+	sess.urlsSeen[url] = true
+	sess.mu.Unlock()
+
+	_ = sess.collector.Visit(url)
+	return true
+}
+
+// startRecon launches a recon goroutine iff the session is still running.
+func (b *CollyBackend) startRecon(sess *crawlSession, domains []string) {
+	sess.mu.Lock()
+	if sess.info.State != crawlStateRunning {
+		sess.mu.Unlock()
+		return
+	}
+	sess.pendingRecon++
+	sess.mu.Unlock()
+
+	go func() {
+		defer func() {
+			sess.mu.Lock()
+			sess.pendingRecon--
+			sess.completeCond.Broadcast()
+			sess.mu.Unlock()
+		}()
+		b.runReconForSession(sess.ctx, sess, domains)
+	}()
 }
 
 func (b *CollyBackend) AddSeeds(ctx context.Context, sessionID string, seeds []CrawlSeed) error {
@@ -599,13 +648,22 @@ func (b *CollyBackend) AddSeeds(ctx context.Context, sessionID string, seeds []C
 		return err
 	}
 
-	sess.mu.RLock()
-	state := sess.info.State
-	sess.mu.RUnlock()
-
-	if state != crawlStateRunning {
+	// Reserve the session as busy before any I/O so the completion goroutine
+	// cannot transition to completed while seeds are still being added.
+	sess.mu.Lock()
+	if sess.info.State != crawlStateRunning {
+		state := sess.info.State
+		sess.mu.Unlock()
 		return fmt.Errorf("session %s is not running (state: %s); create a new session instead", sessionID, state)
 	}
+	sess.pendingSeeds++
+	sess.mu.Unlock()
+	defer func() {
+		sess.mu.Lock()
+		sess.pendingSeeds--
+		sess.completeCond.Broadcast()
+		sess.mu.Unlock()
+	}()
 
 	newDomains, seedURLs, newHeaders, err := b.resolveSeeds(ctx, seeds, nil)
 	if err != nil {
@@ -632,24 +690,11 @@ func (b *CollyBackend) AddSeeds(ctx context.Context, sessionID string, seeds []C
 		recon = *b.config.Crawler.Recon
 	}
 	if recon && len(newDomains) > 0 {
-		sess.reconWg.Add(1)
-		go func() {
-			defer sess.reconWg.Done()
-			b.runReconForSession(sess.ctx, sess, newDomains)
-		}()
+		b.startRecon(sess, newDomains)
 	}
 
 	for _, seedURL := range seedURLs {
-		sess.mu.Lock()
-		seen := sess.urlsSeen[seedURL]
-		if !seen {
-			sess.urlsSeen[seedURL] = true
-		}
-		sess.mu.Unlock()
-
-		if !seen {
-			_ = sess.collector.Visit(seedURL)
-		}
+		sess.visitNew(seedURL)
 	}
 
 	return nil
@@ -827,6 +872,7 @@ func (b *CollyBackend) StopSession(ctx context.Context, sessionID string) error 
 		return nil // Already stopped
 	}
 	sess.info.State = crawlStateStopped
+	sess.completeCond.Broadcast()
 	sess.mu.Unlock()
 
 	sess.cancel()
@@ -1008,15 +1054,7 @@ func (b *CollyBackend) runReconForSession(ctx context.Context, sess *crawlSessio
 			}
 
 			// Add to crawler dynamically (same pattern as AddSeeds)
-			sess.mu.Lock()
-			seen := sess.urlsSeen[url]
-			if !seen {
-				sess.urlsSeen[url] = true
-			}
-			sess.mu.Unlock()
-
-			if !seen {
-				_ = sess.collector.Visit(url)
+			if sess.visitNew(url) {
 				urlsAdded++
 				domainHadResults = true
 			}
@@ -1103,8 +1141,10 @@ func buildDomainFilters(domains []string) []*regexp.Regexp {
 	filters := make([]*regexp.Regexp, 0, len(domains))
 	for _, d := range domains {
 		escaped := regexp.QuoteMeta(d)
-		// Use ([^/]+\.)* to match zero or more subdomain levels
-		pattern := `^https?://(([^/]+\.)*` + escaped + `)(:[0-9]+)?(/|$)`
+		// Use ([^/?#]+\.)* to match zero or more subdomain levels; excluding
+		// ?/# from the class stops a query/fragment from being swallowed as a
+		// subdomain (e.g. evil.com?x=.example.com posing as in-scope).
+		pattern := `^https?://(([^/?#]+\.)*` + escaped + `)(:[0-9]+)?(/|\?|#|$)`
 		if re, err := regexp.Compile(pattern); err == nil {
 			filters = append(filters, re)
 		}
