@@ -93,6 +93,9 @@ func (s *NoteStore) Get(noteID string) (*NoteMeta, bool) {
 func (s *NoteStore) getLocked(noteID string) (*NoteMeta, bool) {
 	data, found, err := s.storage.Get(noteID)
 	if err != nil || !found {
+		if err != nil {
+			log.Printf("note store get %s: %v", noteID, err)
+		}
 		return nil, false
 	}
 	var meta NoteMeta
@@ -281,6 +284,9 @@ func (s *NoteStore) reverseIndexLookup(flowID string) []string {
 	key := reverseIndexPrefix + flowID
 	data, found, err := s.storage.Get(key)
 	if err != nil || !found {
+		if err != nil {
+			log.Printf("note store reverse index get %s: %v", key, err)
+		}
 		return nil
 	}
 	var noteIDs []string

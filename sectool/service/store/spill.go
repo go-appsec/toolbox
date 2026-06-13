@@ -90,7 +90,7 @@ type spillStore struct {
 	zstdDecoder *zstd.Decoder
 
 	// Coordination
-	wg             sync.WaitGroup // tracks background goroutines
+	wg             sync.WaitGroup // tracks background goroutines and in-flight disk reads
 	evictRunning   bool
 	compactRunning bool
 	closed         bool
@@ -254,10 +254,14 @@ func (s *spillStore) Get(key string) ([]byte, bool, error) {
 		s.mu.Unlock()
 		return nil, false, err
 	}
+	// Track the decode on wg so Close can't close the zstd decoder mid-DecodeAll
+	// Safe Add: we hold s.mu and confirmed !closed above, so it can't race Wait
+	s.wg.Add(1)
 	s.mu.Unlock()
 
 	// Decrypt and decompress without holding lock
 	data, err := s.decryptAndDecompress(encrypted)
+	s.wg.Done()
 	if err != nil {
 		return nil, false, err
 	}
@@ -350,7 +354,7 @@ func (s *spillStore) Close() error {
 	s.closed = true
 	s.mu.Unlock()
 
-	s.wg.Wait() // Wait for background goroutines to finish before closing resources
+	s.wg.Wait() // Wait for background goroutines and in-flight reads to finish before closing resources
 
 	// Clear in-memory state (skip truncate since the file is about to be removed)
 	s.index = make(map[string]*spillIndexEntry)
@@ -365,12 +369,11 @@ func (s *spillStore) Close() error {
 	_ = s.zstdEncoder.Close()
 	s.zstdDecoder.Close()
 
-	dataPath := s.dataFile.Name()
 	_ = s.dataFile.Close()
 	if s.ownsDataDir {
 		return os.RemoveAll(s.dataDir)
 	}
-	return os.Remove(dataPath)
+	return os.Remove(filepath.Join(s.dataDir, prefixedName(s.filePrefix, spillDataFile)))
 }
 
 // maybeStartEviction spawns eviction goroutine if needed and not already running.
@@ -477,9 +480,12 @@ func (s *spillStore) runEviction() {
 			offset := s.fileSize
 			n, err := s.dataFile.WriteAt(encrypted, offset)
 			if err != nil {
-				log.Printf("spill: eviction write error: %v", err)
+				// Leave the entry hot and give up; the next Set/Get re-triggers
+				// eviction, avoiding a busy-loop on persistent write failures.
+				log.Printf("spill: eviction write error, deferring to next trigger: %v", err)
+				s.evictRunning = false
 				s.mu.Unlock()
-				continue
+				return
 			}
 
 			// Success - atomically transition from memory to disk
@@ -552,10 +558,13 @@ func (s *spillStore) runCompaction() {
 		return
 	}
 
-	// Process entries one at a time to limit memory usage
+	// Process entries one at a time to limit memory usage. Offsets are staged
+	// locally and applied to the index only after the swap commits, so an abort
+	// mid-copy leaves the old file and index fully intact.
+	stagedOffsets := make(map[string]int64, len(entries))
 	newOffset := int64(spillHeaderSize)
 	for _, entry := range entries {
-		// Read one entry
+		// Read one entry from the still-live old file
 		data := make([]byte, entry.length)
 		if _, err := s.dataFile.ReadAt(data, entry.offset); err != nil {
 			log.Printf("spill: compaction read error for %s: %v, aborting", entry.key, err)
@@ -566,23 +575,48 @@ func (s *spillStore) runCompaction() {
 
 		// Write to new file
 		if _, err := newFile.Write(data); err != nil {
-			log.Printf("spill: compaction write error: %v", err)
+			log.Printf("spill: compaction write error: %v, aborting", err)
 			_ = newFile.Close()
 			_ = os.Remove(newPath)
 			return
 		}
 
-		// update location in index
-		s.index[entry.key].diskOffset = newOffset
-
+		stagedOffsets[entry.key] = newOffset
 		newOffset += int64(entry.length)
 	}
 
-	// Swap files
+	// Close both handles before rename: Windows can't rename onto/from an open file,
+	// and closing first is safe here since compaction holds s.mu (no live reader).
+	// The data file is reopened below on every outcome.
+	dataPath := filepath.Join(s.dataDir, prefixedName(s.filePrefix, spillDataFile))
+	_ = newFile.Close()
 	_ = s.dataFile.Close()
-	s.dataFile = newFile
+
+	if err := os.Rename(newPath, dataPath); err != nil {
+		// rename failed: old file still at dataPath, reopen it and keep the index
+		log.Printf("spill: compaction rename error: %v, aborting", err)
+		_ = os.Remove(newPath)
+		if oldFile, rerr := os.OpenFile(dataPath, os.O_RDWR, 0600); rerr != nil {
+			// leave the closed handle so reads error rather than panic here
+			log.Printf("spill: data file reopen error after aborted compaction: %v", rerr)
+		} else {
+			s.dataFile = oldFile
+		}
+		return
+	}
+
+	// rename committed: reopen the compacted file, then apply staged offsets
+	newDataFile, err := os.OpenFile(dataPath, os.O_RDWR, 0600)
+	if err != nil {
+		log.Printf("spill: data file reopen error after compaction: %v", err)
+		return
+	}
+	s.dataFile = newDataFile
 	s.fileSize = newOffset
 	s.deadBytes = 0
+	for key, off := range stagedOffsets {
+		s.index[key].diskOffset = off
+	}
 
 	// Invalidate disk refs for in-memory entries (old file is gone)
 	for _, e := range s.index {
@@ -590,10 +624,6 @@ func (s *spillStore) runCompaction() {
 			e.diskOffset = 0
 			e.diskLen = 0
 		}
-	}
-
-	if err := os.Rename(newPath, filepath.Join(s.dataDir, prefixedName(s.filePrefix, spillDataFile))); err != nil {
-		log.Printf("spill: compaction rename error: %v", err)
 	}
 }
 

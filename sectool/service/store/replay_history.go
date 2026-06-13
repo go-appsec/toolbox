@@ -136,6 +136,9 @@ func (s *ReplayHistoryStore) Get(flowID string) (*ReplayHistoryEntry, bool) {
 func (s *ReplayHistoryStore) getLocked(flowID string) (*ReplayHistoryEntry, bool) {
 	metaData, found, err := s.storage.Get(flowID)
 	if err != nil || !found {
+		if err != nil {
+			log.Printf("replay history store get meta %s: %v", flowID, err)
+		}
 		return nil, false
 	}
 	var meta ReplayHistoryMeta
@@ -146,6 +149,9 @@ func (s *ReplayHistoryStore) getLocked(flowID string) (*ReplayHistoryEntry, bool
 
 	payloadData, found, err := s.storage.Get(flowID + replayPayloadSuffix)
 	if err != nil || !found {
+		if err != nil {
+			log.Printf("replay history store get payload %s: %v", flowID, err)
+		}
 		return nil, false
 	}
 	var payload ReplayHistoryPayload
@@ -209,6 +215,9 @@ func (s *ReplayHistoryStore) ListMeta() []ReplayHistoryMeta {
 	for _, key := range keys {
 		data, found, err := s.storage.Get(key)
 		if err != nil || !found {
+			if err != nil {
+				log.Printf("replay history store get meta %s: %v", key, err)
+			}
 			continue
 		}
 		var meta ReplayHistoryMeta
@@ -255,6 +264,9 @@ func (s *ReplayHistoryStore) Delete(flowIDs []string) int {
 	var deleted int
 	for _, fid := range flowIDs {
 		if _, found, err := s.storage.Get(fid); err != nil || !found {
+			if err != nil {
+				log.Printf("replay history store get %s: %v", fid, err)
+			}
 			continue
 		}
 		if err := s.storage.Delete(fid); err != nil {

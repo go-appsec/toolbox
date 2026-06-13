@@ -1,14 +1,30 @@
 package store
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// diskKeys returns the keys of all entries currently paged to disk.
+func diskKeys(s *spillStore) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var keys []string
+	for k, e := range s.index {
+		if !e.inMemory {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
 
 func newSpillStore(cfg SpillStoreConfig) (*spillStore, error) {
 	s, err := NewSpillStore(cfg)
@@ -1153,4 +1169,185 @@ func TestSpillStore_GetDuringModification(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Len(t, data, 80)
+}
+
+func TestSpillStore_CompactionAbortKeepsEntriesReadable(t *testing.T) {
+	t.Parallel()
+
+	cfg := SpillStoreConfig{
+		MaxHotBytes:         200,
+		EvictTargetRatio:    0.5,
+		CompactionThreshold: 1 << 30, // disable auto-compaction; invoked directly
+		ZSTDLevel:           1,
+	}
+	s, err := newSpillStore(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	want := make(map[string][]byte)
+	for i := 0; i < 10; i++ {
+		key := "key" + string(rune('a'+i))
+		want[key] = bytes.Repeat([]byte{byte(i + 1)}, 100)
+		require.NoError(t, s.Set(key, want[key]))
+	}
+	s.wg.Wait()
+
+	onDisk := diskKeys(s)
+	require.GreaterOrEqual(t, len(onDisk), 2)
+
+	// Corrupt one entry so its compaction read overruns EOF and aborts the copy
+	bad := onDisk[0]
+	s.mu.Lock()
+	s.index[bad].diskLen = int(s.fileSize) + 1024
+	s.mu.Unlock()
+
+	s.wg.Add(1)
+	s.compactRunning = true
+	s.runCompaction()
+
+	// Every non-corrupted disk entry still reads its original content: the abort
+	// committed no offsets.
+	for _, key := range onDisk {
+		if key == bad {
+			continue
+		}
+		data, found, err := s.Get(key)
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, want[key], data)
+	}
+}
+
+func TestSpillStore_CompactionRenameFailureKeepsLiveData(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("rename-failure injection needs an enforced non-root POSIX dir perm")
+	}
+	t.Parallel()
+
+	cfg := SpillStoreConfig{
+		MaxHotBytes:         200,
+		EvictTargetRatio:    0.5,
+		CompactionThreshold: 1 << 30,
+		ZSTDLevel:           1,
+	}
+	s, err := newSpillStore(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	want := make(map[string][]byte)
+	for i := 0; i < 10; i++ {
+		key := "key" + string(rune('a'+i))
+		want[key] = bytes.Repeat([]byte{byte(i + 1)}, 100)
+		require.NoError(t, s.Set(key, want[key]))
+	}
+	s.wg.Wait()
+
+	onDisk := diskKeys(s)
+	require.NotEmpty(t, onDisk)
+
+	// Pre-create the compact temp so the open succeeds in a read-only dir, then drop
+	// write perms: the rename needs dir write and fails, but reopen of the old file
+	// (and the still-live data) does not.
+	require.NoError(t, os.WriteFile(filepath.Join(s.dataDir, spillCompactTmp), nil, 0600))
+	require.NoError(t, os.Chmod(s.dataDir, 0500))
+	t.Cleanup(func() { _ = os.Chmod(s.dataDir, 0700) })
+
+	fileSizeBefore := s.fileSize
+	s.wg.Add(1)
+	s.compactRunning = true
+	s.runCompaction()
+	assert.Equal(t, fileSizeBefore, s.fileSize) // nothing committed
+
+	// Restore perms; a real compaction succeeds and the data survives both runs.
+	require.NoError(t, os.Chmod(s.dataDir, 0700))
+	s.wg.Add(1)
+	s.compactRunning = true
+	s.runCompaction()
+
+	for _, key := range onDisk {
+		data, found, err := s.Get(key)
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, want[key], data)
+	}
+}
+
+func TestSpillStore_EvictionGivesUpOnWriteFailure(t *testing.T) {
+	t.Parallel()
+
+	cfg := SpillStoreConfig{
+		MaxHotBytes:         200,
+		EvictTargetRatio:    0.5,
+		CompactionThreshold: 1 << 30,
+		ZSTDLevel:           1,
+	}
+	s, err := newSpillStore(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	// Swap in a read-only handle so every eviction write fails
+	roFile, err := os.OpenFile(s.dataFile.Name(), os.O_RDONLY, 0)
+	require.NoError(t, err)
+	s.mu.Lock()
+	_ = s.dataFile.Close()
+	s.dataFile = roFile
+	s.mu.Unlock()
+
+	want := make(map[string][]byte)
+	for i := 0; i < 5; i++ {
+		key := "key" + string(rune('a'+i))
+		want[key] = bytes.Repeat([]byte{byte(i + 1)}, 100)
+		require.NoError(t, s.Set(key, want[key]))
+	}
+
+	// Eviction gives up instead of spinning: the goroutine exits
+	require.Eventually(t, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return !s.evictRunning
+	}, 5*time.Second, 10*time.Millisecond)
+
+	// All entries stayed hot and remain retrievable
+	for key, val := range want {
+		s.mu.Lock()
+		inMemory := s.index[key].inMemory
+		s.mu.Unlock()
+		assert.True(t, inMemory)
+
+		data, found, err := s.Get(key)
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, val, data)
+	}
+}
+
+func TestSpillStore_GetCloseRace(t *testing.T) {
+	t.Parallel()
+
+	cfg := SpillStoreConfig{
+		MaxHotBytes:         200,
+		EvictTargetRatio:    0.5,
+		CompactionThreshold: 1 << 30,
+		ZSTDLevel:           1,
+	}
+	s, err := newSpillStore(cfg)
+	require.NoError(t, err)
+
+	for i := 0; i < 10; i++ {
+		require.NoError(t, s.Set("key"+string(rune('a'+i)), bytes.Repeat([]byte{byte(i + 1)}, 100)))
+	}
+	s.wg.Wait()
+	require.NotEmpty(t, diskKeys(s))
+
+	// Disk-reading Gets racing Close must not panic in the zstd decoder
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, _, _ = s.Get("key" + string(rune('a'+(i%10))))
+		}(i)
+	}
+	require.NoError(t, s.Close())
+	wg.Wait()
 }
