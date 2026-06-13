@@ -255,6 +255,19 @@ func TestNoteStore(t *testing.T) {
 		require.Len(t, notes, 1)
 	})
 
+	t.Run("duplicate_flow_ids", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		ns := NewNoteStore(storage)
+
+		require.NoError(t, ns.Save(&NoteMeta{NoteID: "n1", Type: "finding", FlowIDs: []string{"f1", "f1"}, Content: "dup"}))
+
+		assert.Equal(t, []string{"n1"}, ns.reverseIndexLookup("f1"))
+
+		result := ns.ForFlowIDs([]string{"f1"})
+		assert.Len(t, result["f1"], 1)
+	})
+
 	t.Run("count", func(t *testing.T) {
 		storage := NewMemStorage()
 		t.Cleanup(func() { _ = storage.Close() })
@@ -270,6 +283,46 @@ func TestNoteStore(t *testing.T) {
 
 		require.NoError(t, ns.Delete("n1"))
 		assert.Equal(t, 1, ns.Count())
+	})
+}
+
+func TestNoteStoreCreate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("assigns_unique_id", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		ns := NewNoteStore(storage)
+
+		note := &NoteMeta{Type: "finding", FlowIDs: []string{"f1"}, Content: "x"}
+		require.NoError(t, ns.Create(note))
+
+		assert.NotEmpty(t, note.NoteID)
+		assert.False(t, note.CreatedAt.IsZero())
+		assert.False(t, note.UpdatedAt.IsZero())
+		assert.Equal(t, 1, ns.Count())
+
+		got, ok := ns.Get(note.NoteID)
+		require.True(t, ok)
+		assert.Equal(t, note.NoteID, got.NoteID)
+
+		assert.Equal(t, []string{note.NoteID}, ns.reverseIndexLookup("f1"))
+	})
+
+	t.Run("distinct_ids", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		ns := NewNoteStore(storage)
+
+		seen := make(map[string]struct{})
+		for range 50 {
+			note := &NoteMeta{Type: "note", Content: "x"}
+			require.NoError(t, ns.Create(note))
+			_, dup := seen[note.NoteID]
+			assert.False(t, dup)
+			seen[note.NoteID] = struct{}{}
+		}
+		assert.Equal(t, 50, ns.Count())
 	})
 }
 

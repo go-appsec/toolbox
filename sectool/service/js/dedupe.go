@@ -6,9 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/go-analyze/bulk"
-
 	"github.com/go-appsec/toolbox/sectool/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/dedupe"
 )
 
 // dedupeExtracted collapses duplicate endpoints and routes.
@@ -46,20 +45,8 @@ func dedupeEndpoints(eps []protocol.ExtractedEndpoint) []protocol.ExtractedEndpo
 	return out
 }
 
-func dedupe[T comparable](in []T) []T {
-	if len(in) == 0 {
-		return in
-	}
-	m := bulk.SliceToSet(in)
-	if len(m) == len(in) {
-		return in
-	}
-	out := bulk.MapKeysSlice(m)
-	return out
-}
-
 func dedupeRoutes(rs []protocol.ExtractedRoute) []protocol.ExtractedRoute {
-	out := dedupe(rs)
+	out := dedupe.Slice(rs)
 	slices.SortStableFunc(out, func(a, b protocol.ExtractedRoute) int {
 		return cmp.Or(cmp.Compare(a.Path, b.Path), cmp.Compare(a.Framework, b.Framework))
 	})
@@ -67,14 +54,14 @@ func dedupeRoutes(rs []protocol.ExtractedRoute) []protocol.ExtractedRoute {
 }
 
 func dedupeStrings(in []string) []string {
-	out := dedupe(in)
+	out := dedupe.Slice(in)
 	slices.Sort(out)
 	return out
 }
 
 // dedupeSecrets returns secrets with duplicate (kind, value) pairs removed, sorted by kind then value.
 func dedupeSecrets(in []protocol.ExtractedSecret) []protocol.ExtractedSecret {
-	out := dedupe(in)
+	out := dedupe.Slice(in)
 	slices.SortStableFunc(out, func(a, b protocol.ExtractedSecret) int {
 		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.Value, b.Value))
 	})

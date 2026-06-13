@@ -7,7 +7,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
-	"github.com/go-appsec/toolbox/sectool/service/ids"
+	"github.com/go-appsec/toolbox/sectool/service/dedupe"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 	"github.com/go-appsec/toolbox/sectool/util"
 )
@@ -80,7 +80,7 @@ func (m *mcpServer) handleNotesSave(ctx context.Context, req mcp.CallToolRequest
 			existing.Type = noteType
 		}
 		if flowIDsStr != "" {
-			flowIDs := parseStringList(flowIDsStr)
+			flowIDs := dedupe.Slice(parseStringList(flowIDsStr))
 			if errResult := m.validateFlowIDs(ctx, flowIDs); errResult != nil {
 				return errResult, nil
 			}
@@ -105,19 +105,18 @@ func (m *mcpServer) handleNotesSave(ctx context.Context, req mcp.CallToolRequest
 		return errorResult("content is required when creating a note"), nil
 	}
 
-	flowIDs := parseStringList(flowIDsStr)
+	flowIDs := dedupe.Slice(parseStringList(flowIDsStr))
 	if errResult := m.validateFlowIDs(ctx, flowIDs); errResult != nil {
 		return errResult, nil
 	}
 
 	note := &store.NoteMeta{
-		NoteID:  ids.Generate(ids.EntityLength),
 		Type:    noteType,
 		FlowIDs: flowIDs,
 		Content: content,
 	}
 
-	if err := ns.Save(note); err != nil {
+	if err := ns.Create(note); err != nil {
 		return errorResult("failed to save note: " + err.Error()), nil
 	}
 

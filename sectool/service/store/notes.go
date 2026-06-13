@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/go-analyze/bulk"
+
+	"github.com/go-appsec/toolbox/sectool/service/ids"
 )
 
 const reverseIndexPrefix = "_fn:"
@@ -43,7 +45,8 @@ func NewNoteStore(storage Storage) *NoteStore {
 	return &NoteStore{storage: storage}
 }
 
-// Save upserts a note and maintains the reverse flow index.
+// Save upserts a note by its existing NoteID and maintains the reverse flow
+// index. Use Create to add a new note with a generated ID.
 func (s *NoteStore) Save(note *NoteMeta) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -67,18 +70,57 @@ func (s *NoteStore) Save(note *NoteMeta) error {
 		}
 	}
 
-	if data, err := Serialize(note); err != nil {
-		return err
-	} else if err = s.storage.Set(note.NoteID, data); err != nil {
+	if err := s.persistLocked(note, oldFlowIDs); err != nil {
 		return err
 	}
-
-	s.updateReverseIndex(note.NoteID, oldFlowIDs, note.FlowIDs)
 
 	if isNew {
 		s.count++
 	}
 	return nil
+}
+
+// Create assigns a unique note ID, stores the note, and maintains the reverse
+// flow index. Caller leaves NoteID empty.
+func (s *NoteStore) Create(note *NoteMeta) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	note.NoteID = s.mintUniqueNoteIDLocked()
+	now := time.Now()
+	note.CreatedAt = now
+	note.UpdatedAt = now
+
+	if err := s.persistLocked(note, nil); err != nil {
+		return err
+	}
+
+	s.count++
+	return nil
+}
+
+// persistLocked serializes the note, writes it, and updates the reverse index.
+// Caller must hold mu.
+func (s *NoteStore) persistLocked(note *NoteMeta, oldFlowIDs []string) error {
+	data, err := Serialize(note)
+	if err != nil {
+		return err
+	}
+	if err := s.storage.Set(note.NoteID, data); err != nil {
+		return err
+	}
+	s.updateReverseIndex(note.NoteID, oldFlowIDs, note.FlowIDs)
+	return nil
+}
+
+// mintUniqueNoteIDLocked generates a note_id, retrying on collision. Caller must hold mu.
+func (s *NoteStore) mintUniqueNoteIDLocked() string {
+	for {
+		candidate := ids.Generate(ids.EntityLength)
+		if _, found, _ := s.storage.Get(candidate); !found {
+			return candidate
+		}
+	}
 }
 
 // Get retrieves a note by ID.
@@ -265,14 +307,14 @@ func (s *NoteStore) updateReverseIndex(noteID string, oldFlowIDs, newFlowIDs []s
 	newSet := bulk.SliceToSet(newFlowIDs)
 
 	// Remove from flows no longer referenced
-	for _, fid := range oldFlowIDs {
+	for fid := range oldSet {
 		if _, ok := newSet[fid]; !ok {
 			s.removeFromReverseIndex(fid, noteID)
 		}
 	}
 
 	// Add to newly referenced flows
-	for _, fid := range newFlowIDs {
+	for fid := range newSet {
 		if _, ok := oldSet[fid]; !ok {
 			s.addToReverseIndex(fid, noteID)
 		}
