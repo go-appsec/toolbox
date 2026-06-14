@@ -97,7 +97,7 @@ func run(mcpURL, flowID, origin string, includeAssets bool) error {
 		_, _ = fmt.Println()
 	}
 
-	if len(resp.Endpoints)+len(resp.Routes)+len(resp.Secrets)+len(resp.ScriptSrc)+len(resp.OriginSummary) == 0 {
+	if len(resp.Endpoints)+len(resp.Routes)+len(resp.Secrets)+len(resp.ScriptSrc)+len(resp.OriginSummary)+len(resp.SourceMaps) == 0 {
 		_, _ = fmt.Println("No API surface extracted.")
 	}
 
