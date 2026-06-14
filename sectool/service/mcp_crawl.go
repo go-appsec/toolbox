@@ -193,7 +193,7 @@ func (m *mcpServer) handleCrawlStatus(ctx context.Context, req mcp.CallToolReque
 }
 
 func (m *mcpServer) crawlPollTool() mcp.Tool {
-	incremental := `Incremental (summary/flows): since accepts flow_id or "last" (cursor); use to window summaries to recent traffic. Only flows mode advances the cursor. Limit caps results in all modes; offset is for paging flows only.`
+	incremental := `Incremental (summary/flows): since accepts flow_id or "last" (cursor); use to window results to recent traffic. Both summary and flows polls advance the cursor. Limit caps results in all modes; offset is for paging flows only.`
 	sinceDesc := "flow_id or 'last' (cursor)"
 	if m.workflowMode == protocol.WorkflowModeMulti {
 		incremental = `Incremental (summary/flows): pass a previous flow_id as since to window results to flows after it. Limit caps results in all modes; offset is for paging flows only.`
