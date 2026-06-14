@@ -2,6 +2,7 @@ package js
 
 import (
 	"github.com/go-appsec/toolbox/sectool/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/dedupe"
 )
 
 // Source labels for the response.
@@ -35,7 +36,7 @@ func AnalyzeJS(src []byte) Result {
 func AnalyzeHTML(src []byte) Result {
 	scripts := ParseHTMLScripts(src)
 	res := analyzeBlocks(scripts.Inline)
-	res.ScriptSrc = append(res.ScriptSrc, scripts.External...)
+	res.ScriptSrc = dedupe.Slice(append(res.ScriptSrc, scripts.External...))
 	if len(scripts.Inline) > 0 {
 		res.Source = SourceHTMLInline
 	} else {

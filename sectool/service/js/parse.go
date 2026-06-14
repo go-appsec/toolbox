@@ -3,6 +3,7 @@ package js
 import (
 	"strconv"
 	"strings"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/tdewolff/parse/v2"
@@ -178,7 +179,18 @@ func decodeJSEscapes(s string) string {
 				}
 			} else if i+6 <= len(s) {
 				if v, err := strconv.ParseUint(s[i+2:i+6], 16, 16); err == nil {
-					b.WriteRune(rune(v))
+					r := rune(v)
+					// astral chars are JS-encoded as a surrogate pair (😀)
+					if utf16.IsSurrogate(r) && i+12 <= len(s) && s[i+6] == '\\' && s[i+7] == 'u' {
+						if v2, err := strconv.ParseUint(s[i+8:i+12], 16, 16); err == nil {
+							if combined := utf16.DecodeRune(r, rune(v2)); combined != utf8.RuneError {
+								b.WriteRune(combined)
+								i += 12
+								continue
+							}
+						}
+					}
+					b.WriteRune(r)
 					i += 6
 					continue
 				}

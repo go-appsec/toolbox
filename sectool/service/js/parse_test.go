@@ -124,6 +124,10 @@ func TestDecodeJSEscapes(t *testing.T) {
 		{"backslash_self", `a\\b`, `a\b`},
 		{"malformed_hex_kept", `\xZZ`, `\xZZ`},
 		{"malformed_unicode_kept", `\uZZZZ`, `\uZZZZ`},
+		{"surrogate_pair", `😀`, "\U0001F600"},
+		{"lone_high_surrogate", `\uD83D`, "�"},
+		{"lone_low_surrogate", `\uDE00`, "�"},
+		{"high_surrogate_then_char", `\uD83Dx`, "�x"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

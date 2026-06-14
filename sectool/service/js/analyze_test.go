@@ -614,6 +614,16 @@ func TestAnalyzeHTML(t *testing.T) {
 		assert.Empty(t, r.Endpoints)
 	})
 
+	t.Run("duplicate_external_scripts", func(t *testing.T) {
+		src := `<html><head>
+<script src="/x.js"></script>
+<script src="/y.js"></script>
+<script src="/x.js"></script>
+</head></html>`
+		r := AnalyzeHTML([]byte(src))
+		assert.Equal(t, []string{"/x.js", "/y.js"}, r.ScriptSrc)
+	})
+
 	t.Run("no_scripts", func(t *testing.T) {
 		r := AnalyzeHTML([]byte(`<html><body><p>hi</p></body></html>`))
 		assert.Equal(t, SourceHTML, r.Source)
