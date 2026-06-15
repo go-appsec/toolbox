@@ -6,7 +6,7 @@ require (
 	github.com/agnivade/levenshtein v1.2.1
 	github.com/andybalholm/brotli v1.2.1
 	github.com/go-analyze/bulk v0.1.4
-	github.com/go-appsec/interactsh-lite v0.3.6
+	github.com/go-appsec/interactsh-lite v0.3.7
 	github.com/go-appsec/scout v0.1.1
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/google/uuid v1.6.0
