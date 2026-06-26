@@ -224,67 +224,80 @@ func (s *spillStore) Set(key string, blob []byte) error {
 }
 
 func (s *spillStore) Get(key string) ([]byte, bool, error) {
-	s.mu.Lock()
-	if s.closed {
+	// Loop so a disk-read whose entry was replaced (via Set) mid-read re-resolves
+	// the current entry rather than returning stale bytes.
+	for {
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			return nil, false, ErrClosed
+		}
+		entry, ok := s.index[key]
+		if !ok {
+			s.mu.Unlock()
+			return nil, false, nil
+		}
+
+		s.accessSeq++
+		entry.accessSeq = s.accessSeq
+
+		if entry.inMemory {
+			data := s.hotData[key]
+			s.mu.Unlock()
+			// Return defensive copy
+			return slices.Clone(data), true, nil
+		}
+
+		// Read data from disk
+		readEntry := entry
+		diskOffset := entry.diskOffset
+		diskLen := entry.diskLen
+		encrypted := make([]byte, diskLen)
+		if _, err := s.dataFile.ReadAt(encrypted, diskOffset); err != nil {
+			s.mu.Unlock()
+			return nil, false, err
+		}
+		// Track the decode on wg so Close can't close the zstd decoder mid-DecodeAll
+		// Safe Add: we hold s.mu and confirmed !closed above, so it can't race Wait
+		s.wg.Add(1)
 		s.mu.Unlock()
-		return nil, false, ErrClosed
-	}
-	entry, ok := s.index[key]
-	if !ok {
-		s.mu.Unlock()
-		return nil, false, nil
-	}
 
-	s.accessSeq++
-	entry.accessSeq = s.accessSeq
+		// Decrypt and decompress without holding lock
+		data, err := s.decryptAndDecompress(encrypted)
+		s.wg.Done()
+		if err != nil {
+			return nil, false, err
+		}
 
-	if entry.inMemory {
-		data := s.hotData[key]
-		s.mu.Unlock()
-		// Return defensive copy
-		return slices.Clone(data), true, nil
-	}
+		// Relock and verify the entry we read is still the live one
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			return nil, false, ErrClosed
+		}
 
-	// Read data from disk
-	diskOffset := entry.diskOffset
-	diskLen := entry.diskLen
-	seq := entry.accessSeq
-	encrypted := make([]byte, diskLen)
-	if _, err := s.dataFile.ReadAt(encrypted, diskOffset); err != nil {
-		s.mu.Unlock()
-		return nil, false, err
-	}
-	// Track the decode on wg so Close can't close the zstd decoder mid-DecodeAll
-	// Safe Add: we hold s.mu and confirmed !closed above, so it can't race Wait
-	s.wg.Add(1)
-	s.mu.Unlock()
+		cur, ok := s.index[key]
+		if !ok {
+			// Key deleted during the read; stale bytes are not the current value
+			s.mu.Unlock()
+			return nil, false, nil
+		}
+		if cur != readEntry {
+			// Replaced by a newer Set during the read; re-resolve current value
+			s.mu.Unlock()
+			continue
+		}
 
-	// Decrypt and decompress without holding lock
-	data, err := s.decryptAndDecompress(encrypted)
-	s.wg.Done()
-	if err != nil {
-		return nil, false, err
-	}
-
-	// Relock and verify entry hasn't changed
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return nil, false, ErrClosed
-	}
-
-	entry, ok = s.index[key]
-	if ok && entry.accessSeq == seq {
 		// Bring to memory (keep disk reference - entry is "clean" and can evict without rewrite)
 		s.hotData[key] = data
 		s.hotBytes += int64(len(data))
-		entry.inMemory = true
+		cur.inMemory = true
 		s.maybeStartEviction()
-	}
-	s.mu.Unlock()
+		s.mu.Unlock()
 
-	// Return defensive copy
-	return slices.Clone(data), true, nil
+		// Return defensive copy
+		return slices.Clone(data), true, nil
+	}
 }
 
 func (s *spillStore) KeySet() []string {
