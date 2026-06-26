@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -277,6 +278,51 @@ func TestHandle(t *testing.T) {
 		assert.Equal(t, "test-value", receivedHeaders.Get("X-Custom-Header"))
 		assert.Equal(t, "Bearer token123", receivedHeaders.Get("Authorization"))
 	})
+
+	t.Run("pipelined_clienthello", func(t *testing.T) {
+		t.Parallel()
+
+		testServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("pipelined ok"))
+		}))
+		t.Cleanup(testServer.Close)
+
+		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+		require.NoError(t, err)
+		go func() { _ = proxy.Serve() }()
+		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
+
+		target := mustParseURL(t, testServer.URL).Host
+
+		raw, err := net.Dial("tcp", proxy.Addr())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = raw.Close() })
+		// Deadline guards against a regression hanging the handshake
+		require.NoError(t, raw.SetDeadline(time.Now().Add(10*time.Second)))
+
+		pc := &pipelineConn{
+			Conn:       raw,
+			br:         bufio.NewReader(raw),
+			connectReq: []byte("CONNECT " + target + " HTTP/1.1\r\nHost: " + target + "\r\n\r\n"),
+		}
+
+		caCertPool := x509.NewCertPool()
+		caCertPool.AddCert(proxy.CertManager().CACert())
+		tlsConn := tls.Client(pc, &tls.Config{RootCAs: caCertPool, InsecureSkipVerify: true})
+		require.NoError(t, tlsConn.HandshakeContext(t.Context()))
+
+		_, err = tlsConn.Write([]byte("GET /test HTTP/1.1\r\nHost: " + target + "\r\nConnection: close\r\n\r\n"))
+		require.NoError(t, err)
+
+		respData, err := io.ReadAll(tlsConn)
+		require.NoError(t, err)
+		assert.Contains(t, string(respData), "pipelined ok")
+
+		testutil.WaitForCount(t, func() int { return proxy.History().Count() }, 1)
+		entry := firstEntry(t, proxy.History())
+		assert.Equal(t, "GET", entry.Request.Method)
+		assert.Equal(t, "https", entry.Scheme)
+	})
 }
 
 func mustParseURL(t *testing.T, rawURL string) *url.URL {
@@ -285,4 +331,42 @@ func mustParseURL(t *testing.T, rawURL string) *url.URL {
 	u, err := url.Parse(rawURL)
 	require.NoError(t, err)
 	return u
+}
+
+// pipelineConn forces the CONNECT request to share its first segment with the client's first
+// write (the TLS ClientHello) and strips the proxy's CONNECT 200 response from the read stream,
+// simulating a client that pipelines without waiting for the 200.
+type pipelineConn struct {
+	net.Conn
+	br          *bufio.Reader
+	connectReq  []byte
+	sentConnect bool
+	strippedOK  bool
+}
+
+func (c *pipelineConn) Write(p []byte) (int, error) {
+	if !c.sentConnect {
+		c.sentConnect = true
+		if _, err := c.Conn.Write(append(slices.Clone(c.connectReq), p...)); err != nil {
+			return 0, err
+		}
+		return len(p), nil
+	}
+	return c.Conn.Write(p)
+}
+
+func (c *pipelineConn) Read(p []byte) (int, error) {
+	if !c.strippedOK {
+		for {
+			line, err := c.br.ReadString('\n')
+			if err != nil {
+				return 0, err
+			}
+			if strings.TrimSpace(line) == "" {
+				break
+			}
+		}
+		c.strippedOK = true
+	}
+	return c.br.Read(p)
 }

@@ -66,8 +66,17 @@ func (h *connectHandler) Handle(ctx context.Context, clientConn net.Conn, client
 		return
 	}
 
-	h.handleTLS(ctx, clientConn, target)
+	h.handleTLS(ctx, clientConn, clientReader, target)
 }
+
+// readerConn reads through the reader and delegates writes/deadlines to the embedded conn.
+type readerConn struct {
+	net.Conn
+
+	r io.Reader
+}
+
+func (c *readerConn) Read(p []byte) (int, error) { return c.r.Read(p) }
 
 // parseConnectRequest parses "CONNECT host:port HTTP/1.1" and reads remaining headers.
 func (h *connectHandler) parseConnectRequest(reader *bufio.Reader) (*Target, error) {
@@ -118,7 +127,7 @@ func (h *connectHandler) parseConnectRequest(reader *bufio.Reader) (*Target, err
 
 // handleTLS performs TLS handshake with delayed protocol probing.
 // The probe happens inside GetConfigForClient to ensure protocol matching.
-func (h *connectHandler) handleTLS(ctx context.Context, clientConn net.Conn, target *Target) {
+func (h *connectHandler) handleTLS(ctx context.Context, clientConn net.Conn, clientReader *bufio.Reader, target *Target) {
 	targetAddr := fmt.Sprintf("%s:%d", target.Hostname, target.Port)
 
 	// Variables to capture from GetConfigForClient callback
@@ -168,8 +177,8 @@ func (h *connectHandler) handleTLS(ctx context.Context, clientConn net.Conn, tar
 		},
 	}
 
-	// Wrap client connection in TLS
-	clientTLS := tls.Server(clientConn, tlsConfig)
+	// Read through clientReader so bytes past the CONNECT feed the handshake instead droping
+	clientTLS := tls.Server(&readerConn{Conn: clientConn, r: clientReader}, tlsConfig)
 
 	// Perform handshake (this triggers GetConfigForClient)
 	if err := clientTLS.HandshakeContext(ctx); err != nil {
