@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/agnivade/levenshtein v1.2.1
-	github.com/andybalholm/brotli v1.2.1
+	github.com/andybalholm/brotli v1.2.2
 	github.com/go-analyze/bulk v0.1.4
 	github.com/go-appsec/interactsh-lite v0.3.7
 	github.com/go-appsec/scout v0.1.1
