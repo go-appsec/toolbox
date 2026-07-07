@@ -3,7 +3,9 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 
@@ -51,7 +53,16 @@ func summary(mcpURL string, source, host, path, method, status, searchHeader, se
 	return nil
 }
 
-func list(mcpURL string, source, host, path, method, status, searchHeader, searchBody, since, excludeHost, excludePath string, limit, offset int) error {
+// listFilters carries the proxy list command's filter selections.
+type listFilters struct {
+	source, host, path, method, status string
+	searchHeader, searchBody, since    string
+	excludeHost, excludePath           string
+	adapter, protocolTag, parentFlowID string
+	limit, offset                      int
+}
+
+func list(mcpURL string, f listFilters) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -62,18 +73,21 @@ func list(mcpURL string, source, host, path, method, status, searchHeader, searc
 
 	resp, err := client.ProxyPoll(ctx, mcpclient.ProxyPollOpts{
 		OutputMode:   "flows",
-		Source:       source,
-		Host:         host,
-		Path:         path,
-		Method:       method,
-		Status:       status,
-		SearchHeader: searchHeader,
-		SearchBody:   searchBody,
-		Since:        since,
-		ExcludeHost:  excludeHost,
-		ExcludePath:  excludePath,
-		Limit:        limit,
-		Offset:       offset,
+		Source:       f.source,
+		Host:         f.host,
+		Path:         f.path,
+		Method:       f.method,
+		Status:       f.status,
+		SearchHeader: f.searchHeader,
+		SearchBody:   f.searchBody,
+		Since:        f.since,
+		ExcludeHost:  f.excludeHost,
+		ExcludePath:  f.excludePath,
+		Adapter:      f.adapter,
+		ProtocolTag:  f.protocolTag,
+		ParentFlowID: f.parentFlowID,
+		Limit:        f.limit,
+		Offset:       f.offset,
 	})
 	if err != nil {
 		return fmt.Errorf("proxy list failed: %w", err)
@@ -135,6 +149,19 @@ func get(mcpURL string, flowID, scope, pattern string) error {
 	if resp.RespBody != "" {
 		fmt.Println(cliutil.Bold("Response Body"))
 		fmt.Println(resp.RespBody)
+	}
+	if resp.InvokedBy != "" || resp.SidecarInstanceID != "" || len(resp.Annotations) > 0 {
+		fmt.Println()
+		fmt.Println(cliutil.Bold("Annotations"))
+		if resp.InvokedBy != "" {
+			fmt.Printf("invoked_by: %s\n", resp.InvokedBy)
+		}
+		if resp.SidecarInstanceID != "" {
+			fmt.Printf("sidecar_instance_id: %s\n", resp.SidecarInstanceID)
+		}
+		for _, k := range slices.Sorted(maps.Keys(resp.Annotations)) {
+			fmt.Printf("%s: %v\n", k, resp.Annotations[k])
+		}
 	}
 	if resp.Note != "" {
 		fmt.Println()

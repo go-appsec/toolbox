@@ -19,18 +19,23 @@ import (
 	"github.com/go-appsec/toolbox/sectool/jwt"
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 	"github.com/go-appsec/toolbox/sectool/util"
+	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
-func (m *mcpServer) proxyPollTool() mcp.Tool {
+// proxyPollTool builds the proxy_poll definition. extra carries the
+// sidecar-conditional adapter/protocol_tag filters, appended only when a sidecar
+// is connected so the no-sidecar schema is unchanged.
+func (m *mcpServer) proxyPollTool(extra ...mcp.ToolOption) mcp.Tool {
 	incremental := `Incremental: since accepts flow_id or "last" (cursor); use to window summaries to recent traffic. Only flows mode advances the cursor. Limit caps results in both modes; offset is for paging flows only.`
 	sinceDesc := "Entries after flow_id, or 'last' (cursor)"
 	if m.workflowMode == protocol.WorkflowModeMulti {
 		incremental = `Incremental: pass a previous flow_id as since to window results to flows after it. Limit caps results in both modes; offset is for paging flows only.`
 		sinceDesc = "Entries after this flow_id"
 	}
-	return mcp.NewTool("proxy_poll",
+	return mcp.NewTool("proxy_poll", append([]mcp.ToolOption{
 		mcp.WithDescription(`Query proxy history: summary (default) or flows mode.
 
 Output modes:
@@ -38,7 +43,7 @@ Output modes:
 - "flows": Returns individual flows with flow_id for use with flow_get or replay_send. Requires at least one filter or limit.
 
 Results include both proxy-captured traffic (source=proxy) and replay-sent traffic (source=replay) in chronological order.
-`+incremental),
+` + incremental),
 		mcp.WithString("output_mode", mcp.Description("Output mode: 'summary' (default) or 'flows'")),
 		mcp.WithString("source", mcp.Description("Filter by source: 'proxy', 'replay', or empty for both")),
 		mcp.WithString("host", mcp.Description("Filter by host glob (*, ?). *.example.com = subdomains only; *example.com = domain + subdomains")),
@@ -50,9 +55,11 @@ Results include both proxy-captured traffic (source=proxy) and replay-sent traff
 		mcp.WithString("since", mcp.Description(sinceDesc)),
 		mcp.WithString("exclude_host", mcp.Description("Exclude hosts matching glob (*, ?)")),
 		mcp.WithString("exclude_path", mcp.Description("Exclude paths matching glob (*, ?)")),
+		// adapter/protocol_tag filters appended via extra in syncSidecarTools when a sidecar is connected
+		mcp.WithString("parent_flow_id", mcp.Description("Filter to child flows of this parent flow_id (stream children, session inner flows)")),
 		mcp.WithNumber("limit", mcp.Description("Max results to return")),
 		mcp.WithNumber("offset", mcp.Description("Skip first N results (flows mode, applied after filtering)")),
-	)
+	}, extra...)...)
 }
 
 func (m *mcpServer) flowGetTool() mcp.Tool {
@@ -78,8 +85,11 @@ func (m *mcpServer) proxyRuleListTool() mcp.Tool {
 	)
 }
 
-func (m *mcpServer) proxyRuleAddTool() mcp.Tool {
-	return mcp.NewTool("proxy_rule_add",
+// proxyRuleAddTool builds the proxy_rule_add definition. extra carries the
+// sidecar-conditional adapter scope param, appended only when a sidecar is
+// connected so the no-sidecar schema is unchanged.
+func (m *mcpServer) proxyRuleAddTool(extra ...mcp.ToolOption) mcp.Tool {
+	return mcp.NewTool("proxy_rule_add", append([]mcp.ToolOption{
 		mcp.WithDescription(`Add a proxy rule that modifies request/response traffic.
 
 Modes (determined by which fields are set):
@@ -98,7 +108,8 @@ To modify a rule, delete it with proxy_rule_delete and recreate.`),
 		mcp.WithString("replace", mcp.Description("Replacement text. Use without find to append instead of replace.")),
 		mcp.WithString("label", mcp.Description("Optional unique label (usable as rule_id)")),
 		mcp.WithBoolean("is_regex", mcp.Description("Treat find as regex pattern (RE2)")),
-	)
+		// adapter scope param appended via extra in syncSidecarTools when a sidecar is connected
+	}, extra...)...)
 }
 
 func (m *mcpServer) proxyRuleDeleteTool() mcp.Tool {
@@ -254,6 +265,9 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 		Since:        req.GetString("since", ""),
 		ExcludeHost:  req.GetString("exclude_host", ""),
 		ExcludePath:  req.GetString("exclude_path", ""),
+		Adapter:      req.GetString("adapter", ""),
+		ProtocolTag:  req.GetString("protocol_tag", ""),
+		ParentFlowID: req.GetString("parent_flow_id", ""),
 		Limit:        req.GetInt("limit", 0),
 		Offset:       req.GetInt("offset", 0),
 		Source:       req.GetString("source", ""),
@@ -283,7 +297,15 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 	}
 
 	needsFullText := listReq.SearchHeader != "" || listReq.SearchBody != ""
-	allEntries, err := m.service.fetchAllProxyEntries(ctx, needsFullText)
+	// parent_flow_id targets nested children: excluded from the top-level listing,
+	// surfaced in emission order only through this dedicated path
+	var allEntries []flowEntry
+	var err error
+	if listReq.ParentFlowID != "" {
+		allEntries, err = m.service.fetchProxyChildren(ctx, listReq.ParentFlowID)
+	} else {
+		allEntries, err = m.service.fetchAllProxyEntries(ctx, needsFullText)
+	}
 	if err != nil {
 		return errorResultFromErr("failed to fetch proxy history: ", err), nil
 	}
@@ -338,15 +360,20 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 			}
 
 			flows = append(flows, protocol.FlowEntry{
-				FlowID:         entry.flowID,
-				Method:         entry.method,
-				Scheme:         scheme,
-				Host:           entry.host,
-				Port:           port,
-				Path:           util.TruncateString(entry.path, maxPathLength),
-				Status:         entry.status,
-				ResponseLength: entry.respLen,
-				Source:         entry.source,
+				FlowID:            entry.flowID,
+				Method:            entry.method,
+				Scheme:            scheme,
+				Host:              entry.host,
+				Port:              port,
+				Path:              util.TruncateString(entry.path, maxPathLength),
+				Status:            entry.status,
+				ResponseLength:    entry.respLen,
+				Source:            entry.source,
+				Adapter:           entry.adapter,
+				ProtocolTag:       entry.protocolTag,
+				Annotations:       entry.annotations,
+				InvokedBy:         entry.invokedBy,
+				SidecarInstanceID: entry.sidecarInstanceID,
 			})
 		}
 		m.attachFlowNotes(flows)
@@ -478,6 +505,15 @@ func (m *mcpServer) handleFlowGet(ctx context.Context, req mcp.CallToolRequest) 
 	if len(resolved.InterimResponses) > 0 {
 		result["interim_responses"] = resolved.InterimResponses
 	}
+	if len(resolved.Annotations) > 0 {
+		result["annotations"] = resolved.Annotations
+	}
+	if resolved.InvokedBy != "" {
+		result["invoked_by"] = resolved.InvokedBy
+	}
+	if resolved.SidecarInstanceID != "" {
+		result["sidecar_instance_id"] = resolved.SidecarInstanceID
+	}
 
 	if patternRe != nil {
 		// Pattern mode: grep-like context output
@@ -608,12 +644,23 @@ func (m *mcpServer) handleProxyRuleAdd(ctx context.Context, req mcp.CallToolRequ
 		find = unescapeLiteral(find)
 		replace = unescapeLiteral(replace)
 	}
+
+	// reject a mistyped adapter scope that would orphan the rule;
+	// empty scopes all traffic, AdapterScopeCore the native proxy
+	adapter := req.GetString("adapter", "")
+	if adapter != "" && adapter != types.AdapterScopeCore {
+		if m.sidecars == nil || !m.sidecars.HasAdapter(adapter) {
+			return errorResult(fmt.Sprintf("unknown adapter %q: not a connected sidecar; omit adapter to scope the rule to all traffic, or use %q for the native proxy", adapter, types.AdapterScopeCore)), nil
+		}
+	}
+
 	rule, err := m.service.httpBackend.AddRule(ctx, protocol.RuleEntry{
 		Label:   label,
 		Type:    ruleType,
 		IsRegex: isRegex,
 		Find:    find,
 		Replace: replace,
+		Adapter: adapter,
 	})
 	if err != nil {
 		if errors.Is(err, ErrConfigEditDisabled) {
@@ -653,18 +700,23 @@ func (m *mcpServer) handleProxyRuleDelete(ctx context.Context, req mcp.CallToolR
 
 // flowEntry holds parsed metadata for a proxy or replay history entry.
 type flowEntry struct {
-	flowID    string
-	timestamp time.Time // primary sort key; flow_id breaks ties
-	method    string
-	host      string
-	path      string
-	scheme    string // "http" or "https" (empty = infer from host)
-	port      int    // original port (0 = infer from scheme)
-	status    int
-	respLen   int
-	request   string
-	response  string
-	source    string // "proxy" or "replay"
+	flowID            string
+	timestamp         time.Time // primary sort key; flow_id breaks ties
+	method            string
+	host              string
+	path              string
+	scheme            string // "http" or "https" (empty = infer from host)
+	port              int    // original port (0 = infer from scheme)
+	status            int
+	respLen           int
+	request           string
+	response          string
+	source            string         // "proxy" or "replay"
+	adapter           string         // emitting adapter name
+	protocolTag       string         // protocol tag (e.g. "http/1.1", "http/2")
+	annotations       map[string]any // sidecar-authored flow metadata
+	invokedBy         string
+	sidecarInstanceID string
 }
 
 // drainProxyHistory pages all proxy history entries from the backend in fetchBatchSize chunks.
@@ -689,18 +741,23 @@ func drainProxyHistory(ctx context.Context, backend HttpBackend, full bool) ([]f
 				status := readResponseStatusCode([]byte(entry.Response))
 				_, respBody := splitHeadersBody([]byte(entry.Response))
 				page = append(page, flowEntry{
-					flowID:    entry.FlowID,
-					timestamp: entry.Timestamp,
-					method:    method,
-					host:      host,
-					path:      path,
-					scheme:    entry.Scheme,
-					port:      entry.Port,
-					status:    status,
-					respLen:   len(respBody),
-					request:   entry.Request,
-					response:  entry.Response,
-					source:    SourceProxy,
+					flowID:            entry.FlowID,
+					timestamp:         entry.Timestamp,
+					method:            method,
+					host:              host,
+					path:              path,
+					scheme:            entry.Scheme,
+					port:              entry.Port,
+					status:            status,
+					respLen:           len(respBody),
+					request:           entry.Request,
+					response:          entry.Response,
+					source:            SourceProxy,
+					adapter:           entry.Adapter,
+					protocolTag:       entry.Protocol,
+					annotations:       entry.Annotations,
+					invokedBy:         entry.InvokedBy,
+					sidecarInstanceID: entry.SidecarInstanceID,
 				})
 			}
 		} else {
@@ -714,16 +771,21 @@ func drainProxyHistory(ctx context.Context, backend HttpBackend, full bool) ([]f
 					continue
 				}
 				page = append(page, flowEntry{
-					flowID:    m.FlowID,
-					timestamp: m.Timestamp,
-					method:    m.Method,
-					host:      m.Host,
-					path:      m.Path,
-					scheme:    m.Scheme,
-					port:      m.Port,
-					status:    m.Status,
-					respLen:   m.RespLen,
-					source:    SourceProxy,
+					flowID:            m.FlowID,
+					timestamp:         m.Timestamp,
+					method:            m.Method,
+					host:              m.Host,
+					path:              m.Path,
+					scheme:            m.Scheme,
+					port:              m.Port,
+					status:            m.Status,
+					respLen:           m.RespLen,
+					source:            SourceProxy,
+					adapter:           m.Adapter,
+					protocolTag:       m.Protocol,
+					annotations:       m.Annotations,
+					invokedBy:         m.InvokedBy,
+					sidecarInstanceID: m.SidecarInstanceID,
 				})
 			}
 		}
@@ -752,18 +814,22 @@ func collectReplayHistory(replayStore *store.ReplayHistoryStore, full bool) []fl
 		out := make([]flowEntry, len(entries))
 		for i, re := range entries {
 			out[i] = flowEntry{
-				flowID:    re.FlowID,
-				timestamp: re.CreatedAt,
-				method:    re.Method,
-				host:      re.Host,
-				path:      re.Path,
-				scheme:    re.Scheme,
-				port:      re.Port,
-				status:    re.RespStatus,
-				respLen:   len(re.RespBody),
-				request:   string(re.RawRequest),
-				response:  string(re.RespHeaders) + string(re.RespBody),
-				source:    SourceReplay,
+				flowID:      re.FlowID,
+				timestamp:   re.CreatedAt,
+				method:      re.Method,
+				host:        re.Host,
+				path:        re.Path,
+				scheme:      re.Scheme,
+				port:        re.Port,
+				status:      re.RespStatus,
+				respLen:     len(re.RespBody),
+				request:     string(re.RawRequest),
+				response:    string(re.RespHeaders) + string(re.RespBody),
+				source:      SourceReplay,
+				adapter:     re.Adapter,
+				protocolTag: re.Protocol,
+				annotations: re.Annotations,
+				invokedBy:   re.InvokedBy,
 			}
 		}
 		return out
@@ -772,16 +838,20 @@ func collectReplayHistory(replayStore *store.ReplayHistoryStore, full bool) []fl
 	out := make([]flowEntry, len(metas))
 	for i, rm := range metas {
 		out[i] = flowEntry{
-			flowID:    rm.FlowID,
-			timestamp: rm.CreatedAt,
-			method:    rm.Method,
-			host:      rm.Host,
-			path:      rm.Path,
-			scheme:    rm.Scheme,
-			port:      rm.Port,
-			status:    rm.RespStatus,
-			respLen:   rm.RespLen,
-			source:    SourceReplay,
+			flowID:      rm.FlowID,
+			timestamp:   rm.CreatedAt,
+			method:      rm.Method,
+			host:        rm.Host,
+			path:        rm.Path,
+			scheme:      rm.Scheme,
+			port:        rm.Port,
+			status:      rm.RespStatus,
+			respLen:     rm.RespLen,
+			source:      SourceReplay,
+			adapter:     rm.Adapter,
+			protocolTag: rm.Protocol,
+			annotations: rm.Annotations,
+			invokedBy:   rm.InvokedBy,
 		}
 	}
 	return out
@@ -801,6 +871,42 @@ func (s *Server) fetchAllProxyEntries(ctx context.Context, needsFullText bool) (
 		return cmp.Or(a.timestamp.Compare(b.timestamp), cmp.Compare(a.flowID, b.flowID))
 	})
 	return all, nil
+}
+
+// fetchProxyChildren retrieves the child flows of parentFlowID in emission order
+// (stream children, session inner flows), which are excluded from the top-level
+// listing. Order is preserved as emitted, not re-sorted by timestamp.
+func (s *Server) fetchProxyChildren(ctx context.Context, parentFlowID string) ([]flowEntry, error) {
+	children, err := s.httpBackend.GetProxyChildren(ctx, parentFlowID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]flowEntry, 0, len(children))
+	for _, entry := range children {
+		method, host, path := extractRequestMeta(entry.Request)
+		status := readResponseStatusCode([]byte(entry.Response))
+		_, respBody := splitHeadersBody([]byte(entry.Response))
+		out = append(out, flowEntry{
+			flowID:            entry.FlowID,
+			timestamp:         entry.Timestamp,
+			method:            method,
+			host:              host,
+			path:              path,
+			scheme:            entry.Scheme,
+			port:              entry.Port,
+			status:            status,
+			respLen:           len(respBody),
+			request:           entry.Request,
+			response:          entry.Response,
+			source:            SourceProxy,
+			adapter:           entry.Adapter,
+			protocolTag:       entry.Protocol,
+			annotations:       entry.Annotations,
+			invokedBy:         entry.InvokedBy,
+			sidecarInstanceID: entry.SidecarInstanceID,
+		})
+	}
+	return out, nil
 }
 
 // applyProxyFilters applies client-side filters to proxy history entries.
@@ -849,7 +955,13 @@ func applyProxyFilters(entries []flowEntry, req *ProxyListRequest, lastFlowID st
 			continue
 		} else if req.ExcludePath != "" && matchesGlob(e.path, req.ExcludePath) {
 			continue
+		} else if req.Adapter != "" && !matchesGlob(e.adapter, req.Adapter) {
+			continue
+		} else if req.ProtocolTag != "" && !matchesGlob(e.protocolTag, req.ProtocolTag) {
+			continue
 		}
+		// parent_flow_id is a source selector, not a row filter: when set, entries
+		// already come from fetchProxyChildren (only that parent's children)
 		if searchHeaderRe != nil || searchBodyRe != nil {
 			if !matchesFlowSearch([]byte(e.request), []byte(e.response), searchHeaderRe, searchBodyRe) {
 				continue
@@ -862,14 +974,14 @@ func applyProxyFilters(entries []flowEntry, req *ProxyListRequest, lastFlowID st
 
 var validRuleTypes = map[string]bool{
 	// HTTP types
-	RuleTypeRequestHeader:  true,
-	RuleTypeRequestBody:    true,
-	RuleTypeResponseHeader: true,
-	RuleTypeResponseBody:   true,
+	wire.RuleTypeRequestHeader:  true,
+	wire.RuleTypeRequestBody:    true,
+	wire.RuleTypeResponseHeader: true,
+	wire.RuleTypeResponseBody:   true,
 	// WebSocket types
-	RuleTypeWSToServer: true,
-	RuleTypeWSToClient: true,
-	RuleTypeWSBoth:     true,
+	wire.RuleTypeWSToServer: true,
+	wire.RuleTypeWSToClient: true,
+	wire.RuleTypeWSBoth:     true,
 }
 
 func validateRuleTypeAny(t string) error {

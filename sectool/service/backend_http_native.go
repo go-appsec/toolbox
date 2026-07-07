@@ -17,7 +17,10 @@ import (
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/ids"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/protocol/sidecar"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
+	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
 const (
@@ -37,11 +40,17 @@ type NativeProxyBackend struct {
 	httpRules   []nativeStoredRule
 	wsRules     []nativeStoredRule
 	ruleStorage store.Storage
+	// snapshotVersion increments on every rule change; pushed to sidecars via sync_rules.
+	snapshotVersion uint64
 
 	// Responders: cached from responderStorage for hot path access
 	respondersMu     sync.RWMutex
 	responders       []nativeStoredResponder
 	responderStorage store.Storage
+
+	// Sidecar IPC listener and registry; nil when sidecars are disabled.
+	sidecarListener *sidecar.Listener
+	sidecarManager  *sidecar.Manager
 
 	closed atomic.Bool
 }
@@ -54,19 +63,23 @@ type nativeStoredRule struct {
 	IsRegex bool   `json:"is_regex" msgpack:"ir"`
 	Find    string `json:"find" msgpack:"f"`
 	Replace string `json:"replace" msgpack:"r"`
+	Adapter string `json:"adapter,omitempty" msgpack:"a,omitempty"`
 
 	// compiled is the pre-compiled regex (nil if not a regex rule)
 	compiled *regexp.Regexp `msgpack:"-"`
 }
 
-// Compile-time checks that NativeProxyBackend implements interfaces.
+// Compile-time interface checks
 var _ HttpBackend = (*NativeProxyBackend)(nil)
-var _ proxy.RuleApplier = (*NativeProxyBackend)(nil)
+var _ types.RuleApplier = (*NativeProxyBackend)(nil)
 var _ proxy.ResponseInterceptor = (*NativeProxyBackend)(nil)
 var _ ResponderBackend = (*NativeProxyBackend)(nil)
+var _ sidecar.RuleSource = (*NativeProxyBackend)(nil)
+var _ SidecarRegistry = (*sidecar.Manager)(nil)
 
 // NewNativeProxyBackend creates a new native proxy backend.
 // Does NOT start serving - call Serve() separately (typically in a goroutine).
+// Call EnableSidecars before Serve to host the out-of-process sidecar listener.
 func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, storage store.Provider, timeouts proxy.TimeoutConfig) (*NativeProxyBackend, error) {
 	historyStorage, err := storage("hist")
 	if err != nil {
@@ -118,6 +131,33 @@ func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, storage
 	return b, nil
 }
 
+// EnableSidecars constructs the sidecar IPC listener and registry. Call once
+// before Serve. cfg.NativeProxyPort should be the proxy's listen port; the
+// built-in adapter names are reserved automatically. coreInvoke backs the sidecar
+// core_invoke method; it resolves the read-side tools lazily so it can be supplied
+// before the MCP server exists.
+func (b *NativeProxyBackend) EnableSidecars(cfg sidecar.Config, coreInvoke sidecar.CoreService, replayStore *store.ReplayHistoryStore) error {
+	cfg.ReservedNames = []string{types.ProtocolHTTP11, types.ProtocolH2, types.ProtocolTagWS, types.AdapterScopeCore}
+	// Route sidecar-performed replays into the replay store so they report source
+	// "replay" like native replays; other flows go to proxy history.
+	sink := &replayRoutingSink{history: b.server.History(), replay: replayStore}
+	b.sidecarManager = sidecar.NewManager(cfg, b.server.Registry(), sink, coreInvoke, b)
+	lst, err := sidecar.NewListener(cfg, b.sidecarManager)
+	if err != nil {
+		return err
+	}
+	b.sidecarListener = lst
+	return nil
+}
+
+// Sidecars returns the sidecar registry, or nil when sidecars are not enabled.
+func (b *NativeProxyBackend) Sidecars() SidecarRegistry {
+	if b.sidecarManager == nil {
+		return nil // avoid a non-nil interface wrapping a nil *Manager
+	}
+	return b.sidecarManager
+}
+
 // SetCaptureFilter configures the proxy to skip storing entries that the filter rejects.
 // Filtered requests are still proxied normally.
 func (b *NativeProxyBackend) SetCaptureFilter(f proxy.CaptureFilter) {
@@ -126,6 +166,13 @@ func (b *NativeProxyBackend) SetCaptureFilter(f proxy.CaptureFilter) {
 
 // Serve starts the proxy server. Call in a goroutine.
 func (b *NativeProxyBackend) Serve() error {
+	if b.sidecarListener != nil {
+		go func() {
+			if err := b.sidecarListener.Serve(); err != nil {
+				log.Printf("sidecar: listener error: %v", err)
+			}
+		}()
+	}
 	return b.server.Serve()
 }
 
@@ -181,11 +228,15 @@ func (b *NativeProxyBackend) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	return errors.Join(
+	errs := []error{
 		b.server.Shutdown(ctx),
 		b.ruleStorage.Close(),
 		b.responderStorage.Close(),
-	)
+	}
+	if b.sidecarListener != nil {
+		errs = append(errs, b.sidecarListener.Close())
+	}
+	return errors.Join(errs...)
 }
 
 // CACert returns the CA certificate used for MITM TLS interception.
@@ -203,13 +254,18 @@ func (b *NativeProxyBackend) GetProxyHistory(ctx context.Context, count int, aft
 		reqStr := string(entry.FormatRequest(&buf))
 		respStr := string(entry.FormatResponse(&buf))
 		result = append(result, ProxyEntry{
-			FlowID:    entry.FlowID,
-			Timestamp: entry.Timestamp,
-			Request:   reqStr,
-			Response:  respStr,
-			Protocol:  entry.Protocol,
-			Scheme:    entry.Scheme,
-			Port:      entry.Port,
+			FlowID:            entry.FlowID,
+			Timestamp:         entry.StartedAt,
+			Request:           reqStr,
+			Response:          respStr,
+			Protocol:          entry.ProtocolTag,
+			Adapter:           entry.Adapter,
+			ParentFlowID:      entry.ParentFlowID,
+			Scheme:            entry.Scheme,
+			Port:              entry.Port,
+			Annotations:       entry.Annotations,
+			InvokedBy:         entry.InvokedBy,
+			SidecarInstanceID: entry.SidecarInstanceID,
 		})
 	}
 
@@ -221,17 +277,22 @@ func (b *NativeProxyBackend) GetProxyHistoryMeta(ctx context.Context, count int,
 	result := make([]ProxyEntryMeta, len(metas))
 	for i, m := range metas {
 		result[i] = ProxyEntryMeta{
-			FlowID:      m.FlowID,
-			Timestamp:   m.Timestamp,
-			Method:      m.Method,
-			Host:        m.Host,
-			Path:        m.Path,
-			Status:      m.Status,
-			RespLen:     m.RespLen,
-			Protocol:    m.Protocol,
-			Scheme:      m.Scheme,
-			Port:        m.Port,
-			ContentType: m.ContentType,
+			FlowID:            m.FlowID,
+			Timestamp:         m.Timestamp,
+			Method:            m.Method,
+			Host:              m.Host,
+			Path:              m.Path,
+			Status:            m.Status,
+			RespLen:           m.RespLen,
+			Protocol:          m.Protocol,
+			Adapter:           m.Adapter,
+			ParentFlowID:      m.ParentFlowID,
+			Scheme:            m.Scheme,
+			Port:              m.Port,
+			ContentType:       m.ContentType,
+			Annotations:       m.Annotations,
+			InvokedBy:         m.InvokedBy,
+			SidecarInstanceID: m.SidecarInstanceID,
 		}
 	}
 	return result, nil
@@ -245,20 +306,45 @@ func (b *NativeProxyBackend) GetProxyEntry(ctx context.Context, flowID string) (
 	var buf bytes.Buffer
 	reqStr := string(entry.FormatRequest(&buf))
 	respStr := string(entry.FormatResponse(&buf))
-	var interim []string
-	for _, ir := range entry.InterimResponses {
-		interim = append(interim, string(ir.SerializeRaw(&buf)))
-	}
 	return &ProxyEntry{
-		FlowID:           entry.FlowID,
-		Timestamp:        entry.Timestamp,
-		Request:          reqStr,
-		Response:         respStr,
-		InterimResponses: interim,
-		Protocol:         entry.Protocol,
-		Scheme:           entry.Scheme,
-		Port:             entry.Port,
+		FlowID:            entry.FlowID,
+		Timestamp:         entry.StartedAt,
+		Request:           reqStr,
+		Response:          respStr,
+		InterimResponses:  entry.FormatInterimResponses(&buf),
+		Protocol:          entry.ProtocolTag,
+		Adapter:           entry.Adapter,
+		ParentFlowID:      entry.ParentFlowID,
+		Scheme:            entry.Scheme,
+		Port:              entry.Port,
+		Annotations:       entry.Annotations,
+		InvokedBy:         entry.InvokedBy,
+		SidecarInstanceID: entry.SidecarInstanceID,
 	}, nil
+}
+
+func (b *NativeProxyBackend) GetProxyChildren(ctx context.Context, parentFlowID string) ([]ProxyEntry, error) {
+	children := b.server.History().Children(parentFlowID)
+	var buf bytes.Buffer
+	result := make([]ProxyEntry, 0, len(children))
+	for _, entry := range children {
+		result = append(result, ProxyEntry{
+			FlowID:            entry.FlowID,
+			Timestamp:         entry.StartedAt,
+			Request:           string(entry.FormatRequest(&buf)),
+			Response:          string(entry.FormatResponse(&buf)),
+			InterimResponses:  entry.FormatInterimResponses(&buf),
+			Protocol:          entry.ProtocolTag,
+			Adapter:           entry.Adapter,
+			ParentFlowID:      entry.ParentFlowID,
+			Scheme:            entry.Scheme,
+			Port:              entry.Port,
+			Annotations:       entry.Annotations,
+			InvokedBy:         entry.InvokedBy,
+			SidecarInstanceID: entry.SidecarInstanceID,
+		})
+	}
+	return result, nil
 }
 
 func (b *NativeProxyBackend) DeleteProxyEntries(ctx context.Context, flowIDs []string) (int, error) {
@@ -289,7 +375,7 @@ func (b *NativeProxyBackend) SendRequest(ctx context.Context, name string, req S
 
 	opts := proxy.SendOptions{
 		RawRequest: rawRequest,
-		Target: proxy.Target{
+		Target: types.Target{
 			Hostname:  req.Target.Hostname,
 			Port:      req.Target.Port,
 			UsesHTTPS: req.Target.UsesHTTPS,
@@ -299,8 +385,7 @@ func (b *NativeProxyBackend) SendRequest(ctx context.Context, name string, req S
 	}
 
 	sender := &proxy.Sender{
-		JSONModifier: ModifyJSONBodyMap,
-		Timeouts:     b.timeouts,
+		Timeouts: b.timeouts,
 	}
 	if b.hasRequestRules() {
 		sender.RequestRuleApplier = b.ApplyRequestRules
@@ -350,12 +435,24 @@ func (b *NativeProxyBackend) ListRules(ctx context.Context, websocket bool) ([]p
 			IsRegex: r.IsRegex,
 			Find:    r.Find,
 			Replace: r.Replace,
+			Adapter: r.Adapter,
 		})
 	}
 	return result, nil
 }
 
 func (b *NativeProxyBackend) AddRule(ctx context.Context, input protocol.RuleEntry) (*protocol.RuleEntry, error) {
+	out, err := b.addRuleLocked(input)
+	if err != nil {
+		return nil, err
+	}
+	b.pushRules(ctx)
+	return out, nil
+}
+
+// addRuleLocked validates, persists, and caches a rule, bumping the snapshot version.
+// Returns before the sidecar push so the caller pushes outside rulesMu.
+func (b *NativeProxyBackend) addRuleLocked(input protocol.RuleEntry) (*protocol.RuleEntry, error) {
 	// Validate type (both HTTP and WebSocket types)
 	if !validRuleTypes[input.Type] {
 		return nil, fmt.Errorf("invalid rule type: %q", input.Type)
@@ -387,6 +484,7 @@ func (b *NativeProxyBackend) AddRule(ctx context.Context, input protocol.RuleEnt
 		IsRegex:  input.IsRegex,
 		Find:     input.Find,
 		Replace:  input.Replace,
+		Adapter:  input.Adapter,
 		compiled: compiled,
 	}
 
@@ -402,6 +500,7 @@ func (b *NativeProxyBackend) AddRule(ctx context.Context, input protocol.RuleEnt
 		return nil, fmt.Errorf("persist rule: %w", err)
 	}
 	*target = updated
+	b.snapshotVersion++
 
 	return &protocol.RuleEntry{
 		RuleID:  rule.ID,
@@ -410,10 +509,21 @@ func (b *NativeProxyBackend) AddRule(ctx context.Context, input protocol.RuleEnt
 		IsRegex: rule.IsRegex,
 		Find:    rule.Find,
 		Replace: rule.Replace,
+		Adapter: rule.Adapter,
 	}, nil
 }
 
 func (b *NativeProxyBackend) DeleteRule(ctx context.Context, idOrLabel string) error {
+	if err := b.deleteRuleLocked(idOrLabel); err != nil {
+		return err
+	}
+	b.pushRules(ctx)
+	return nil
+}
+
+// deleteRuleLocked removes a rule by id or label, bumping the snapshot version.
+// Returns ErrNotFound when no rule matches, before any sidecar push.
+func (b *NativeProxyBackend) deleteRuleLocked(idOrLabel string) error {
 	b.rulesMu.Lock()
 	defer b.rulesMu.Unlock()
 
@@ -424,6 +534,7 @@ func (b *NativeProxyBackend) DeleteRule(ctx context.Context, idOrLabel string) e
 				return fmt.Errorf("persist rule: %w", err)
 			}
 			b.httpRules = updated
+			b.snapshotVersion++
 			return nil
 		}
 	}
@@ -434,10 +545,45 @@ func (b *NativeProxyBackend) DeleteRule(ctx context.Context, idOrLabel string) e
 				return fmt.Errorf("persist rule: %w", err)
 			}
 			b.wsRules = updated
+			b.snapshotVersion++
 			return nil
 		}
 	}
 	return ErrNotFound
+}
+
+// pushRules re-pushes the rule snapshot to connected sidecars after a change.
+func (b *NativeProxyBackend) pushRules(ctx context.Context) {
+	if b.sidecarManager != nil {
+		b.sidecarManager.PushRules(ctx)
+	}
+}
+
+// RuleSnapshot returns the current snapshot version and the rules scoped to the named
+// adapter (scope empty or equal to the name), in apply order (HTTP rules then WS).
+func (b *NativeProxyBackend) RuleSnapshot(adapter string) (uint64, []wire.Rule) {
+	b.rulesMu.RLock()
+	defer b.rulesMu.RUnlock()
+
+	var out []wire.Rule
+	appendScoped := func(rules []nativeStoredRule) {
+		for _, r := range rules {
+			if r.Adapter == "" || r.Adapter == adapter {
+				out = append(out, wire.Rule{
+					RuleID:  r.ID,
+					Type:    r.Type,
+					Label:   r.Label,
+					IsRegex: r.IsRegex,
+					Find:    r.Find,
+					Replace: r.Replace,
+					Adapter: r.Adapter,
+				})
+			}
+		}
+	}
+	appendScoped(b.httpRules)
+	appendScoped(b.wsRules)
+	return b.snapshotVersion, out
 }
 
 // hasRequestRules returns true if any request header or body rules exist.
@@ -445,7 +591,10 @@ func (b *NativeProxyBackend) hasRequestRules() bool {
 	b.rulesMu.RLock()
 	defer b.rulesMu.RUnlock()
 	for _, rule := range b.httpRules {
-		if rule.Type == RuleTypeRequestHeader || rule.Type == RuleTypeRequestBody {
+		if rule.Adapter != "" && rule.Adapter != types.AdapterScopeCore {
+			continue
+		}
+		if rule.Type == wire.RuleTypeRequestHeader || rule.Type == wire.RuleTypeRequestBody {
 			return true
 		}
 	}
@@ -471,19 +620,22 @@ func (b *NativeProxyBackend) labelExists(label string) bool {
 // Rules are applied in the order they were added.
 // When response body rules are active, strips unsupported encodings
 // from Accept-Encoding so the server responds with an encoding we can decompress.
-func (b *NativeProxyBackend) ApplyRequestRules(req *proxy.RawHTTP1Request) *proxy.RawHTTP1Request {
+func (b *NativeProxyBackend) ApplyRequestRules(req *types.RawHTTP1Request) *types.RawHTTP1Request {
 	b.rulesMu.RLock()
 	defer b.rulesMu.RUnlock()
 
 	var headerRules, bodyRules []nativeStoredRule
 	var hasRespBodyRules bool
 	for _, rule := range b.httpRules {
+		if rule.Adapter != "" && rule.Adapter != types.AdapterScopeCore {
+			continue
+		}
 		switch rule.Type {
-		case RuleTypeRequestHeader:
+		case wire.RuleTypeRequestHeader:
 			headerRules = append(headerRules, rule)
-		case RuleTypeRequestBody:
+		case wire.RuleTypeRequestBody:
 			bodyRules = append(bodyRules, rule)
-		case RuleTypeResponseBody:
+		case wire.RuleTypeResponseBody:
 			hasRespBodyRules = true
 		}
 	}
@@ -512,16 +664,19 @@ func (b *NativeProxyBackend) ApplyRequestRules(req *proxy.RawHTTP1Request) *prox
 
 // ApplyResponseRules applies response header and body rules.
 // Handles decompression/recompression for body rules.
-func (b *NativeProxyBackend) ApplyResponseRules(resp *proxy.RawHTTP1Response) *proxy.RawHTTP1Response {
+func (b *NativeProxyBackend) ApplyResponseRules(resp *types.RawHTTP1Response) *types.RawHTTP1Response {
 	b.rulesMu.RLock()
 	defer b.rulesMu.RUnlock()
 
 	var headerRules, bodyRules []nativeStoredRule
 	for _, rule := range b.httpRules {
+		if rule.Adapter != "" && rule.Adapter != types.AdapterScopeCore {
+			continue
+		}
 		switch rule.Type {
-		case RuleTypeResponseHeader:
+		case wire.RuleTypeResponseHeader:
 			headerRules = append(headerRules, rule)
-		case RuleTypeResponseBody:
+		case wire.RuleTypeResponseBody:
 			bodyRules = append(bodyRules, rule)
 		}
 	}
@@ -545,7 +700,10 @@ func (b *NativeProxyBackend) ApplyWSRules(payload []byte, direction string) []by
 	defer b.rulesMu.RUnlock()
 
 	for _, rule := range b.wsRules {
-		if rule.Type != RuleTypeWSBoth && rule.Type != direction {
+		if rule.Adapter != "" && rule.Adapter != types.AdapterScopeCore {
+			continue
+		}
+		if rule.Type != wire.RuleTypeWSBoth && rule.Type != direction {
 			continue
 		}
 		payload = applyMatchReplaceRule(payload, rule, false) // body content is case-sensitive
@@ -559,12 +717,15 @@ func (b *NativeProxyBackend) HasBodyRules(isRequest bool) bool {
 	b.rulesMu.RLock()
 	defer b.rulesMu.RUnlock()
 
-	targetType := RuleTypeResponseBody
+	targetType := wire.RuleTypeResponseBody
 	if isRequest {
-		targetType = RuleTypeRequestBody
+		targetType = wire.RuleTypeRequestBody
 	}
 
 	for _, rule := range b.httpRules {
+		if rule.Adapter != "" && rule.Adapter != types.AdapterScopeCore {
+			continue
+		}
 		if rule.Type == targetType {
 			return true
 		}
@@ -575,13 +736,16 @@ func (b *NativeProxyBackend) HasBodyRules(isRequest bool) bool {
 // ApplyRequestBodyOnlyRules applies only body rules to a request body.
 // Used by HTTP/2 where headers are sent separately before body.
 // If recompression fails, returns error so caller can reset the stream.
-func (b *NativeProxyBackend) ApplyRequestBodyOnlyRules(body []byte, headers proxy.Headers) ([]byte, error) {
+func (b *NativeProxyBackend) ApplyRequestBodyOnlyRules(body []byte, headers types.Headers) ([]byte, error) {
 	b.rulesMu.RLock()
 	defer b.rulesMu.RUnlock()
 
 	var bodyRules []nativeStoredRule
 	for _, rule := range b.httpRules {
-		if rule.Type == RuleTypeRequestBody {
+		if rule.Adapter != "" && rule.Adapter != types.AdapterScopeCore {
+			continue
+		}
+		if rule.Type == wire.RuleTypeRequestBody {
 			bodyRules = append(bodyRules, rule)
 		}
 	}
@@ -598,13 +762,16 @@ func (b *NativeProxyBackend) ApplyRequestBodyOnlyRules(body []byte, headers prox
 // ApplyResponseBodyOnlyRules applies only body rules to a response body.
 // Used by HTTP/2 where headers are sent separately before body.
 // If recompression fails, returns original body to avoid corrupting response.
-func (b *NativeProxyBackend) ApplyResponseBodyOnlyRules(body []byte, headers proxy.Headers) []byte {
+func (b *NativeProxyBackend) ApplyResponseBodyOnlyRules(body []byte, headers types.Headers) []byte {
 	b.rulesMu.RLock()
 	defer b.rulesMu.RUnlock()
 
 	var bodyRules []nativeStoredRule
 	for _, rule := range b.httpRules {
-		if rule.Type == RuleTypeResponseBody {
+		if rule.Adapter != "" && rule.Adapter != types.AdapterScopeCore {
+			continue
+		}
+		if rule.Type == wire.RuleTypeResponseBody {
 			bodyRules = append(bodyRules, rule)
 		}
 	}
@@ -620,7 +787,7 @@ func (b *NativeProxyBackend) ApplyResponseBodyOnlyRules(body []byte, headers pro
 }
 
 // applyRequestHeaderRules applies header rules to request.
-func (b *NativeProxyBackend) applyRequestHeaderRules(req *proxy.RawHTTP1Request, rules []nativeStoredRule) *proxy.RawHTTP1Request {
+func (b *NativeProxyBackend) applyRequestHeaderRules(req *types.RawHTTP1Request, rules []nativeStoredRule) *types.RawHTTP1Request {
 	// Serialize headers to text format
 	var headerBuf bytes.Buffer
 	for _, h := range req.Headers {
@@ -649,7 +816,7 @@ func (b *NativeProxyBackend) applyRequestHeaderRules(req *proxy.RawHTTP1Request,
 }
 
 // applyRequestBodyRules applies body rules to request with compression handling.
-func (b *NativeProxyBackend) applyRequestBodyRules(req *proxy.RawHTTP1Request, rules []nativeStoredRule) *proxy.RawHTTP1Request {
+func (b *NativeProxyBackend) applyRequestBodyRules(req *types.RawHTTP1Request, rules []nativeStoredRule) *types.RawHTTP1Request {
 	encoding := req.GetHeader("Content-Encoding")
 	result := applyBodyRulesWithCompression(req.Body, encoding, rules)
 
@@ -669,7 +836,7 @@ func (b *NativeProxyBackend) applyRequestBodyRules(req *proxy.RawHTTP1Request, r
 }
 
 // applyResponseHeaderRules applies header rules to response.
-func (b *NativeProxyBackend) applyResponseHeaderRules(resp *proxy.RawHTTP1Response, rules []nativeStoredRule) *proxy.RawHTTP1Response {
+func (b *NativeProxyBackend) applyResponseHeaderRules(resp *types.RawHTTP1Response, rules []nativeStoredRule) *types.RawHTTP1Response {
 	// Serialize headers to text format
 	var headerBuf bytes.Buffer
 	for _, h := range resp.Headers {
@@ -698,7 +865,7 @@ func (b *NativeProxyBackend) applyResponseHeaderRules(resp *proxy.RawHTTP1Respon
 }
 
 // applyResponseBodyRules applies body rules to response with compression handling.
-func (b *NativeProxyBackend) applyResponseBodyRules(resp *proxy.RawHTTP1Response, rules []nativeStoredRule) *proxy.RawHTTP1Response {
+func (b *NativeProxyBackend) applyResponseBodyRules(resp *types.RawHTTP1Response, rules []nativeStoredRule) *types.RawHTTP1Response {
 	encoding := resp.GetHeader("Content-Encoding")
 	result := applyBodyRulesWithCompression(resp.Body, encoding, rules)
 
@@ -827,9 +994,7 @@ func equalFoldASCIIAt(input []byte, pos int, match string) bool {
 }
 
 // replaceCaseInsensitive replaces all occurrences of match in input using ASCII-only case folding.
-// Scanning the original buffer (not a Unicode-lowercased copy) keeps match length identical in both
-// spaces, so indices can't drift or run past the input. Non-ASCII bytes fold case-sensitively, which
-// is correct for HTTP headers.
+// Non-ASCII bytes fold case-sensitively, which is correct for HTTP headers.
 func replaceCaseInsensitive(input []byte, match, replace string) []byte {
 	if match == "" {
 		return input
@@ -852,9 +1017,9 @@ func replaceCaseInsensitive(input []byte, match, replace string) []byte {
 }
 
 // parseHeadersFromText parses "Name: Value\r\n" lines into Header slice.
-func parseHeadersFromText(text []byte) []proxy.Header {
+func parseHeadersFromText(text []byte) []types.Header {
 	lines := bytes.Split(text, []byte("\r\n"))
-	headers := make([]proxy.Header, 0, len(lines))
+	headers := make([]types.Header, 0, len(lines))
 	for _, line := range lines {
 		if len(line) == 0 {
 			continue
@@ -866,7 +1031,7 @@ func parseHeadersFromText(text []byte) []proxy.Header {
 		}
 		name := string(line[:idx])
 		value := string(bytes.TrimSpace(line[idx+1:]))
-		headers = append(headers, proxy.Header{Name: name, Value: value})
+		headers = append(headers, types.Header{Name: name, Value: value})
 	}
 	return headers
 }

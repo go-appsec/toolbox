@@ -12,6 +12,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/ids"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
@@ -60,9 +61,9 @@ func (b *NativeProxyBackend) InterceptRequest(host string, port int, path string
 		if r.Method != "" && !strings.EqualFold(r.Method, method) {
 			continue
 		}
-		headers := make(proxy.Headers, 0, len(r.Headers))
+		headers := make(types.Headers, 0, len(r.Headers))
 		for name, value := range r.Headers {
-			headers = append(headers, proxy.Header{Name: name, Value: value})
+			headers = append(headers, types.Header{Name: name, Value: value})
 		}
 		return &proxy.InterceptedResponse{
 			StatusCode: r.StatusCode,

@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-appsec/toolbox/sectool/service/proxy/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
@@ -19,11 +21,11 @@ func newTestHTTP1Handler(t *testing.T) *http1Handler {
 
 	history := newHistoryStore(store.NewMemStorage())
 	t.Cleanup(history.Close)
-	return &http1Handler{history: history}
+	return &http1Handler{history: history, reg: &protocol.Registry{}}
 }
 
-// firstEntry returns the oldest HistoryEntry in h. Test helper for offset-free assertions.
-func firstEntry(t *testing.T, h *HistoryStore) *HistoryEntry {
+// firstEntry returns the oldest Flow in h. Test helper for offset-free assertions.
+func firstEntry(t *testing.T, h *HistoryStore) *types.Flow {
 	t.Helper()
 
 	entries := h.Page(1, "")
@@ -37,7 +39,7 @@ func TestExtractTarget(t *testing.T) {
 	tests := []struct {
 		name     string
 		path     string
-		headers  []Header
+		headers  []types.Header
 		wantHost string
 		wantPort int
 		wantTLS  bool
@@ -76,7 +78,7 @@ func TestExtractTarget(t *testing.T) {
 		{
 			name:     "host_only",
 			path:     "/path",
-			headers:  []Header{{Name: "Host", Value: "example.com"}},
+			headers:  []types.Header{{Name: "Host", Value: "example.com"}},
 			wantHost: "example.com",
 			wantPort: 80,
 			wantTLS:  false,
@@ -84,7 +86,7 @@ func TestExtractTarget(t *testing.T) {
 		{
 			name:     "host_with_port",
 			path:     "/path",
-			headers:  []Header{{Name: "Host", Value: "example.com:8080"}},
+			headers:  []types.Header{{Name: "Host", Value: "example.com:8080"}},
 			wantHost: "example.com",
 			wantPort: 8080,
 			wantTLS:  false,
@@ -93,7 +95,7 @@ func TestExtractTarget(t *testing.T) {
 		{
 			name:     "ipv6_brackets_http",
 			path:     "/path",
-			headers:  []Header{{Name: "Host", Value: "[::1]"}},
+			headers:  []types.Header{{Name: "Host", Value: "[::1]"}},
 			wantHost: "::1",
 			wantPort: 80,
 			wantTLS:  false,
@@ -101,7 +103,7 @@ func TestExtractTarget(t *testing.T) {
 		{
 			name:     "ipv6_brackets_with_port",
 			path:     "/path",
-			headers:  []Header{{Name: "Host", Value: "[::1]:8080"}},
+			headers:  []types.Header{{Name: "Host", Value: "[::1]:8080"}},
 			wantHost: "::1",
 			wantPort: 8080,
 			wantTLS:  false,
@@ -122,14 +124,14 @@ func TestExtractTarget(t *testing.T) {
 		{
 			name:    "empty_host_header",
 			path:    "/path",
-			headers: []Header{{Name: "Host", Value: ""}},
+			headers: []types.Header{{Name: "Host", Value: ""}},
 			wantErr: "no Host header",
 		},
 		// edge cases
 		{
 			name:     "host_with_trailing_dot",
 			path:     "/path",
-			headers:  []Header{{Name: "Host", Value: "example.com."}},
+			headers:  []types.Header{{Name: "Host", Value: "example.com."}},
 			wantHost: "example.com.",
 			wantPort: 80,
 			wantTLS:  false,
@@ -137,7 +139,7 @@ func TestExtractTarget(t *testing.T) {
 		{
 			name:     "localhost",
 			path:     "/path",
-			headers:  []Header{{Name: "Host", Value: "localhost"}},
+			headers:  []types.Header{{Name: "Host", Value: "localhost"}},
 			wantHost: "localhost",
 			wantPort: 80,
 			wantTLS:  false,
@@ -145,7 +147,7 @@ func TestExtractTarget(t *testing.T) {
 		{
 			name:     "localhost_with_port",
 			path:     "/path",
-			headers:  []Header{{Name: "Host", Value: "localhost:8080"}},
+			headers:  []types.Header{{Name: "Host", Value: "localhost:8080"}},
 			wantHost: "localhost",
 			wantPort: 8080,
 			wantTLS:  false,
@@ -153,7 +155,7 @@ func TestExtractTarget(t *testing.T) {
 		{
 			name:     "ipv4_localhost",
 			path:     "/path",
-			headers:  []Header{{Name: "Host", Value: "127.0.0.1:3000"}},
+			headers:  []types.Header{{Name: "Host", Value: "127.0.0.1:3000"}},
 			wantHost: "127.0.0.1",
 			wantPort: 3000,
 			wantTLS:  false,
@@ -171,7 +173,7 @@ func TestExtractTarget(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newTestHTTP1Handler(t)
 
-			req := &RawHTTP1Request{
+			req := &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    tt.path,
 				Version: "HTTP/1.1",
@@ -201,7 +203,7 @@ func TestRewriteToOriginForm(t *testing.T) {
 		name        string
 		inputPath   string
 		inputQuery  string
-		target      *Target
+		target      *types.Target
 		wantPath    string
 		wantHostHdr string
 	}{
@@ -209,7 +211,7 @@ func TestRewriteToOriginForm(t *testing.T) {
 			name:       "proxy_form_to_origin",
 			inputPath:  "http://example.com/api/users",
 			inputQuery: "id=123",
-			target: &Target{
+			target: &types.Target{
 				Hostname:  "example.com",
 				Port:      80,
 				UsesHTTPS: false,
@@ -221,7 +223,7 @@ func TestRewriteToOriginForm(t *testing.T) {
 			name:       "https_proxy_form",
 			inputPath:  "https://secure.example.com:8443/path",
 			inputQuery: "",
-			target: &Target{
+			target: &types.Target{
 				Hostname:  "secure.example.com",
 				Port:      8443,
 				UsesHTTPS: true,
@@ -233,7 +235,7 @@ func TestRewriteToOriginForm(t *testing.T) {
 			name:       "already_origin_form",
 			inputPath:  "/already/origin",
 			inputQuery: "",
-			target: &Target{
+			target: &types.Target{
 				Hostname:  "example.com",
 				Port:      80,
 				UsesHTTPS: false,
@@ -245,7 +247,7 @@ func TestRewriteToOriginForm(t *testing.T) {
 			name:       "root_path",
 			inputPath:  "http://example.com",
 			inputQuery: "",
-			target: &Target{
+			target: &types.Target{
 				Hostname:  "example.com",
 				Port:      80,
 				UsesHTTPS: false,
@@ -257,7 +259,7 @@ func TestRewriteToOriginForm(t *testing.T) {
 			name:       "non_standard_http_port",
 			inputPath:  "/path",
 			inputQuery: "",
-			target: &Target{
+			target: &types.Target{
 				Hostname:  "example.com",
 				Port:      8080,
 				UsesHTTPS: false,
@@ -269,7 +271,7 @@ func TestRewriteToOriginForm(t *testing.T) {
 			name:       "query_only_in_path",
 			inputPath:  "http://example.com?foo=bar",
 			inputQuery: "",
-			target: &Target{
+			target: &types.Target{
 				Hostname:  "example.com",
 				Port:      80,
 				UsesHTTPS: false,
@@ -281,7 +283,7 @@ func TestRewriteToOriginForm(t *testing.T) {
 			name:       "path_with_fragment",
 			inputPath:  "http://example.com/page#section",
 			inputQuery: "",
-			target: &Target{
+			target: &types.Target{
 				Hostname:  "example.com",
 				Port:      80,
 				UsesHTTPS: false,
@@ -293,7 +295,7 @@ func TestRewriteToOriginForm(t *testing.T) {
 			name:       "ipv6_host",
 			inputPath:  "/api",
 			inputQuery: "",
-			target: &Target{
+			target: &types.Target{
 				Hostname:  "::1",
 				Port:      8080,
 				UsesHTTPS: false,
@@ -305,7 +307,7 @@ func TestRewriteToOriginForm(t *testing.T) {
 			name:       "standard_https_port",
 			inputPath:  "/secure",
 			inputQuery: "",
-			target: &Target{
+			target: &types.Target{
 				Hostname:  "secure.example.com",
 				Port:      443,
 				UsesHTTPS: true,
@@ -319,12 +321,12 @@ func TestRewriteToOriginForm(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newTestHTTP1Handler(t)
 
-			req := &RawHTTP1Request{
+			req := &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    tt.inputPath,
 				Query:   tt.inputQuery,
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "original.host"},
 				},
 			}
@@ -555,13 +557,13 @@ func TestStoreEntry(t *testing.T) {
 	t.Run("stores_request_response", func(t *testing.T) {
 		h := newTestHTTP1Handler(t)
 
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Host", Value: "example.com"}},
+			Headers: []types.Header{{Name: "Host", Value: "example.com"}},
 		}
-		resp := &RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
@@ -569,13 +571,13 @@ func TestStoreEntry(t *testing.T) {
 		}
 		startTime := time.Now()
 
-		h.storeEntry(&Target{Hostname: "example.com", Port: 80}, req, resp, nil, startTime)
+		h.storeEntry(&types.Target{Hostname: "example.com", Port: 80}, req, resp, nil, startTime)
 
 		// Verify entry was stored
 		assert.Equal(t, 1, h.history.Count())
 
 		entry := firstEntry(t, h.history)
-		assert.Equal(t, "http/1.1", entry.Protocol)
+		assert.Equal(t, "http/1.1", entry.ProtocolTag)
 		assert.Equal(t, "GET", entry.Request.Method)
 		assert.Equal(t, 200, entry.Response.StatusCode)
 		assert.Equal(t, "http", entry.Scheme)
@@ -585,15 +587,15 @@ func TestStoreEntry(t *testing.T) {
 	t.Run("records_https_scheme", func(t *testing.T) {
 		h := newTestHTTP1Handler(t)
 
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Host", Value: "example.com"}},
+			Headers: []types.Header{{Name: "Host", Value: "example.com"}},
 		}
 		startTime := time.Now()
 
-		h.storeEntry(&Target{Hostname: "example.com", Port: 8443, UsesHTTPS: true}, req, nil, nil, startTime)
+		h.storeEntry(&types.Target{Hostname: "example.com", Port: 8443, UsesHTTPS: true}, req, nil, nil, startTime)
 
 		entry := firstEntry(t, h.history)
 		assert.Equal(t, "https", entry.Scheme)
@@ -603,15 +605,15 @@ func TestStoreEntry(t *testing.T) {
 	t.Run("stores_entry_with_nil_response", func(t *testing.T) {
 		h := newTestHTTP1Handler(t)
 
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Host", Value: "example.com"}},
+			Headers: []types.Header{{Name: "Host", Value: "example.com"}},
 		}
 		startTime := time.Now()
 
-		h.storeEntry(&Target{Hostname: "example.com", Port: 80}, req, nil, nil, startTime)
+		h.storeEntry(&types.Target{Hostname: "example.com", Port: 80}, req, nil, nil, startTime)
 
 		assert.Equal(t, 1, h.history.Count())
 

@@ -4,12 +4,14 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 )
 
 // InterceptedResponse is a canned response to serve for an intercepted request.
 type InterceptedResponse struct {
 	StatusCode int
-	Headers    Headers
+	Headers    types.Headers
 	Body       []byte
 }
 
@@ -26,15 +28,15 @@ type ResponseInterceptor interface {
 // BuildInterceptedH1Response converts an InterceptedResponse to a wire-serializable RawHTTP1Response.
 // Computes Content-Length when the responder set no framing header so keep-alive
 // clients don't hang on connection-close framing.
-func BuildInterceptedH1Response(intercepted *InterceptedResponse) *RawHTTP1Response {
+func BuildInterceptedH1Response(intercepted *InterceptedResponse) *types.RawHTTP1Response {
 	headers := slices.Clone(intercepted.Headers)
 	if headers.Get("Content-Length") == "" && headers.Get("Transfer-Encoding") == "" {
-		headers = append(headers, Header{
+		headers = append(headers, types.Header{
 			Name:  "Content-Length",
 			Value: strconv.Itoa(len(intercepted.Body)),
 		})
 	}
-	return &RawHTTP1Response{
+	return &types.RawHTTP1Response{
 		Version:    "HTTP/1.1",
 		StatusCode: intercepted.StatusCode,
 		StatusText: http.StatusText(intercepted.StatusCode),

@@ -12,6 +12,15 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/go-appsec/toolbox/sectool/service/proxy/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
+)
+
+// ALPN protocol identifiers (RFC 7301): on-the-wire tokens exchanged during TLS negotiation
+const (
+	alpnH2    = "h2"
+	alpnHTTP1 = "http/1.1"
 )
 
 // connectHandler handles CONNECT requests for HTTPS MITM interception.
@@ -19,12 +28,12 @@ type connectHandler struct {
 	certManager  *CertManager
 	http1Handler *http1Handler
 	http2Handler *http2Handler
+	reg          *protocol.Registry
 	history      *HistoryStore
 	maxBodyBytes int
 
-	// Server capability cache: host:port -> negotiated protocol ("h2" or "http/1.1")
-	// Avoids repeated probe latency for the same server
-	// TODO - Consider adding a 30-minute TTL on cache entries for long-running sessions
+	// Server capability cache: host:port -> negotiated protocol; avoids repeated probe latency
+	// TODO - Consider a 30-minute TTL on cache entries for long-running sessions
 	capsMu     sync.RWMutex
 	serverCaps map[string]string
 
@@ -45,7 +54,7 @@ func newConnectHandler(certManager *CertManager, http1Handler *http1Handler, htt
 }
 
 // SetRuleApplier propagates the rule applier to child handlers.
-func (h *connectHandler) SetRuleApplier(applier RuleApplier) {
+func (h *connectHandler) SetRuleApplier(applier types.RuleApplier) {
 	h.http1Handler.ruleApplier = applier
 	if h.http2Handler != nil {
 		h.http2Handler.SetRuleApplier(applier)
@@ -66,6 +75,23 @@ func (h *connectHandler) Handle(ctx context.Context, clientConn net.Conn, client
 		return
 	}
 
+	// Connect-signal sidecar may claim the established tunnel before TLS, taking the raw post-CONNECT bytes
+	hostPort := net.JoinHostPort(target.Hostname, strconv.Itoa(target.Port))
+	uc := &protocol.UpgradeClaimCtx{
+		Req: &types.RawHTTP1Request{
+			Method:  "CONNECT",
+			Path:    hostPort,
+			Version: "HTTP/1.1",
+			Headers: []types.Header{{Name: "Host", Value: hostPort}},
+		},
+		Target: target,
+		Signal: "connect",
+	}
+	if a, ok := h.reg.ClaimUpgrade(uc); ok {
+		a.ServeUpgrade(ctx, uc, protocol.UpgradeConns{ClientConn: clientConn, ClientReader: clientReader})
+		return
+	}
+
 	h.handleTLS(ctx, clientConn, clientReader, target)
 }
 
@@ -79,7 +105,7 @@ type readerConn struct {
 func (c *readerConn) Read(p []byte) (int, error) { return c.r.Read(p) }
 
 // parseConnectRequest parses "CONNECT host:port HTTP/1.1" and reads remaining headers.
-func (h *connectHandler) parseConnectRequest(reader *bufio.Reader) (*Target, error) {
+func (h *connectHandler) parseConnectRequest(reader *bufio.Reader) (*types.Target, error) {
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		return nil, fmt.Errorf("read request line: %w", err)
@@ -104,7 +130,7 @@ func (h *connectHandler) parseConnectRequest(reader *bufio.Reader) (*Target, err
 		return nil, fmt.Errorf("invalid port: %s", portStr)
 	}
 
-	// Read and discard remaining headers until empty line
+	// discard remaining headers until empty line
 	for {
 		headerLine, readErr := reader.ReadString('\n')
 		if readErr != nil {
@@ -118,28 +144,33 @@ func (h *connectHandler) parseConnectRequest(reader *bufio.Reader) (*Target, err
 		}
 	}
 
-	return &Target{
+	return &types.Target{
 		Hostname:  host,
 		Port:      port,
 		UsesHTTPS: true,
 	}, nil
 }
 
-// handleTLS performs TLS handshake with delayed protocol probing.
-// The probe happens inside GetConfigForClient to ensure protocol matching.
-func (h *connectHandler) handleTLS(ctx context.Context, clientConn net.Conn, clientReader *bufio.Reader, target *Target) {
+// handleTLS performs the client TLS handshake and routes the decrypted
+// post-CONNECT stream by negotiated protocol. Upstream protocol probing is
+// deferred until the client hello is seen so the presented ALPN can be matched.
+func (h *connectHandler) handleTLS(ctx context.Context, clientConn net.Conn, clientReader *bufio.Reader, target *types.Target) {
 	targetAddr := fmt.Sprintf("%s:%d", target.Hostname, target.Port)
 
 	// Variables to capture from GetConfigForClient callback
 	var upstreamConn net.Conn
 	var negotiatedProto string
 	var probeErr error
+	var sni string
+	// tlsBridge set when a sidecar claims by SNI/target: sectool terminates TLS with
+	// the fake CA and hands it the decrypted stream, no upstream dial
+	var tlsBridge protocol.TLSEarlyAdapter
 
 	// Create TLS config with GetConfigForClient for delayed protocol probing
 	tlsConfig := &tls.Config{
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 			// Capture SNI
-			sni := hello.ServerName
+			sni = hello.ServerName
 			if sni == "" {
 				sni = target.Hostname
 			}
@@ -147,6 +178,16 @@ func (h *connectHandler) handleTLS(ctx context.Context, clientConn net.Conn, cli
 			// Log potential domain fronting
 			if sni != target.Hostname {
 				log.Printf("proxy: SNI mismatch - CONNECT target=%s, SNI=%s (possible domain fronting)", target.Hostname, sni)
+			}
+
+			// A sidecar tls.terminate claim takes precedence: skip the upstream dial
+			if b, ok := h.reg.MatchTLS(sni, target.Hostname, target.Port); ok {
+				tlsBridge = b
+				cert, certErr := h.certManager.GetCertificate(sni)
+				if certErr != nil {
+					return nil, certErr
+				}
+				return &tls.Config{Certificates: []tls.Certificate{*cert}}, nil
 			}
 
 			// Probe or use cached protocol
@@ -188,6 +229,32 @@ func (h *connectHandler) handleTLS(ctx context.Context, clientConn net.Conn, cli
 		if upstreamConn != nil {
 			_ = upstreamConn.Close()
 		}
+		return
+	}
+
+	// Sidecar claimed the connection: hand it the decrypted stream; decrypted matchers
+	// may still decline, then we dial upstream and fall through to the HTTP path
+	if tlsBridge != nil {
+		c := &protocol.EarlyClaimCtx{
+			TLSTerminated: true,
+			Target:        target,
+			ClientConn:    clientTLS,
+			ClientReader:  bufio.NewReader(clientTLS),
+		}
+		if tlsBridge.ClaimEarly(c) {
+			tlsBridge.ServeEarly(ctx, c)
+			_ = clientTLS.Close()
+			return
+		}
+		// Client handshake completed with no ALPN (claim cert offered none), so client
+		// speaks HTTP/1.1; dial upstream with no ALPN too to avoid an h2/h1 split
+		var err error
+		if upstreamConn, negotiatedProto, err = h.probeOrConnect(ctx, targetAddr, sni, nil); err != nil {
+			log.Printf("proxy: upstream probe failed: %v", err)
+			_ = clientTLS.Close()
+			return
+		}
+		h.routeByProtocol(ctx, clientTLS, upstreamConn, negotiatedProto, target)
 		return
 	}
 
@@ -240,7 +307,7 @@ func (h *connectHandler) probeUpstream(ctx context.Context, targetAddr, sni stri
 
 	// Default to HTTP/1.1 if no ALPN negotiated
 	if negotiatedProto == "" {
-		negotiatedProto = "http/1.1"
+		negotiatedProto = alpnHTTP1
 	}
 
 	// Cache the result
@@ -268,30 +335,23 @@ func (h *connectHandler) dialUpstream(ctx context.Context, targetAddr, sni strin
 	return tlsDialer.DialContext(ctx, "tcp", targetAddr)
 }
 
-// routeByProtocol routes the connection to the appropriate protocol handler.
-func (h *connectHandler) routeByProtocol(ctx context.Context, clientTLS, upstreamConn net.Conn, protocol string, target *Target) {
+// routeByProtocol feeds the decrypted post-CONNECT stream through the early-claim
+// seam, keyed on the negotiated ALPN (h2 -> HTTP/2 adapter, else HTTP/1.1 fallthrough).
+func (h *connectHandler) routeByProtocol(ctx context.Context, clientTLS, upstreamConn net.Conn, alpn string, target *types.Target) {
 	defer func() {
 		_ = clientTLS.Close()
 		_ = upstreamConn.Close()
 	}()
 
-	switch protocol {
-	case "h2":
-		// HTTP/2 MITM
-		clientTLSConn, ok1 := clientTLS.(*tls.Conn)
-		upstreamTLSConn, ok2 := upstreamConn.(*tls.Conn)
-		if ok1 && ok2 && h.http2Handler != nil {
-			h.http2Handler.Handle(ctx, clientTLSConn, upstreamTLSConn)
-		} else {
-			log.Printf("proxy: HTTP/2 handler not available or invalid connection types")
-		}
-
-	default:
-		// HTTP/1.1 or no ALPN
-		clientReader := bufio.NewReader(clientTLS)
-		upstreamReader := bufio.NewReader(upstreamConn)
-		h.http1Handler.HandleTLS(ctx, clientTLS, upstreamConn, clientReader, upstreamReader, target)
-	}
+	h.reg.DispatchEarly(ctx, &protocol.EarlyClaimCtx{
+		TLSTerminated:  true,
+		ALPN:           alpn,
+		Target:         target,
+		ClientConn:     clientTLS,
+		ClientReader:   bufio.NewReader(clientTLS),
+		UpstreamConn:   upstreamConn,
+		UpstreamReader: bufio.NewReader(upstreamConn),
+	})
 }
 
 // sendConnectError writes an HTTP error response for CONNECT failures.

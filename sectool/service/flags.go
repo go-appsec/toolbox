@@ -13,13 +13,14 @@ const DefaultMCPPort = 9119
 
 // MCPServerFlags holds flags for MCP server mode.
 type MCPServerFlags struct {
-	ConfigPath   string
-	BurpMCPURL   string
-	MCPPort      int
-	ProxyPort    int    // 0 = not set via CLI
-	RequireBurp  bool   // --burp flag: require Burp, error if unavailable
-	WorkflowMode string // "", "none", "multi", "explore", "test-report"
-	Notes        bool   // enable notes/findings tools (experimental)
+	ConfigPath    string
+	BurpMCPURL    string
+	MCPPort       int
+	ProxyPort     int    // 0 = not set via CLI
+	RequireBurp   bool   // --burp flag: require Burp, error if unavailable
+	WorkflowMode  string // "", "none", "multi", "explore", "test-report"
+	Notes         bool   // enable notes/findings tools (experimental)
+	SidecarSocket string // override for the sidecar IPC socket (path or host:port)
 }
 
 // ParseMCPServerFlags parses flags for MCP server mode (sectool mcp).
@@ -37,6 +38,7 @@ func ParseMCPServerFlags(args []string) (MCPServerFlags, error) {
 	fs.BoolVar(&flags.RequireBurp, "burp", false, "require Burp MCP (error if unavailable)")
 	fs.StringVar(&flags.WorkflowMode, "workflow", "", "MCP workflow mode: none, multi, explore, test-report")
 	fs.BoolVar(&flags.Notes, "notes", false, "enable notes/findings tools (experimental)")
+	fs.StringVar(&flags.SidecarSocket, "sidecar-socket", "", "sidecar IPC socket path or host:port (overrides config)")
 
 	if err := fs.Parse(args); err != nil {
 		return flags, err

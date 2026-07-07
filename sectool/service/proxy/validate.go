@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 )
 
 // validateRequest checks a parsed request for protocol issues that the parser
 // tolerates but that may indicate malformed input, injection, or smuggling.
 // Used when force=false to warn about conditions that force=true bypasses.
 // Returns nil if request passes all checks, or an error listing all issues.
-func validateRequest(req *RawHTTP1Request) error {
+func validateRequest(req *types.RawHTTP1Request) error {
 	if req == nil {
 		return errors.New("nil request")
 	}
@@ -113,7 +115,7 @@ func validateRequest(req *RawHTTP1Request) error {
 }
 
 // countHeaders returns the number of headers with the given name (case-insensitive).
-func countHeaders(headers Headers, name string) int {
+func countHeaders(headers types.Headers, name string) int {
 	var count int
 	for _, h := range headers {
 		if strings.EqualFold(h.Name, name) {

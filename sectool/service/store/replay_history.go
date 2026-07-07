@@ -28,6 +28,12 @@ type ReplayHistoryMeta struct {
 	RespStatus   int           `msgpack:"rs"`
 	RespLen      int           `msgpack:"rl"`
 	Duration     time.Duration `msgpack:"d"`
+	// Annotations carries sidecar-authored flow metadata; nil for native sends.
+	Annotations map[string]any `msgpack:"an,omitempty"`
+	// InvokedBy names the sidecar that originated a native send via invoke_adapter.
+	InvokedBy string `msgpack:"ib,omitempty"`
+	// Adapter names the sidecar that performed a replay; empty for native sends.
+	Adapter string `msgpack:"ad,omitempty"`
 }
 
 // ReplayHistoryPayload holds the heavy request/response data for a replay entry.
@@ -51,7 +57,7 @@ type ReplayHistoryEntry struct {
 	Path            string
 	Scheme          string // "http" or "https"
 	Port            int    // original port (0 = infer from scheme)
-	Protocol        string // "http/1.1" or "h2"
+	Protocol        string // "http/1.1" or "http/2"
 
 	// Response data
 	RespHeaders []byte
@@ -61,7 +67,16 @@ type ReplayHistoryEntry struct {
 
 	// Lineage
 	SourceFlowID string // Original flow_id that was replayed (empty for request_send)
+
+	// Annotations carries sidecar-authored flow metadata; nil for native sends.
+	Annotations map[string]any
+	// InvokedBy names the sidecar that originated a native send via invoke_adapter.
+	InvokedBy string
+	// Adapter names the sidecar that performed a replay; empty for native sends.
+	Adapter string
 }
+
+// TODO - Consider combining the HistoryStore and ReplayHistoryStore into a single unified storage
 
 // ReplayHistoryStore manages replay entries with thread-safe access.
 type ReplayHistoryStore struct {
@@ -99,6 +114,9 @@ func (s *ReplayHistoryStore) Store(entry *ReplayHistoryEntry) {
 		RespStatus:   entry.RespStatus,
 		RespLen:      len(entry.RespBody),
 		Duration:     entry.Duration,
+		Annotations:  entry.Annotations,
+		InvokedBy:    entry.InvokedBy,
+		Adapter:      entry.Adapter,
 	}
 	payload := ReplayHistoryPayload{
 		RawRequest:      entry.RawRequest,
@@ -176,6 +194,9 @@ func (s *ReplayHistoryStore) getLocked(flowID string) (*ReplayHistoryEntry, bool
 		RespStatus:      meta.RespStatus,
 		Duration:        meta.Duration,
 		SourceFlowID:    meta.SourceFlowID,
+		Annotations:     meta.Annotations,
+		InvokedBy:       meta.InvokedBy,
+		Adapter:         meta.Adapter,
 	}, true
 }
 

@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +16,9 @@ import (
 
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/protocol/sidecar"
 	"github.com/go-appsec/toolbox/sectool/service/store"
+	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
 const (
@@ -23,22 +27,25 @@ const (
 
 // Server is the sectool MCP server.
 type Server struct {
-	cfg             *config.Config
-	configPath      string // resolved config file path (respects --config flag)
-	flagBurpMCPURL  string
-	flagConfigPath  string
-	flagMCPPort     int  // CLI override, 0 means use config
-	flagProxyPort   int  // CLI override for built-in proxy, 0 means use config
-	flagRequireBurp bool // --burp flag: require Burp MCP
+	cfg               *config.Config
+	configPath        string // resolved config file path (respects --config flag)
+	flagBurpMCPURL    string
+	flagConfigPath    string
+	flagMCPPort       int    // CLI override, 0 means use config
+	flagProxyPort     int    // CLI override for built-in proxy, 0 means use config
+	flagRequireBurp   bool   // --burp flag: require Burp MCP
+	flagSidecarSocket string // CLI override for the sidecar IPC socket
 
 	// MCP server settings
 	mcpPort           int
 	mcpWorkflowMode   string
-	proxyPort         int  // resolved port for built-in proxy
-	usingBuiltinProxy bool // true if using built-in proxy instead of Burp
+	proxyPort         int    // resolved port for built-in proxy
+	sidecarSocket     string // resolved sidecar IPC socket address
+	usingBuiltinProxy bool   // true if using built-in proxy instead of Burp
 
 	// Runtime state
 	mcpServer *mcpServer
+	mcpReady  atomic.Pointer[mcpServer] // set once mcpServer is built; backs sidecar core_invoke
 	started   chan struct{}
 	startedAt time.Time
 
@@ -101,6 +108,7 @@ func NewServer(flags MCPServerFlags, hb HttpBackend, ob OastBackend, cb CrawlerB
 		flagMCPPort:        flags.MCPPort,
 		flagProxyPort:      flags.ProxyPort,
 		flagRequireBurp:    flags.RequireBurp,
+		flagSidecarSocket:  flags.SidecarSocket,
 		mcpWorkflowMode:    flags.WorkflowMode,
 		notesEnabled:       flags.Notes,
 		started:            make(chan struct{}),
@@ -166,6 +174,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	s.mcpServer = newMCPServer(s, s.mcpWorkflowMode)
+	s.mcpReady.Store(s.mcpServer)
 	if err := s.mcpServer.Start(s.mcpPort); err != nil {
 		return fmt.Errorf("failed to start MCP server: %w", err)
 	}
@@ -215,6 +224,39 @@ func (s *Server) shutdown() error {
 
 	log.Printf("sectool MCP server stopped")
 	return nil
+}
+
+// CoreInvoke dispatches a core MCP tool by name for the sidecar core_invoke
+// method, delegating to the MCP server's tool handlers once it is built.
+func (s *Server) CoreInvoke(ctx context.Context, tool string, params json.RawMessage) (string, bool, error) {
+	m := s.mcpReady.Load()
+	if m == nil {
+		return "", false, errors.New("core tools not ready")
+	}
+	return m.CoreInvoke(ctx, tool, params)
+}
+
+// OriginateNative backs a sidecar's invoke_adapter targeting the reserved
+// "sectool" adapter: it originates an outbound HTTP request through the native
+// send path. Returns an error until the MCP server is ready.
+func (s *Server) OriginateNative(ctx context.Context, p wire.SidecarSendParams, invokedBy string) (wire.SidecarSendResult, *wire.Error) {
+	m := s.mcpReady.Load()
+	if m == nil {
+		return wire.SidecarSendResult{}, wire.NewError(wire.CodeInjectSendFailed, "invoke_adapter: native origination not ready")
+	}
+	return m.originateNative(ctx, p, invokedBy)
+}
+
+// CoreToolNames returns the static core MCP tool names captured at construction,
+// or nil before the MCP server is built. It lets the sidecar registry reject a
+// tool-name collision against core tools; connected sidecars' tool names are
+// checked separately, so this stays the genuine core set.
+func (s *Server) CoreToolNames() []string {
+	m := s.mcpReady.Load()
+	if m == nil {
+		return nil
+	}
+	return m.coreTools
 }
 
 // RequestShutdown initiates server shutdown.
@@ -277,8 +319,20 @@ func (s *Server) loadOrCreateConfig() error {
 		s.proxyPort = cfg.ProxyPort
 	}
 
+	// Resolve sidecar socket: flag > config (config is already defaulted)
+	if s.flagSidecarSocket != "" {
+		s.sidecarSocket = s.flagSidecarSocket
+	} else {
+		s.sidecarSocket = cfg.Sidecars.Socket
+	}
+
 	s.cfg = cfg
 	return nil
+}
+
+// sidecarsEnabled reports whether the operator opted into sidecars.
+func (s *Server) sidecarsEnabled() bool {
+	return s.cfg.Sidecars.Enabled != nil && *s.cfg.Sidecars.Enabled
 }
 
 // setupHttpBackend sets up the HTTP backend based on flags and config.
@@ -299,6 +353,7 @@ func (s *Server) setupHttpBackend(ctx context.Context) error {
 		if err := s.connectBurpMCP(ctx); err != nil {
 			return fmt.Errorf("--burp flag requires Burp MCP: %w", err)
 		}
+		s.warnSidecarsUnderBurp()
 		return nil
 	}
 
@@ -307,6 +362,7 @@ func (s *Server) setupHttpBackend(ctx context.Context) error {
 		if err := s.connectBurpMCP(ctx); err != nil {
 			return fmt.Errorf("config burp_required is true: %w", err)
 		}
+		s.warnSidecarsUnderBurp()
 		return nil
 	}
 
@@ -315,7 +371,16 @@ func (s *Server) setupHttpBackend(ctx context.Context) error {
 		log.Printf("Burp MCP not available, falling back to built-in proxy")
 		return s.startBuiltinProxy()
 	}
+	s.warnSidecarsUnderBurp()
 	return nil
+}
+
+// warnSidecarsUnderBurp logs a warning when sidecars are enabled but the Burp
+// backend is active, which does not host the sidecar listener.
+func (s *Server) warnSidecarsUnderBurp() {
+	if s.sidecarsEnabled() {
+		log.Printf("warning: sidecars enabled but unavailable under the Burp backend; continuing without sidecars")
+	}
 }
 
 // newSpillStore creates a per-store spill instance under the shared temp directory.
@@ -353,6 +418,21 @@ func (s *Server) startBuiltinProxy() error {
 	backend, err := NewNativeProxyBackend(s.proxyPort, configDir, s.cfg.MaxBodyBytes, s.storageProvider, timeouts)
 	if err != nil {
 		return fmt.Errorf("start built-in proxy: %w", err)
+	}
+
+	if s.sidecarsEnabled() {
+		if err := backend.EnableSidecars(sidecar.Config{
+			Socket:            s.sidecarSocket,
+			HeartbeatInterval: time.Duration(s.cfg.Sidecars.HeartbeatIntervalSecs) * time.Second,
+			HeartbeatTimeout:  time.Duration(s.cfg.Sidecars.HeartbeatTimeoutSecs) * time.Second,
+			NativeProxyPort:   s.proxyPort,
+			ScopeCheck:        s.cfg.IsDomainAllowed,
+			DialTimeout:       timeouts.DialTimeout,
+			NativeHTTPSend:    s.OriginateNative,
+		}, s, s.replayHistoryStore); err != nil {
+			_ = backend.Close()
+			return fmt.Errorf("enable sidecars: %w", err)
+		}
 	}
 
 	// Configure capture exclusion filters

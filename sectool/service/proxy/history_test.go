@@ -9,26 +9,40 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
-func newTestEntry(method, path string) *HistoryEntry {
-	return &HistoryEntry{
-		Protocol: "http/1.1",
-		Request: &RawHTTP1Request{
+func newTestEntry(method, path string) *types.Flow {
+	return &types.Flow{
+		Adapter:     types.ProtocolHTTP11,
+		ProtocolTag: types.ProtocolHTTP11,
+		Request: &types.Message{
 			Method:  method,
 			Path:    path,
 			Version: "HTTP/1.1",
 		},
-		Timestamp: time.Now(),
+		StartedAt: time.Now(),
 	}
 }
 
-// newTestEntryAt produces a test entry with an explicit timestamp.
-func newTestEntryAt(method, path string, ts time.Time) *HistoryEntry {
-	e := newTestEntry(method, path)
-	e.Timestamp = ts
-	return e
+// newTestEntryAt produces a test flow with an explicit start time.
+func newTestEntryAt(method, path string, ts time.Time) *types.Flow {
+	f := newTestEntry(method, path)
+	f.StartedAt = ts
+	return f
+}
+
+// h2Req builds a request Message with folded HTTP/2 pseudo-headers.
+func h2Req(method, authority, path string, body []byte, hdrs ...types.Header) *types.Message {
+	headers := types.Headers{
+		{Name: ":method", Value: method},
+		{Name: ":scheme", Value: "https"},
+		{Name: ":authority", Value: authority},
+		{Name: ":path", Value: path},
+	}
+	headers = append(headers, hdrs...)
+	return &types.Message{Headers: headers, Body: body}
 }
 
 func TestHistoryStore_Store(t *testing.T) {
@@ -48,13 +62,45 @@ func TestHistoryStore_Store(t *testing.T) {
 		assert.Equal(t, 5, h.Count())
 	})
 
-	t.Run("populates_flow_id_on_entry", func(t *testing.T) {
+	t.Run("populates_flow_id_on_flow", func(t *testing.T) {
 		h := newHistoryStore(store.NewMemStorage())
 		t.Cleanup(h.Close)
 
-		entry := newTestEntry("POST", "/api")
-		flowID := h.Store(entry)
-		assert.Equal(t, flowID, entry.FlowID)
+		flow := newTestEntry("POST", "/api")
+		flowID := h.Store(flow)
+		assert.Equal(t, flowID, flow.FlowID)
+	})
+
+	t.Run("child_flow_excluded_from_listing", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		parent := h.Store(newTestEntry("GET", "/ws"))
+		child := h.Store(&types.Flow{
+			Adapter:      types.ProtocolTagWS,
+			ProtocolTag:  types.ProtocolTagWSFrame,
+			Direction:    types.DirectionC2S,
+			ParentFlowID: parent,
+			Request:      &types.Message{Method: types.MethodFrame, Path: "/ws/1", Body: []byte("hi")},
+			StartedAt:    time.Now(),
+		})
+
+		// Child retrievable by id and linked to its parent.
+		got, ok := h.Get(child)
+		require.True(t, ok)
+		assert.Equal(t, parent, got.ParentFlowID)
+		assert.Equal(t, "hi", string(got.Request.Body))
+
+		// Child absent from listing, meta, and count.
+		assert.Equal(t, 1, h.Count())
+		_, ok = h.GetMeta(child)
+		assert.False(t, ok)
+		for _, f := range h.Page(10, "") {
+			assert.NotEqual(t, child, f.FlowID)
+		}
+		for _, m := range h.PageMeta(10, "") {
+			assert.NotEqual(t, child, m.FlowID)
+		}
 	})
 
 	t.Run("concurrent_writes", func(t *testing.T) {
@@ -78,10 +124,95 @@ func TestHistoryStore_Store(t *testing.T) {
 	})
 }
 
+func TestHistoryStore_Complete(t *testing.T) {
+	t.Parallel()
+
+	t.Run("attaches_response_and_completion", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		flowID := h.Store(newTestEntry("GET", "/api"))
+		completedAt := time.Now().Add(time.Second)
+		resp := &types.Message{StatusCode: 200, Body: []byte("ok")}
+		ok := h.Complete(flowID, resp, completedAt, map[string]any{"phase": "mutated"})
+		require.True(t, ok)
+
+		got, found := h.Get(flowID)
+		require.True(t, found)
+		require.NotNil(t, got.Response)
+		assert.Equal(t, 200, got.Response.StatusCode)
+		assert.Equal(t, completedAt.UTC(), got.CompletedAt)
+		assert.Equal(t, "mutated", got.Annotations["phase"])
+
+		// Meta reflects the now-attached status.
+		meta, found := h.GetMeta(flowID)
+		require.True(t, found)
+		assert.Equal(t, 200, meta.Status)
+	})
+
+	t.Run("unknown_flow_id", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+		assert.False(t, h.Complete("missing", nil, time.Now(), nil))
+	})
+
+	t.Run("child_flow_has_no_meta", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		parent := h.Store(newTestEntry("STREAM", "/s"))
+		child := h.Store(&types.Flow{
+			ProtocolTag:  "custom.chunk",
+			ParentFlowID: parent,
+			Request:      &types.Message{Method: "CHUNK", Body: []byte("a")},
+			StartedAt:    time.Now(),
+		})
+		require.True(t, h.Complete(child, &types.Message{Body: []byte("done")}, time.Now(), nil))
+
+		got, found := h.Get(child)
+		require.True(t, found)
+		assert.Equal(t, "done", string(got.Response.Body))
+		_, hasMeta := h.GetMeta(child)
+		assert.False(t, hasMeta)
+	})
+}
+
+func TestHistoryStore_Children(t *testing.T) {
+	t.Parallel()
+
+	h := newHistoryStore(store.NewMemStorage())
+	t.Cleanup(h.Close)
+
+	parent := h.Store(newTestEntry("STREAM", "/s"))
+	// Emit children out of timestamp order to prove emission order is preserved,
+	// not a timestamp sort.
+	base := time.Now()
+	emitTimes := []time.Time{base.Add(3 * time.Second), base, base.Add(time.Second)}
+	want := make([]string, 0, len(emitTimes))
+	for i, ts := range emitTimes {
+		id := h.Store(&types.Flow{
+			ProtocolTag:  "custom.chunk",
+			ParentFlowID: parent,
+			Direction:    types.DirectionS2C,
+			Request:      &types.Message{Method: "CHUNK", Body: []byte{byte('0' + i)}},
+			StartedAt:    ts,
+		})
+		want = append(want, id)
+	}
+
+	children := h.Children(parent)
+	got := make([]string, len(children))
+	for i, c := range children {
+		got[i] = c.FlowID
+	}
+	assert.Equal(t, want, got)
+	assert.Empty(t, h.Children("no-such-parent"))
+}
+
 func TestHistoryStore_Get(t *testing.T) {
 	t.Parallel()
 
-	t.Run("retrieves_stored_entry", func(t *testing.T) {
+	t.Run("retrieves_stored_flow", func(t *testing.T) {
 		h := newHistoryStore(store.NewMemStorage())
 		t.Cleanup(h.Close)
 
@@ -105,48 +236,49 @@ func TestHistoryStore_Get(t *testing.T) {
 		t.Cleanup(h.Close)
 
 		ts := time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)
-		entry := &HistoryEntry{
-			Protocol:  "http/1.1",
-			Timestamp: ts,
-			Duration:  250 * time.Millisecond,
-			Request: &RawHTTP1Request{
+		flow := &types.Flow{
+			Adapter:     types.ProtocolHTTP11,
+			ProtocolTag: types.ProtocolHTTP11,
+			StartedAt:   ts,
+			CompletedAt: ts.Add(250 * time.Millisecond),
+			Request: &types.Message{
 				Method:  "POST",
 				Path:    "/api/data",
 				Query:   "foo=bar",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Content-Type", Value: "application/json"},
 					{Name: "x-custom", Value: "value"},
 				},
 				Body: []byte(`{"key":"value"}`),
 			},
-			Response: &RawHTTP1Response{
+			Response: &types.Message{
 				Version:    "HTTP/1.1",
 				StatusCode: 201,
 				StatusText: "Created",
-				Headers:    []Header{{Name: "Content-Type", Value: "application/json"}},
+				Headers:    []types.Header{{Name: "Content-Type", Value: "application/json"}},
 				Body:       []byte(`{"id":123}`),
 			},
 		}
 
-		flowID := h.Store(entry)
+		flowID := h.Store(flow)
 		got, ok := h.Get(flowID)
 		require.True(t, ok)
 
-		assert.Equal(t, entry.Protocol, got.Protocol)
-		assert.Equal(t, ts, got.Timestamp)
-		assert.Equal(t, entry.Duration, got.Duration)
-		assert.Equal(t, entry.Request.Method, got.Request.Method)
-		assert.Equal(t, entry.Request.Path, got.Request.Path)
-		assert.Equal(t, entry.Request.Query, got.Request.Query)
-		assert.Equal(t, entry.Request.Version, got.Request.Version)
-		assert.Equal(t, entry.Request.Headers, got.Request.Headers)
-		assert.Equal(t, entry.Request.Body, got.Request.Body)
-		assert.Equal(t, entry.Response.Version, got.Response.Version)
-		assert.Equal(t, entry.Response.StatusCode, got.Response.StatusCode)
-		assert.Equal(t, entry.Response.StatusText, got.Response.StatusText)
-		assert.Equal(t, entry.Response.Headers, got.Response.Headers)
-		assert.Equal(t, entry.Response.Body, got.Response.Body)
+		assert.Equal(t, flow.ProtocolTag, got.ProtocolTag)
+		assert.Equal(t, ts, got.StartedAt)
+		assert.Equal(t, flow.CompletedAt, got.CompletedAt)
+		assert.Equal(t, flow.Request.Method, got.Request.Method)
+		assert.Equal(t, flow.Request.Path, got.Request.Path)
+		assert.Equal(t, flow.Request.Query, got.Request.Query)
+		assert.Equal(t, flow.Request.Version, got.Request.Version)
+		assert.Equal(t, flow.Request.Headers, got.Request.Headers)
+		assert.Equal(t, flow.Request.Body, got.Request.Body)
+		assert.Equal(t, flow.Response.Version, got.Response.Version)
+		assert.Equal(t, flow.Response.StatusCode, got.Response.StatusCode)
+		assert.Equal(t, flow.Response.StatusText, got.Response.StatusText)
+		assert.Equal(t, flow.Response.Headers, got.Response.Headers)
+		assert.Equal(t, flow.Response.Body, got.Response.Body)
 	})
 }
 
@@ -286,25 +418,48 @@ func TestHistoryStore_Delete(t *testing.T) {
 		assert.Equal(t, 0, h.Delete())
 		assert.Equal(t, 1, h.Count())
 	})
+
+	t.Run("removes_child_flow", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		parent := h.Store(newTestEntry("STREAM", "/s"))
+		c1 := h.Store(childFlow(parent, "a"))
+		c2 := h.Store(childFlow(parent, "b"))
+
+		assert.Equal(t, 1, h.Delete(c1))
+		_, ok := h.Get(c1)
+		assert.False(t, ok) // payload removed
+		// Parent untouched; surviving child still indexed, in order.
+		assert.Equal(t, 1, h.Count())
+		remaining := h.Children(parent)
+		require.Len(t, remaining, 1)
+		assert.Equal(t, c2, remaining[0].FlowID)
+	})
+
+	t.Run("delete_parent_drops_child_index", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		parent := h.Store(newTestEntry("STREAM", "/s"))
+		h.Store(childFlow(parent, "a"))
+
+		assert.Equal(t, 1, h.Delete(parent))
+		assert.Equal(t, 0, h.Count())
+		// Child index for the gone parent is dropped (no dangling references).
+		assert.Empty(t, h.Children(parent))
+	})
 }
 
-func TestHistoryStore_Update(t *testing.T) {
-	t.Parallel()
-
-	h := newHistoryStore(store.NewMemStorage())
-	t.Cleanup(h.Close)
-
-	flowID := h.Store(newTestEntry("GET", "/"))
-	entry, ok := h.Get(flowID)
-	require.True(t, ok)
-
-	entry.WSFrames = []WSFrame{{Direction: "to-server", Opcode: 1, Payload: []byte("hi")}}
-	h.Update(entry)
-
-	got, ok := h.Get(flowID)
-	require.True(t, ok)
-	require.Len(t, got.WSFrames, 1)
-	assert.Equal(t, "hi", string(got.WSFrames[0].Payload))
+// childFlow builds a payload-only child flow under parent.
+func childFlow(parent, body string) *types.Flow {
+	return &types.Flow{
+		ProtocolTag:  "custom.chunk",
+		ParentFlowID: parent,
+		Direction:    types.DirectionS2C,
+		Request:      &types.Message{Method: "CHUNK", Body: []byte(body)},
+		StartedAt:    time.Now(),
+	}
 }
 
 func TestHistoryStore_TimestampOrdering(t *testing.T) {
@@ -350,24 +505,51 @@ func TestHistoryStore_Recovery(t *testing.T) {
 	}
 }
 
+func TestHistoryStore_RecoverChildOrder(t *testing.T) {
+	t.Parallel()
+
+	storage := store.NewMemStorage()
+	h := newHistoryStore(storage)
+
+	parent := h.Store(newTestEntryAt("STREAM", "/s", time.Now()))
+	base := time.Now()
+	var childIDs []string
+	for i := 0; i < 3; i++ {
+		c := childFlow(parent, "x")
+		c.StartedAt = base.Add(time.Duration(i) * time.Millisecond)
+		childIDs = append(childIDs, h.Store(c))
+	}
+
+	// Rebuild over the same storage; the child index must be reconstructed so
+	// children remain reachable via Children, ordered by (started_at, flow_id).
+	h2 := newHistoryStore(storage)
+	t.Cleanup(h2.Close)
+
+	got := make([]string, 0, 3)
+	for _, c := range h2.Children(parent) {
+		got = append(got, c.FlowID)
+	}
+	assert.Equal(t, childIDs, got)
+}
+
 func TestFormatRequest(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
-		entry   *HistoryEntry
+		flow    *types.Flow
 		wantNil bool
 		check   func(t *testing.T, result []byte)
 	}{
 		{
 			name: "http1_request",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Request: &RawHTTP1Request{
+			flow: &types.Flow{
+				ProtocolTag: types.ProtocolHTTP11,
+				Request: &types.Message{
 					Method:  "GET",
 					Path:    "/test",
 					Version: "HTTP/1.1",
-					Headers: []Header{{Name: "Host", Value: "example.com"}},
+					Headers: []types.Header{{Name: "Host", Value: "example.com"}},
 				},
 			},
 			check: func(t *testing.T, result []byte) {
@@ -378,15 +560,9 @@ func TestFormatRequest(t *testing.T) {
 		},
 		{
 			name: "h2_request",
-			entry: &HistoryEntry{
-				Protocol: "h2",
-				H2Request: &H2RequestData{
-					Method:    "POST",
-					Path:      "/api",
-					Authority: "example.com",
-					Headers:   []Header{{Name: "content-type", Value: "application/json"}},
-					Body:      []byte(`{"test":1}`),
-				},
+			flow: &types.Flow{
+				ProtocolTag: types.ProtocolH2,
+				Request:     h2Req("POST", "example.com", "/api", []byte(`{"test":1}`), types.Header{Name: "content-type", Value: "application/json"}),
 			},
 			check: func(t *testing.T, result []byte) {
 				t.Helper()
@@ -397,40 +573,38 @@ func TestFormatRequest(t *testing.T) {
 			},
 		},
 		{
-			name:    "nil_http1_request",
-			entry:   &HistoryEntry{Protocol: "http/1.1"},
-			wantNil: true,
-		},
-		{
-			name:    "nil_h2_request",
-			entry:   &HistoryEntry{Protocol: "h2"},
-			wantNil: true,
-		},
-		{
-			name: "h2_nil_headers",
-			entry: &HistoryEntry{
-				Protocol: "h2",
-				H2Request: &H2RequestData{
-					Method:    "GET",
-					Path:      "/test",
-					Authority: "example.com",
-				},
+			name: "h2_pseudo_headers_folded",
+			flow: &types.Flow{
+				ProtocolTag: types.ProtocolH2,
+				Request: h2Req("GET", "example.com", "/x", nil,
+					types.Header{Name: types.HeaderStreamID, Value: "7"},
+					types.Header{Name: "accept", Value: "*/*"}),
 			},
 			check: func(t *testing.T, result []byte) {
 				t.Helper()
-				assert.Contains(t, string(result), "GET /test HTTP/1.1")
-				assert.Contains(t, string(result), "host: example.com")
+				// Pseudo-headers and the stream id are reconstructed into the
+				// request line/host, never re-emitted as headers.
+				assert.NotContains(t, string(result), ":method")
+				assert.NotContains(t, string(result), ":path")
+				assert.NotContains(t, string(result), types.HeaderStreamID)
+				assert.Contains(t, string(result), "GET /x HTTP/1.1")
+				assert.Contains(t, string(result), "accept: */*")
 			},
 		},
 		{
+			name:    "nil_request",
+			flow:    &types.Flow{ProtocolTag: types.ProtocolHTTP11},
+			wantNil: true,
+		},
+		{
 			name: "http1_empty_body",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Request: &RawHTTP1Request{
+			flow: &types.Flow{
+				ProtocolTag: types.ProtocolHTTP11,
+				Request: &types.Message{
 					Method:  "GET",
 					Path:    "/",
 					Version: "HTTP/1.1",
-					Headers: []Header{{Name: "Host", Value: "example.com"}},
+					Headers: []types.Header{{Name: "Host", Value: "example.com"}},
 					Body:    []byte{},
 				},
 			},
@@ -444,7 +618,7 @@ func TestFormatRequest(t *testing.T) {
 	var buf bytes.Buffer // reuse to validate reset
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.entry.FormatRequest(&buf)
+			result := tt.flow.FormatRequest(&buf)
 			if tt.wantNil {
 				assert.Nil(t, result)
 			} else {
@@ -460,19 +634,19 @@ func TestFormatResponse(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		entry   *HistoryEntry
+		flow    *types.Flow
 		wantNil bool
 		check   func(t *testing.T, result []byte)
 	}{
 		{
 			name: "http1_response",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Response: &RawHTTP1Response{
+			flow: &types.Flow{
+				ProtocolTag: types.ProtocolHTTP11,
+				Response: &types.Message{
 					Version:    "HTTP/1.1",
 					StatusCode: 200,
 					StatusText: "OK",
-					Headers:    []Header{{Name: "Content-Type", Value: "text/plain"}},
+					Headers:    []types.Header{{Name: "Content-Type", Value: "text/plain"}},
 					Body:       []byte("Hello"),
 				},
 			},
@@ -485,11 +659,11 @@ func TestFormatResponse(t *testing.T) {
 		},
 		{
 			name: "h2_response",
-			entry: &HistoryEntry{
-				Protocol: "h2",
-				H2Response: &H2ResponseData{
+			flow: &types.Flow{
+				ProtocolTag: types.ProtocolH2,
+				Response: &types.Message{
 					StatusCode: 201,
-					Headers:    []Header{{Name: "content-type", Value: "application/json"}},
+					Headers:    []types.Header{{Name: "content-type", Value: "application/json"}},
 					Body:       []byte(`{"id":1}`),
 				},
 			},
@@ -501,20 +675,15 @@ func TestFormatResponse(t *testing.T) {
 			},
 		},
 		{
-			name:    "nil_http1_response",
-			entry:   &HistoryEntry{Protocol: "http/1.1"},
-			wantNil: true,
-		},
-		{
-			name:    "nil_h2_response",
-			entry:   &HistoryEntry{Protocol: "h2"},
+			name:    "nil_response",
+			flow:    &types.Flow{ProtocolTag: types.ProtocolHTTP11},
 			wantNil: true,
 		},
 		{
 			name: "h2_nonstandard_status",
-			entry: &HistoryEntry{
-				Protocol:   "h2",
-				H2Response: &H2ResponseData{StatusCode: 999},
+			flow: &types.Flow{
+				ProtocolTag: types.ProtocolH2,
+				Response:    &types.Message{StatusCode: 999},
 			},
 			check: func(t *testing.T, result []byte) {
 				t.Helper()
@@ -524,9 +693,9 @@ func TestFormatResponse(t *testing.T) {
 		},
 		{
 			name: "http1_empty_body",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Response: &RawHTTP1Response{
+			flow: &types.Flow{
+				ProtocolTag: types.ProtocolHTTP11,
+				Response: &types.Message{
 					Version:    "HTTP/1.1",
 					StatusCode: 204,
 					StatusText: "No Content",
@@ -542,7 +711,7 @@ func TestFormatResponse(t *testing.T) {
 	var buf bytes.Buffer // reuse to validate reset
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.entry.FormatResponse(&buf)
+			result := tt.flow.FormatResponse(&buf)
 			if tt.wantNil {
 				assert.Nil(t, result)
 			} else {
@@ -557,49 +726,40 @@ func TestGetPath(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		entry *HistoryEntry
-		want  string
+		name string
+		flow *types.Flow
+		want string
 	}{
 		{
 			name: "http1",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Request:  &RawHTTP1Request{Path: "/api/users"},
-			},
+			flow: &types.Flow{ProtocolTag: types.ProtocolHTTP11, Request: &types.Message{Path: "/api/users"}},
 			want: "/api/users",
 		},
 		{
 			name: "h2_no_query",
-			entry: &HistoryEntry{
-				Protocol:  "h2",
-				H2Request: &H2RequestData{Path: "/api/data"},
-			},
+			flow: &types.Flow{ProtocolTag: types.ProtocolH2, Request: h2Req("GET", "example.com", "/api/data", nil)},
 			want: "/api/data",
 		},
 		{
 			name: "h2_strips_query",
-			entry: &HistoryEntry{
-				Protocol:  "h2",
-				H2Request: &H2RequestData{Path: "/search?q=test&page=1"},
-			},
+			flow: &types.Flow{ProtocolTag: types.ProtocolH2, Request: h2Req("GET", "example.com", "/search?q=test&page=1", nil)},
 			want: "/search",
 		},
 		{
-			name:  "nil_http1",
-			entry: &HistoryEntry{Protocol: "http/1.1"},
-			want:  "",
+			name: "nil_http1",
+			flow: &types.Flow{ProtocolTag: types.ProtocolHTTP11},
+			want: "",
 		},
 		{
-			name:  "nil_h2",
-			entry: &HistoryEntry{Protocol: "h2"},
-			want:  "",
+			name: "nil_h2",
+			flow: &types.Flow{ProtocolTag: types.ProtocolH2},
+			want: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.entry.GetPath())
+			assert.Equal(t, tt.want, tt.flow.GetPath())
 		})
 	}
 }
@@ -608,57 +768,45 @@ func TestGetHost(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		entry *HistoryEntry
-		want  string
+		name string
+		flow *types.Flow
+		want string
 	}{
 		{
 			name: "http1",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Request:  &RawHTTP1Request{Headers: []Header{{Name: "Host", Value: "example.com"}}},
-			},
+			flow: &types.Flow{ProtocolTag: types.ProtocolHTTP11, Request: &types.Message{Headers: []types.Header{{Name: "Host", Value: "example.com"}}}},
 			want: "example.com",
 		},
 		{
 			name: "h2",
-			entry: &HistoryEntry{
-				Protocol:  "h2",
-				H2Request: &H2RequestData{Authority: "api.example.com"},
-			},
+			flow: &types.Flow{ProtocolTag: types.ProtocolH2, Request: h2Req("GET", "api.example.com", "/", nil)},
 			want: "api.example.com",
 		},
 		{
-			name:  "nil_http1",
-			entry: &HistoryEntry{Protocol: "http/1.1"},
-			want:  "",
+			name: "nil_http1",
+			flow: &types.Flow{ProtocolTag: types.ProtocolHTTP11},
+			want: "",
 		},
 		{
-			name:  "nil_h2",
-			entry: &HistoryEntry{Protocol: "h2"},
-			want:  "",
+			name: "nil_h2",
+			flow: &types.Flow{ProtocolTag: types.ProtocolH2},
+			want: "",
 		},
 		{
 			name: "http1_case_insensitive",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Request:  &RawHTTP1Request{Headers: []Header{{Name: "host", Value: "lowercase.com"}}},
-			},
+			flow: &types.Flow{ProtocolTag: types.ProtocolHTTP11, Request: &types.Message{Headers: []types.Header{{Name: "host", Value: "lowercase.com"}}}},
 			want: "lowercase.com",
 		},
 		{
 			name: "http1_no_host_header",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Request:  &RawHTTP1Request{Headers: []Header{{Name: "X-Custom", Value: "value"}}},
-			},
+			flow: &types.Flow{ProtocolTag: types.ProtocolHTTP11, Request: &types.Message{Headers: []types.Header{{Name: "X-Custom", Value: "value"}}}},
 			want: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.entry.GetHost())
+			assert.Equal(t, tt.want, tt.flow.GetHost())
 		})
 	}
 }
@@ -668,52 +816,40 @@ func TestGetRequestHeader(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		entry      *HistoryEntry
+		flow       *types.Flow
 		headerName string
 		want       string
 	}{
 		{
-			name: "http1",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Request:  &RawHTTP1Request{Headers: []Header{{Name: "Content-Type", Value: "application/json"}}},
-			},
+			name:       "http1",
+			flow:       &types.Flow{ProtocolTag: types.ProtocolHTTP11, Request: &types.Message{Headers: []types.Header{{Name: "Content-Type", Value: "application/json"}}}},
 			headerName: "Content-Type",
 			want:       "application/json",
 		},
 		{
-			name: "h2",
-			entry: &HistoryEntry{
-				Protocol:  "h2",
-				H2Request: &H2RequestData{Headers: []Header{{Name: "authorization", Value: "Bearer token"}}},
-			},
+			name:       "h2",
+			flow:       &types.Flow{ProtocolTag: types.ProtocolH2, Request: h2Req("GET", "example.com", "/", nil, types.Header{Name: "authorization", Value: "Bearer token"})},
 			headerName: "authorization",
 			want:       "Bearer token",
 		},
 		{
 			name:       "nil_request",
-			entry:      &HistoryEntry{Protocol: "http/1.1"},
+			flow:       &types.Flow{ProtocolTag: types.ProtocolHTTP11},
 			headerName: "Content-Type",
 			want:       "",
 		},
 		{
-			name: "case_insensitive_lookup",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Request:  &RawHTTP1Request{Headers: []Header{{Name: "Content-Type", Value: "text/plain"}}},
-			},
+			name:       "case_insensitive_lookup",
+			flow:       &types.Flow{ProtocolTag: types.ProtocolHTTP11, Request: &types.Message{Headers: []types.Header{{Name: "Content-Type", Value: "text/plain"}}}},
 			headerName: "content-type",
 			want:       "text/plain",
 		},
 		{
 			name: "first_matching_header",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Request: &RawHTTP1Request{Headers: []Header{
-					{Name: "X-Custom", Value: "first"},
-					{Name: "x-custom", Value: "second"},
-				}},
-			},
+			flow: &types.Flow{ProtocolTag: types.ProtocolHTTP11, Request: &types.Message{Headers: []types.Header{
+				{Name: "X-Custom", Value: "first"},
+				{Name: "x-custom", Value: "second"},
+			}}},
 			headerName: "X-Custom",
 			want:       "first",
 		},
@@ -721,7 +857,7 @@ func TestGetRequestHeader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.entry.GetRequestHeader(tt.headerName))
+			assert.Equal(t, tt.want, tt.flow.GetRequestHeader(tt.headerName))
 		})
 	}
 }
@@ -731,52 +867,40 @@ func TestGetResponseHeader(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		entry      *HistoryEntry
+		flow       *types.Flow
 		headerName string
 		want       string
 	}{
 		{
-			name: "http1",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Response: &RawHTTP1Response{Headers: []Header{{Name: "Content-Type", Value: "text/html"}}},
-			},
+			name:       "http1",
+			flow:       &types.Flow{ProtocolTag: types.ProtocolHTTP11, Response: &types.Message{Headers: []types.Header{{Name: "Content-Type", Value: "text/html"}}}},
 			headerName: "Content-Type",
 			want:       "text/html",
 		},
 		{
-			name: "h2",
-			entry: &HistoryEntry{
-				Protocol:   "h2",
-				H2Response: &H2ResponseData{Headers: []Header{{Name: "x-request-id", Value: "abc123"}}},
-			},
+			name:       "h2",
+			flow:       &types.Flow{ProtocolTag: types.ProtocolH2, Response: &types.Message{Headers: []types.Header{{Name: "x-request-id", Value: "abc123"}}}},
 			headerName: "x-request-id",
 			want:       "abc123",
 		},
 		{
 			name:       "nil_response",
-			entry:      &HistoryEntry{Protocol: "http/1.1"},
+			flow:       &types.Flow{ProtocolTag: types.ProtocolHTTP11},
 			headerName: "Content-Type",
 			want:       "",
 		},
 		{
-			name: "case_insensitive_lookup",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Response: &RawHTTP1Response{Headers: []Header{{Name: "Content-Type", Value: "text/plain"}}},
-			},
+			name:       "case_insensitive_lookup",
+			flow:       &types.Flow{ProtocolTag: types.ProtocolHTTP11, Response: &types.Message{Headers: []types.Header{{Name: "Content-Type", Value: "text/plain"}}}},
 			headerName: "content-type",
 			want:       "text/plain",
 		},
 		{
 			name: "first_matching_header",
-			entry: &HistoryEntry{
-				Protocol: "http/1.1",
-				Response: &RawHTTP1Response{Headers: []Header{
-					{Name: "Set-Cookie", Value: "first=1"},
-					{Name: "Set-Cookie", Value: "second=2"},
-				}},
-			},
+			flow: &types.Flow{ProtocolTag: types.ProtocolHTTP11, Response: &types.Message{Headers: []types.Header{
+				{Name: "Set-Cookie", Value: "first=1"},
+				{Name: "Set-Cookie", Value: "second=2"},
+			}}},
 			headerName: "Set-Cookie",
 			want:       "first=1",
 		},
@@ -784,7 +908,7 @@ func TestGetResponseHeader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.entry.GetResponseHeader(tt.headerName))
+			assert.Equal(t, tt.want, tt.flow.GetResponseHeader(tt.headerName))
 		})
 	}
 }
@@ -835,38 +959,4 @@ func TestHistoryStore_PageConcurrent(t *testing.T) {
 		assert.NotEmpty(t, e.GetMethod())
 		assert.NotEmpty(t, e.GetPath())
 	}
-}
-
-func TestHistoryStore_UpdateConcurrent(t *testing.T) {
-	t.Parallel()
-
-	h := newHistoryStore(store.NewMemStorage())
-	t.Cleanup(h.Close)
-
-	flowID := h.Store(newTestEntry("GET", "/"))
-
-	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			entry, ok := h.Get(flowID)
-			if !ok {
-				return
-			}
-			entry.Response = &RawHTTP1Response{
-				Version:    "HTTP/1.1",
-				StatusCode: 200 + idx,
-			}
-			h.Update(entry)
-		}(i)
-	}
-	wg.Wait()
-
-	got, ok := h.Get(flowID)
-	require.True(t, ok)
-	require.NotNil(t, got.Response)
-	assert.Equal(t, "HTTP/1.1", got.Response.Version)
-	assert.GreaterOrEqual(t, got.Response.StatusCode, 200)
-	assert.Less(t, got.Response.StatusCode, 210)
 }

@@ -220,6 +220,7 @@ func parseList(args []string, mcpURL string) error {
 	fs.SetInterspersed(true)
 	var limit, offset int
 	var host, path, method, status, searchHeader, searchBody, since, excludeHost, excludePath, source string
+	var adapter, protocolTag, parentFlowID string
 
 	fs.StringVar(&source, "source", "", "filter by source: 'proxy', 'replay', or empty for both")
 	fs.StringVar(&host, "host", "", "filter by host pattern (glob: *, ?)")
@@ -231,6 +232,9 @@ func parseList(args []string, mcpURL string) error {
 	fs.StringVar(&since, "since", "", "filter since flow_id or 'last'")
 	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")
 	fs.StringVar(&excludePath, "exclude-path", "", "exclude paths matching pattern")
+	fs.StringVar(&adapter, "adapter", "", "filter by emitting adapter name (glob: *, ?)")
+	fs.StringVar(&protocolTag, "protocol-tag", "", "filter by protocol tag (glob: *, ?)")
+	fs.StringVar(&parentFlowID, "parent-flow-id", "", "list child flows of this parent flow_id")
 	fs.IntVar(&limit, "limit", 0, "maximum number of flows to return")
 	fs.IntVar(&offset, "offset", 0, "skip first N results for pagination")
 	fs.IntVar(&limit, "count", 0, "alias for --limit")
@@ -261,11 +265,17 @@ Options:
 	}
 
 	// Auto-set large limit if no filters provided (MCP refuses list with no limits or filters)
-	if limit == 0 && source == "" && host == "" && path == "" && method == "" && status == "" && searchHeader == "" && searchBody == "" && since == "" && excludeHost == "" && excludePath == "" {
+	if limit == 0 && source == "" && host == "" && path == "" && method == "" && status == "" && searchHeader == "" && searchBody == "" && since == "" && excludeHost == "" && excludePath == "" && adapter == "" && protocolTag == "" && parentFlowID == "" {
 		limit = 1_000_000_000
 	}
 
-	return list(mcpURL, source, host, path, method, status, searchHeader, searchBody, since, excludeHost, excludePath, limit, offset)
+	return list(mcpURL, listFilters{
+		source: source, host: host, path: path, method: method, status: status,
+		searchHeader: searchHeader, searchBody: searchBody, since: since,
+		excludeHost: excludeHost, excludePath: excludePath,
+		adapter: adapter, protocolTag: protocolTag, parentFlowID: parentFlowID,
+		limit: limit, offset: offset,
+	})
 }
 
 func parseGet(args []string, mcpURL string) error {

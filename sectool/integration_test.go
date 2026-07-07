@@ -35,6 +35,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 	"github.com/go-appsec/toolbox/sectool/service/testutil"
+	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
 // Integration tests for sectool MCP client -> MCP server -> real backends.
@@ -95,7 +96,6 @@ func setupIntegrationEnv(t *testing.T, backendType httpBackendType) *mcpclient.C
 
 	// seed backend with some dummy requests
 	if nb, ok := httpBackend.(*service.NativeProxyBackend); ok {
-		// Create a local test server
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
 			case "POST":
@@ -323,7 +323,7 @@ func TestIntegration_ProxySummaryWithFilters(t *testing.T) {
 			resp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "summary"})
 			require.NoError(t, err)
 
-			// Summary mode should not return flows (flows should be nil/empty)
+			// Summary mode should not return flows
 			assert.Empty(t, resp.Flows)
 			t.Logf("summary mode: %d aggregates, %d flows", len(resp.Aggregates), len(resp.Flows))
 		})
@@ -380,7 +380,7 @@ func TestIntegration_ProxyList(t *testing.T) {
 			resp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows", Method: "GET", Limit: 5})
 			require.NoError(t, err)
 
-			// List mode should not return aggregates (aggregates should be nil/empty)
+			// List mode should not return aggregates
 			assert.Empty(t, resp.Aggregates)
 			t.Logf("list mode: %d flows, %d aggregates", len(resp.Flows), len(resp.Aggregates))
 		})
@@ -393,7 +393,6 @@ func TestIntegration_FlowGet(t *testing.T) {
 	runForAllBackends(t, func(t *testing.T, client *mcpclient.Client) {
 		t.Helper()
 
-		// Get a flow ID first
 		listResp, err := client.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows", Method: "GET", Limit: 1})
 		require.NoError(t, err)
 
@@ -444,7 +443,7 @@ func TestIntegration_ProxyRules(t *testing.T) {
 
 		t.Run("add_rule", func(t *testing.T) {
 			rule, err := client.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-				Type:    service.RuleTypeRequestHeader,
+				Type:    wire.RuleTypeRequestHeader,
 				Label:   testLabel,
 				Replace: "X-Integration-Test: added",
 			})
@@ -452,7 +451,7 @@ func TestIntegration_ProxyRules(t *testing.T) {
 
 			assert.NotEmpty(t, rule.RuleID)
 			assert.Equal(t, testLabel, rule.Label)
-			assert.Equal(t, service.RuleTypeRequestHeader, rule.Type)
+			assert.Equal(t, wire.RuleTypeRequestHeader, rule.Type)
 			assert.Equal(t, "X-Integration-Test: added", rule.Replace)
 			createdRuleID = rule.RuleID
 
@@ -482,7 +481,7 @@ func TestIntegration_ProxyRules(t *testing.T) {
 		t.Run("add_regex_rule", func(t *testing.T) {
 			regexLabel := testLabel + "-regex"
 			rule, err := client.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-				Type:    service.RuleTypeRequestHeader,
+				Type:    wire.RuleTypeRequestHeader,
 				Label:   regexLabel,
 				IsRegex: true,
 				Find:    "^X-Old:.*$",
@@ -1138,7 +1137,7 @@ func TestIntegration_RuleRequestHeaderVerification(t *testing.T) {
 		t.Run("adds_header", func(t *testing.T) {
 			label := "test-add-header-" + labelSuffix
 			rule, err := env.mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-				Type:    service.RuleTypeRequestHeader,
+				Type:    wire.RuleTypeRequestHeader,
 				Label:   label,
 				Replace: "X-Injected-By-Rule: rule-value-123",
 			})
@@ -1165,7 +1164,7 @@ func TestIntegration_RuleRequestHeaderVerification(t *testing.T) {
 		t.Run("modifies_header", func(t *testing.T) {
 			label := "test-modify-ua-" + labelSuffix
 			rule, err := env.mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-				Type:    service.RuleTypeRequestHeader,
+				Type:    wire.RuleTypeRequestHeader,
 				Label:   label,
 				IsRegex: true,
 				Find:    `User-Agent: .*`,
@@ -1216,7 +1215,7 @@ func TestIntegration_RuleRequestBodyVerification(t *testing.T) {
 
 		t.Run("modifies_body", func(t *testing.T) {
 			rule, err := env.mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-				Type:    service.RuleTypeRequestBody,
+				Type:    wire.RuleTypeRequestBody,
 				Label:   label,
 				Find:    "ORIGINAL_VALUE",
 				Replace: "MODIFIED_BY_RULE",
@@ -1265,7 +1264,7 @@ func TestIntegration_RuleResponseHeaderVerification(t *testing.T) {
 		t.Run("modifies_header", func(t *testing.T) {
 			label := "test-resp-header-" + labelSuffix
 			rule, err := env.mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-				Type:    service.RuleTypeResponseHeader,
+				Type:    wire.RuleTypeResponseHeader,
 				Label:   label,
 				Find:    "X-Original-Header: original-value",
 				Replace: "X-Original-Header: modified-by-rule",
@@ -1284,7 +1283,7 @@ func TestIntegration_RuleResponseHeaderVerification(t *testing.T) {
 		t.Run("adds_header", func(t *testing.T) {
 			label := "test-add-resp-header-" + labelSuffix
 			rule, err := env.mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-				Type:    service.RuleTypeResponseHeader,
+				Type:    wire.RuleTypeResponseHeader,
 				Label:   label,
 				Replace: "X-Added-By-Proxy: injected",
 			})
@@ -1318,7 +1317,7 @@ func TestIntegration_RuleResponseBodyVerification(t *testing.T) {
 
 		t.Run("modifies_body", func(t *testing.T) {
 			rule, err := env.mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-				Type:    service.RuleTypeResponseBody,
+				Type:    wire.RuleTypeResponseBody,
 				Label:   label,
 				Find:    "SECRET_DATA",
 				Replace: "REDACTED",
@@ -1880,7 +1879,7 @@ func TestIntegration_HTTP2Rules(t *testing.T) {
 	t.Run("h2_request_header_rule", func(t *testing.T) {
 		// Add rule to inject header into requests
 		rule, err := mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-			Type:    service.RuleTypeRequestHeader,
+			Type:    wire.RuleTypeRequestHeader,
 			Label:   "h2-req-header-test",
 			Replace: "X-Injected-H2: injected-value",
 		})
@@ -1908,7 +1907,7 @@ func TestIntegration_HTTP2Rules(t *testing.T) {
 
 	t.Run("h2_request_body_rule", func(t *testing.T) {
 		rule, err := mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-			Type:    service.RuleTypeRequestBody,
+			Type:    wire.RuleTypeRequestBody,
 			Label:   "h2-req-body-test",
 			Find:    "ORIGINAL_VALUE",
 			Replace: "MODIFIED_BY_RULE",
@@ -1938,7 +1937,7 @@ func TestIntegration_HTTP2Rules(t *testing.T) {
 
 	t.Run("h2_response_header_rule", func(t *testing.T) {
 		rule, err := mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-			Type:    service.RuleTypeResponseHeader,
+			Type:    wire.RuleTypeResponseHeader,
 			Label:   "h2-resp-header-test",
 			Find:    "X-Server-Secret: original-secret-value",
 			Replace: "X-Server-Secret: modified-by-proxy",
@@ -1956,7 +1955,7 @@ func TestIntegration_HTTP2Rules(t *testing.T) {
 
 	t.Run("h2_response_body_rule", func(t *testing.T) {
 		rule, err := mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-			Type:    service.RuleTypeResponseBody,
+			Type:    wire.RuleTypeResponseBody,
 			Label:   "h2-resp-body-test",
 			Find:    "SENSITIVE_DATA",
 			Replace: "REDACTED",
@@ -3041,7 +3040,7 @@ func TestIntegration_WebSocketRules(t *testing.T) {
 	t.Run("ws_to_server_rule_modifies_client_message", func(t *testing.T) {
 		// Add rule to modify client->server messages
 		rule, err := mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-			Type:    service.RuleTypeWSToServer,
+			Type:    wire.RuleTypeWSToServer,
 			Label:   "test-ws-to-server",
 			Find:    "CLIENT_SECRET",
 			Replace: "CLIENT_MODIFIED",
@@ -3103,7 +3102,7 @@ func TestIntegration_WebSocketRules(t *testing.T) {
 	t.Run("ws_to_client_rule_modifies_server_message", func(t *testing.T) {
 		// Add rule to modify server->client messages
 		rule, err := mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-			Type:    service.RuleTypeWSToClient,
+			Type:    wire.RuleTypeWSToClient,
 			Label:   "test-ws-to-client",
 			Find:    "SERVER_SECRET",
 			Replace: "SERVER_MODIFIED",
@@ -3971,7 +3970,7 @@ func TestIntegration_CompressedRequestBodyRule(t *testing.T) {
 		t.Run("gzip_request_body_rule", func(t *testing.T) {
 			label := "gzip-req-body-test-" + strconv.FormatInt(rand.Int63(), 10)
 			rule, err := mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-				Type:    service.RuleTypeRequestBody,
+				Type:    wire.RuleTypeRequestBody,
 				Label:   label,
 				Find:    "SECRET_TOKEN",
 				Replace: "REDACTED",
@@ -4033,7 +4032,7 @@ func TestIntegration_CompressedRequestBodyRule(t *testing.T) {
 		t.Run("unsupported_encoding_skips_rules", func(t *testing.T) {
 			label := "compress-req-body-test-" + strconv.FormatInt(rand.Int63(), 10)
 			rule, err := mcpClient.ProxyRuleAdd(t.Context(), mcpclient.RuleAddOpts{
-				Type:    service.RuleTypeRequestBody,
+				Type:    wire.RuleTypeRequestBody,
 				Label:   label,
 				Find:    "SHOULD_NOT_MATCH",
 				Replace: "MODIFIED",

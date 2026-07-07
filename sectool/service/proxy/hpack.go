@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
 )
@@ -131,7 +132,7 @@ func newH2Conn(conn net.Conn) *h2Conn {
 
 // decodeHeaders decodes an HPACK-compressed header block.
 // Returns pseudo-headers and regular headers separately.
-func (h *h2Conn) decodeHeaders(block []byte) (pseudos map[string]string, headers Headers, err error) {
+func (h *h2Conn) decodeHeaders(block []byte) (pseudos map[string]string, headers types.Headers, err error) {
 	pseudos = make(map[string]string)
 
 	fields, err := h.hpackDec.DecodeFull(block)
@@ -141,10 +142,9 @@ func (h *h2Conn) decodeHeaders(block []byte) (pseudos map[string]string, headers
 
 	for _, f := range fields {
 		if len(f.Name) > 0 && f.Name[0] == ':' {
-			// Pseudo-header
 			pseudos[f.Name] = f.Value
 		} else {
-			headers = append(headers, Header{Name: f.Name, Value: f.Value})
+			headers = append(headers, types.Header{Name: f.Name, Value: f.Value})
 		}
 	}
 
@@ -153,7 +153,7 @@ func (h *h2Conn) decodeHeaders(block []byte) (pseudos map[string]string, headers
 
 // headerListSize calculates the header list size per RFC 7541 Section 4.1.
 // Size = sum of (name length + value length + 32) for each field.
-func headerListSize(pseudos map[string]string, headers Headers) int {
+func headerListSize(pseudos map[string]string, headers types.Headers) int {
 	var size int
 	for name, value := range pseudos {
 		size += len(name) + len(value) + 32
@@ -167,15 +167,13 @@ func headerListSize(pseudos map[string]string, headers Headers) int {
 // encodeHeaders encodes pseudo-headers and regular headers into HPACK.
 // Pseudo-headers must be written first per HTTP/2 spec.
 // Header names are lowercased and connection-specific headers are filtered per RFC 9113.
-func (h *h2Conn) encodeHeaders(pseudos map[string]string, headers Headers) ([]byte, error) {
+func (h *h2Conn) encodeHeaders(pseudos map[string]string, headers types.Headers) ([]byte, error) {
 	h.hpackMu.Lock()
 	defer h.hpackMu.Unlock()
 
 	h.hpackBuf.Reset()
 
-	// Encode pseudo-headers first (order matters per spec)
-	// Canonical order: :method, :scheme, :authority, :path for requests
-	// :status for responses
+	// Pseudo-headers first; canonical order per spec: :method, :scheme, :authority, :path (requests), :status (responses)
 	pseudoOrder := []string{":method", ":scheme", ":authority", ":path", ":status"}
 	for _, name := range pseudoOrder {
 		if value, ok := pseudos[name]; ok {
@@ -194,8 +192,7 @@ func (h *h2Conn) encodeHeaders(pseudos map[string]string, headers Headers) ([]by
 		}
 	}
 
-	// Encode regular headers
-	// HTTP/2 requires lowercase header names and forbids connection-specific headers
+	// HTTP/2 requires lowercase names and forbids connection-specific headers
 	for _, hdr := range headers {
 		lowerName := strings.ToLower(hdr.Name)
 
@@ -209,8 +206,7 @@ func (h *h2Conn) encodeHeaders(pseudos map[string]string, headers Headers) ([]by
 			continue
 		}
 
-		// Host header is redundant in HTTP/2 (:authority is the authority).
-		// Strip it to avoid odd upstream behavior if it differs from :authority.
+		// Host is redundant in HTTP/2 (:authority); strip to avoid upstream mismatch
 		if lowerName == "host" {
 			continue
 		}
@@ -223,9 +219,8 @@ func (h *h2Conn) encodeHeaders(pseudos map[string]string, headers Headers) ([]by
 	return slices.Clone(h.hpackBuf.Bytes()), nil
 }
 
-// updateSettings updates cached settings from peer (except INITIAL_WINDOW_SIZE).
-// Note: INITIAL_WINDOW_SIZE is handled by updateSendWindowFromSettings() under flowMu
-// to avoid data races with flow control logic that reads initialWindowSize.
+// updateSettings updates cached settings from peer. INITIAL_WINDOW_SIZE is
+// excluded here; it is applied by updateSendWindowFromSettings.
 func (h *h2Conn) updateSettings(settings []http2.Setting) {
 	h.settingsMu.Lock()
 	defer h.settingsMu.Unlock()

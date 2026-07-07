@@ -1,4 +1,4 @@
-package service
+package mutate
 
 import (
 	"testing"
@@ -7,18 +7,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestModifyFormBodyMap(t *testing.T) {
+func TestForm(t *testing.T) {
 	t.Parallel()
 
 	t.Run("no_modifications_returns_body_verbatim", func(t *testing.T) {
 		in := []byte("a=1&b=2")
-		out, err := modifyFormBodyMap(in, nil, nil)
+		out, err := Form(in, nil, nil)
 		require.NoError(t, err)
 		assert.Equal(t, in, out)
 	})
 
 	t.Run("set_replaces_existing_value", func(t *testing.T) {
-		out, err := modifyFormBodyMap(
+		out, err := Form(
 			[]byte("grant_type=refresh_token&client_id=x"),
 			map[string]string{"grant_type": "password"},
 			nil,
@@ -28,7 +28,7 @@ func TestModifyFormBodyMap(t *testing.T) {
 	})
 
 	t.Run("set_adds_new_field", func(t *testing.T) {
-		out, err := modifyFormBodyMap(
+		out, err := Form(
 			[]byte("grant_type=password"),
 			map[string]string{"scope": "read"},
 			nil,
@@ -38,7 +38,7 @@ func TestModifyFormBodyMap(t *testing.T) {
 	})
 
 	t.Run("remove_drops_field", func(t *testing.T) {
-		out, err := modifyFormBodyMap(
+		out, err := Form(
 			[]byte("a=1&b=2&c=3"),
 			nil,
 			[]string{"b"},
@@ -48,7 +48,7 @@ func TestModifyFormBodyMap(t *testing.T) {
 	})
 
 	t.Run("special_characters_escaped", func(t *testing.T) {
-		out, err := modifyFormBodyMap(
+		out, err := Form(
 			nil,
 			map[string]string{"redirect_uri": "https://example.com/cb?x=1&y=2"},
 			nil,
@@ -58,7 +58,7 @@ func TestModifyFormBodyMap(t *testing.T) {
 	})
 
 	t.Run("empty_body_with_only_sets", func(t *testing.T) {
-		out, err := modifyFormBodyMap(
+		out, err := Form(
 			nil,
 			map[string]string{"grant_type": "client_credentials"},
 			nil,

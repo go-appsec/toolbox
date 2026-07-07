@@ -17,6 +17,9 @@ type ProxyPollOpts struct {
 	Since        string // list mode
 	ExcludeHost  string
 	ExcludePath  string
+	Adapter      string
+	ProtocolTag  string
+	ParentFlowID string
 	Limit        int // list mode
 	Offset       int // list mode
 }
@@ -57,6 +60,7 @@ type ReplaySendOpts struct {
 	RemoveJSON      []string
 	FollowRedirects bool
 	Force           bool
+	StreamStrategy  string
 }
 
 // RequestSendOpts are options for RequestSend.

@@ -150,3 +150,7 @@ Use `sectool <command> --help` for detailed options.
 - **Workflow modes** - Task-specific agent guidance (explore, test-report) to improve collaboration quality and reduce token waste
 - **Encoding utilities** - URL, Base64, HTML encoding/decoding, hashing (MD5/SHA/HMAC), JWT inspection
 - **Burp Suite integration** - Optional GUI frontend via Burp MCP extension; or run fully headless with the native proxy
+
+## Custom protocol support
+
+Beyond HTTP and WebSocket, sectool supports custom and binary protocols (generally request / response) through a sidecar adapter model. Write an adapter to connect and communicate using our sidecar API. The sidecar traffic lands in the same unified flow timeline, so `flow_get`, `diff_flow`, `replay_send`, and other tools function without modification. Adapters can be written in any language over the JSON-RPC 2.0 API, or in Go with the SDK client that handles registration, rule caching, and flow emission. The [sidecar SDK & protocol](sidecar/README.md) documents both.

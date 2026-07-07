@@ -50,28 +50,38 @@ func printRuleTable(rules []protocol.RuleEntry) {
 	hasLabels := slices.ContainsFunc(rules, func(r protocol.RuleEntry) bool {
 		return r.Label != ""
 	})
+	// Adapter column only shows when a sidecar has scoped a rule; absent for plain proxy use
+	hasAdapters := slices.ContainsFunc(rules, func(r protocol.RuleEntry) bool {
+		return r.Adapter != ""
+	})
 
 	t := cliutil.NewTable(os.Stdout)
 	tr := util.TruncateString
 
+	header := table.Row{"Rule ID"}
 	if hasLabels {
-		t.AppendHeader(table.Row{"Rule ID", "Label", "Type", "Regex", "Find", "Replace"})
-		for _, r := range rules {
-			regex := ""
-			if r.IsRegex {
-				regex = "yes"
-			}
-			t.AppendRow(table.Row{r.RuleID, r.Label, r.Type, regex, tr(r.Find, 30), tr(r.Replace, 30)})
+		header = append(header, "Label")
+	}
+	header = append(header, "Type", "Regex", "Find", "Replace")
+	if hasAdapters {
+		header = append(header, "Adapter")
+	}
+	t.AppendHeader(header)
+
+	for _, r := range rules {
+		regex := ""
+		if r.IsRegex {
+			regex = "yes"
 		}
-	} else {
-		t.AppendHeader(table.Row{"Rule ID", "Type", "Regex", "Find", "Replace"})
-		for _, r := range rules {
-			regex := ""
-			if r.IsRegex {
-				regex = "yes"
-			}
-			t.AppendRow(table.Row{r.RuleID, r.Type, regex, tr(r.Find, 30), tr(r.Replace, 30)})
+		row := table.Row{r.RuleID}
+		if hasLabels {
+			row = append(row, r.Label)
 		}
+		row = append(row, r.Type, regex, tr(r.Find, 30), tr(r.Replace, 30))
+		if hasAdapters {
+			row = append(row, r.Adapter)
+		}
+		t.AppendRow(row)
 	}
 	t.Render()
 	cliutil.Summary(os.Stdout, len(rules), "rule", "rules")
@@ -102,6 +112,9 @@ func ruleAdd(mcpURL string, ruleType, find, replace, label string, isRegex bool)
 		fmt.Printf("Label: %s\n", resp.Label)
 	}
 	fmt.Printf("Type: %s\n", resp.Type)
+	if resp.Adapter != "" {
+		fmt.Printf("Adapter: %s\n", resp.Adapter)
+	}
 	if resp.IsRegex {
 		fmt.Println("Mode: regex")
 	}

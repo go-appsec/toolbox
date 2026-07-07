@@ -9,12 +9,13 @@ import (
 	"testing"
 	"testing/iotest"
 
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // assertHeadersEqual compares headers ignoring RawLine field
-func assertHeadersEqual(t *testing.T, expected, actual Headers) {
+func assertHeadersEqual(t *testing.T, expected, actual types.Headers) {
 	t.Helper()
 
 	require.Len(t, actual, len(expected))
@@ -30,19 +31,19 @@ func TestParseRequest(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		want    *RawHTTP1Request
+		want    *types.RawHTTP1Request
 		wantErr bool
 	}{
 		{
 			name:  "simple_get",
 			input: "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Query:    "",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 				},
 			},
@@ -50,13 +51,13 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "path_with_query",
 			input: "GET /api/users?id=123&name=test HTTP/1.1\r\nHost: example.com\r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/api/users",
 				Query:    "id=123&name=test",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 				},
 			},
@@ -64,12 +65,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "post_with_body",
 			input: "POST /api/data HTTP/1.1\r\nHost: example.com\r\nContent-Length: 13\r\n\r\nHello, World!",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "POST",
 				Path:     "/api/data",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 					{Name: "Content-Length", Value: "13"},
 				},
@@ -79,12 +80,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "header_order_preserved",
 			input: "GET / HTTP/1.1\r\nZebra: 1\r\nAlpha: 2\r\nMiddle: 3\r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Zebra", Value: "1"},
 					{Name: "Alpha", Value: "2"},
 					{Name: "Middle", Value: "3"},
@@ -94,12 +95,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "casing_preserved",
 			input: "GET / HTTP/1.1\r\ncontent-type: text/plain\r\nCONTENT-LENGTH: 0\r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "content-type", Value: "text/plain"},
 					{Name: "CONTENT-LENGTH", Value: "0"},
 				},
@@ -108,12 +109,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "duplicate_headers",
 			input: "GET / HTTP/1.1\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nSet-Cookie: c=3\r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Set-Cookie", Value: "a=1"},
 					{Name: "Set-Cookie", Value: "b=2"},
 					{Name: "Set-Cookie", Value: "c=3"},
@@ -123,12 +124,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "bare_lf_accepted",
 			input: "GET / HTTP/1.1\nHost: example.com\n\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 				},
 			},
@@ -136,12 +137,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "whitespace_in_header_name",
 			input: "GET / HTTP/1.1\r\nHeader : value\r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Header ", Value: "value"},
 				},
 			},
@@ -149,12 +150,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "no_space_after_colon",
 			input: "GET / HTTP/1.1\r\nHeader:value\r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Header", Value: "value"},
 				},
 			},
@@ -162,12 +163,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "empty_header_value",
 			input: "GET / HTTP/1.1\r\nEmpty: \r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Empty", Value: ""},
 				},
 			},
@@ -175,12 +176,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "obs_fold_continuation",
 			input: "GET / HTTP/1.1\r\nLong-Header: first\r\n second\r\n\tthird\r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Long-Header", Value: "first second third"},
 				},
 			},
@@ -188,12 +189,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "http_1_0",
 			input: "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.0",
 				Protocol: "http/1.0",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 				},
 			},
@@ -201,13 +202,13 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "proxy_form_url",
 			input: "GET http://example.com/path?q=1 HTTP/1.1\r\nHost: proxy.local\r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "http://example.com/path",
 				Query:    "q=1",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "proxy.local"},
 				},
 			},
@@ -215,12 +216,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "cl_te_conflict",
 			input: "POST / HTTP/1.1\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\nHello",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "POST",
 				Path:     "/",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Content-Length", Value: "5"},
 					{Name: "Transfer-Encoding", Value: "chunked"},
 				},
@@ -230,12 +231,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "multiple_content_length",
 			input: "GET / HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 5\r\n\r\n",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Content-Length", Value: "0"},
 					{Name: "Content-Length", Value: "5"},
 				},
@@ -244,7 +245,7 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "eof_no_trailing_newline",
 			input: "GET / HTTP/1.1",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.1",
@@ -254,12 +255,12 @@ func TestParseRequest(t *testing.T) {
 		{
 			name:  "eof_after_headers",
 			input: "GET / HTTP/1.1\r\nHost: example.com",
-			want: &RawHTTP1Request{
+			want: &types.RawHTTP1Request{
 				Method:   "GET",
 				Path:     "/",
 				Version:  "HTTP/1.1",
 				Protocol: "http/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 				},
 			},
@@ -523,8 +524,8 @@ func TestParseRequest(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "GET", req.Method)
 		assert.Equal(t, "/", req.Path)
-		assert.Equal(t, EndingBareCR, req.RequestLineEnding)
-		assert.Equal(t, EndingCRLF, req.Headers[0].LineEnding)
+		assert.Equal(t, types.EndingBareCR, req.RequestLineEnding)
+		assert.Equal(t, types.EndingCRLF, req.Headers[0].LineEnding)
 	})
 
 	t.Run("bare_cr_header", func(t *testing.T) {
@@ -532,9 +533,9 @@ func TestParseRequest(t *testing.T) {
 		req, err := ParseRequest(strings.NewReader(input))
 		require.NoError(t, err)
 		require.Len(t, req.Headers, 2)
-		assert.Equal(t, EndingCRLF, req.RequestLineEnding)
-		assert.Equal(t, EndingBareCR, req.Headers[0].LineEnding)
-		assert.Equal(t, EndingCRLF, req.Headers[1].LineEnding)
+		assert.Equal(t, types.EndingCRLF, req.RequestLineEnding)
+		assert.Equal(t, types.EndingBareCR, req.Headers[0].LineEnding)
+		assert.Equal(t, types.EndingCRLF, req.Headers[1].LineEnding)
 	})
 
 	t.Run("mixed_crlf_and_bare_cr", func(t *testing.T) {
@@ -542,9 +543,9 @@ func TestParseRequest(t *testing.T) {
 		req, err := ParseRequest(strings.NewReader(input))
 		require.NoError(t, err)
 		require.Len(t, req.Headers, 3)
-		assert.Equal(t, EndingCRLF, req.Headers[0].LineEnding)
-		assert.Equal(t, EndingBareCR, req.Headers[1].LineEnding)
-		assert.Equal(t, EndingCRLF, req.Headers[2].LineEnding)
+		assert.Equal(t, types.EndingCRLF, req.Headers[0].LineEnding)
+		assert.Equal(t, types.EndingBareCR, req.Headers[1].LineEnding)
+		assert.Equal(t, types.EndingCRLF, req.Headers[2].LineEnding)
 	})
 
 	t.Run("obs_fold_bare_cr", func(t *testing.T) {
@@ -555,7 +556,7 @@ func TestParseRequest(t *testing.T) {
 		require.Len(t, req.Headers, 2)
 		assert.Equal(t, "first part2 end", req.Headers[0].Value)
 		// Last physical line's ending is CRLF (the " end\r\n" line)
-		assert.Equal(t, EndingCRLF, req.Headers[0].LineEnding)
+		assert.Equal(t, types.EndingCRLF, req.Headers[0].LineEnding)
 	})
 
 	t.Run("truncated_request_line", func(t *testing.T) {
@@ -563,8 +564,8 @@ func TestParseRequest(t *testing.T) {
 		input := "GET / HTTP/1.1"
 		req, err := ParseRequest(strings.NewReader(input))
 		require.NoError(t, err)
-		assert.Equal(t, EndingNone, req.RequestLineEnding)
-		assert.Equal(t, EndingNone, req.HeaderBlockEnding)
+		assert.Equal(t, types.EndingNone, req.RequestLineEnding)
+		assert.Equal(t, types.EndingNone, req.HeaderBlockEnding)
 		// Round-trip preserves truncation (no synthetic CRLF appended)
 		var buf bytes.Buffer
 		got := req.SerializeRaw(&buf)
@@ -577,9 +578,9 @@ func TestParseRequest(t *testing.T) {
 		req, err := ParseRequest(strings.NewReader(input))
 		require.NoError(t, err)
 		require.Len(t, req.Headers, 2)
-		assert.Equal(t, EndingCRLF, req.Headers[0].LineEnding)
-		assert.Equal(t, EndingNone, req.Headers[1].LineEnding)
-		assert.Equal(t, EndingNone, req.HeaderBlockEnding)
+		assert.Equal(t, types.EndingCRLF, req.Headers[0].LineEnding)
+		assert.Equal(t, types.EndingNone, req.Headers[1].LineEnding)
+		assert.Equal(t, types.EndingNone, req.HeaderBlockEnding)
 		var buf bytes.Buffer
 		got := req.SerializeRaw(&buf)
 		assert.Equal(t, input, string(got))
@@ -593,18 +594,18 @@ func TestParseResponse(t *testing.T) {
 		name          string
 		input         string
 		requestMethod string
-		want          *RawHTTP1Response
+		want          *types.RawHTTP1Response
 		wantErr       bool
 	}{
 		{
 			name:          "simple_200",
 			input:         "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHello",
 			requestMethod: "GET",
-			want: &RawHTTP1Response{
+			want: &types.RawHTTP1Response{
 				Version:    "HTTP/1.1",
 				StatusCode: 200,
 				StatusText: "OK",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Content-Length", Value: "5"},
 				},
 				Body: []byte("Hello"),
@@ -614,11 +615,11 @@ func TestParseResponse(t *testing.T) {
 			name:          "head_no_body",
 			input:         "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n",
 			requestMethod: "HEAD",
-			want: &RawHTTP1Response{
+			want: &types.RawHTTP1Response{
 				Version:    "HTTP/1.1",
 				StatusCode: 200,
 				StatusText: "OK",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Content-Length", Value: "1000"},
 				},
 			},
@@ -627,22 +628,22 @@ func TestParseResponse(t *testing.T) {
 			name:          "204_no_body",
 			input:         "HTTP/1.1 204 No Content\r\n\r\n",
 			requestMethod: "DELETE",
-			want: &RawHTTP1Response{
+			want: &types.RawHTTP1Response{
 				Version:    "HTTP/1.1",
 				StatusCode: 204,
 				StatusText: "No Content",
-				Headers:    []Header{},
+				Headers:    []types.Header{},
 			},
 		},
 		{
 			name:          "304_no_body",
 			input:         "HTTP/1.1 304 Not Modified\r\nETag: \"abc\"\r\n\r\n",
 			requestMethod: "GET",
-			want: &RawHTTP1Response{
+			want: &types.RawHTTP1Response{
 				Version:    "HTTP/1.1",
 				StatusCode: 304,
 				StatusText: "Not Modified",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "ETag", Value: "\"abc\""},
 				},
 			},
@@ -651,11 +652,11 @@ func TestParseResponse(t *testing.T) {
 			name:          "header_casing_preserved",
 			input:         "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nX-CUSTOM: value\r\n\r\n",
 			requestMethod: "GET",
-			want: &RawHTTP1Response{
+			want: &types.RawHTTP1Response{
 				Version:    "HTTP/1.1",
 				StatusCode: 200,
 				StatusText: "OK",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "content-type", Value: "text/plain"},
 					{Name: "X-CUSTOM", Value: "value"},
 				},
@@ -665,22 +666,22 @@ func TestParseResponse(t *testing.T) {
 			name:          "empty_status_text",
 			input:         "HTTP/1.1 200\r\n\r\n",
 			requestMethod: "GET",
-			want: &RawHTTP1Response{
+			want: &types.RawHTTP1Response{
 				Version:    "HTTP/1.1",
 				StatusCode: 200,
 				StatusText: "",
-				Headers:    []Header{},
+				Headers:    []types.Header{},
 			},
 		},
 		{
 			name:          "http_1_0",
 			input:         "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\nBody",
 			requestMethod: "GET",
-			want: &RawHTTP1Response{
+			want: &types.RawHTTP1Response{
 				Version:    "HTTP/1.0",
 				StatusCode: 200,
 				StatusText: "OK",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Connection", Value: "close"},
 				},
 				Body: []byte("Body"),
@@ -690,11 +691,11 @@ func TestParseResponse(t *testing.T) {
 			name:          "chunked_response",
 			input:         "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nHello\r\n0\r\n\r\n",
 			requestMethod: "GET",
-			want: &RawHTTP1Response{
+			want: &types.RawHTTP1Response{
 				Version:    "HTTP/1.1",
 				StatusCode: 200,
 				StatusText: "OK",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Transfer-Encoding", Value: "chunked"},
 				},
 				Body: []byte("Hello"),
@@ -797,7 +798,7 @@ func TestParseResponse(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 200, resp.StatusCode)
 		assert.Equal(t, "OK", resp.StatusText)
-		assert.Equal(t, EndingBareCR, resp.StatusLineEnding)
+		assert.Equal(t, types.EndingBareCR, resp.StatusLineEnding)
 	})
 
 	t.Run("close_delimited", func(t *testing.T) {
@@ -830,16 +831,16 @@ func TestRawHTTP1Request_Serialize(t *testing.T) {
 
 	tests := []struct {
 		name string
-		req  *RawHTTP1Request
+		req  *types.RawHTTP1Request
 		want string
 	}{
 		{
 			name: "simple_get",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 				},
 			},
@@ -847,12 +848,12 @@ func TestRawHTTP1Request_Serialize(t *testing.T) {
 		},
 		{
 			name: "with_query",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/api/users",
 				Query:   "id=123",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 				},
 			},
@@ -860,11 +861,11 @@ func TestRawHTTP1Request_Serialize(t *testing.T) {
 		},
 		{
 			name: "with_body",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "POST",
 				Path:    "/api/data",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 					{Name: "Content-Type", Value: "text/plain"},
 					{Name: "Content-Length", Value: "5"},
@@ -875,11 +876,11 @@ func TestRawHTTP1Request_Serialize(t *testing.T) {
 		},
 		{
 			name: "preserves_casing",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "content-type", Value: "text/plain"},
 					{Name: "X-CUSTOM-HEADER", Value: "value"},
 				},
@@ -888,11 +889,11 @@ func TestRawHTTP1Request_Serialize(t *testing.T) {
 		},
 		{
 			name: "preserves_order",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Zebra", Value: "last"},
 					{Name: "Alpha", Value: "first"},
 					{Name: "Middle", Value: "middle"},
@@ -911,11 +912,11 @@ func TestRawHTTP1Request_Serialize(t *testing.T) {
 
 	t.Run("preserves_te_chunked_without_framing", func(t *testing.T) {
 		// Without Wire.WasChunked the serializer emits headers verbatim and writes body raw
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Transfer-Encoding", Value: "chunked"},
 			},
@@ -929,11 +930,11 @@ func TestRawHTTP1Request_Serialize(t *testing.T) {
 	})
 
 	t.Run("idempotent", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Transfer-Encoding", Value: "chunked"},
 			},
@@ -958,8 +959,8 @@ func TestReadFinalResponse(t *testing.T) {
 
 	t.Run("100_continue_then_200", func(t *testing.T) {
 		br := newReader("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHello")
-		var forwarded []*RawHTTP1Response
-		interim, final, err := readFinalResponse(br, "POST", func(ir *RawHTTP1Response) error {
+		var forwarded []*types.RawHTTP1Response
+		interim, final, err := readFinalResponse(br, "POST", func(ir *types.RawHTTP1Response) error {
 			forwarded = append(forwarded, ir)
 			return nil
 		})
@@ -1010,7 +1011,7 @@ func TestReadFinalResponse(t *testing.T) {
 	t.Run("on_interim_error_propagates", func(t *testing.T) {
 		br := newReader("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n\r\n")
 		sentinel := errors.New("write failed")
-		interim, final, err := readFinalResponse(br, "GET", func(*RawHTTP1Response) error {
+		interim, final, err := readFinalResponse(br, "GET", func(*types.RawHTTP1Response) error {
 			return sentinel
 		})
 		require.ErrorIs(t, err, sentinel)
@@ -1075,16 +1076,16 @@ func TestRawHTTP1Response_Serialize(t *testing.T) {
 
 	tests := []struct {
 		name string
-		resp *RawHTTP1Response
+		resp *types.RawHTTP1Response
 		want string
 	}{
 		{
 			name: "simple_200",
-			resp: &RawHTTP1Response{
+			resp: &types.RawHTTP1Response{
 				Version:    "HTTP/1.1",
 				StatusCode: 200,
 				StatusText: "OK",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Content-Type", Value: "text/plain"},
 					{Name: "Content-Length", Value: "5"},
 				},
@@ -1094,20 +1095,20 @@ func TestRawHTTP1Response_Serialize(t *testing.T) {
 		},
 		{
 			name: "no_status_text",
-			resp: &RawHTTP1Response{
+			resp: &types.RawHTTP1Response{
 				Version:    "HTTP/1.1",
 				StatusCode: 204,
-				Headers:    []Header{},
+				Headers:    []types.Header{},
 			},
 			want: "HTTP/1.1 204\r\n\r\n",
 		},
 		{
 			name: "preserves_header_casing",
-			resp: &RawHTTP1Response{
+			resp: &types.RawHTTP1Response{
 				Version:    "HTTP/1.1",
 				StatusCode: 200,
 				StatusText: "OK",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "content-type", Value: "text/plain"},
 					{Name: "X-CUSTOM", Value: "value"},
 				},
@@ -1124,11 +1125,11 @@ func TestRawHTTP1Response_Serialize(t *testing.T) {
 	}
 
 	t.Run("idempotent", func(t *testing.T) {
-		resp := &RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Transfer-Encoding", Value: "chunked"},
 			},
 			Body: []byte("test"),
@@ -1146,8 +1147,8 @@ func TestRawHTTP1Response_Serialize(t *testing.T) {
 func TestRawHTTP1Request_GetHeader(t *testing.T) {
 	t.Parallel()
 
-	req := &RawHTTP1Request{
-		Headers: []Header{
+	req := &types.RawHTTP1Request{
+		Headers: []types.Header{
 			{Name: "Content-Type", Value: "text/plain"},
 			{Name: "X-Custom", Value: "value1"},
 			{Name: "x-custom", Value: "value2"},
@@ -1165,8 +1166,8 @@ func TestRawHTTP1Request_SetHeader(t *testing.T) {
 	t.Parallel()
 
 	t.Run("update_existing", func(t *testing.T) {
-		req := &RawHTTP1Request{
-			Headers: []Header{
+		req := &types.RawHTTP1Request{
+			Headers: []types.Header{
 				{Name: "Content-Type", Value: "text/plain"},
 			},
 		}
@@ -1176,8 +1177,8 @@ func TestRawHTTP1Request_SetHeader(t *testing.T) {
 	})
 
 	t.Run("add_new", func(t *testing.T) {
-		req := &RawHTTP1Request{
-			Headers: []Header{
+		req := &types.RawHTTP1Request{
+			Headers: []types.Header{
 				{Name: "Content-Type", Value: "text/plain"},
 			},
 		}
@@ -1190,8 +1191,8 @@ func TestRawHTTP1Request_SetHeader(t *testing.T) {
 func TestRawHTTP1Request_RemoveHeader(t *testing.T) {
 	t.Parallel()
 
-	req := &RawHTTP1Request{
-		Headers: []Header{
+	req := &types.RawHTTP1Request{
+		Headers: []types.Header{
 			{Name: "Content-Type", Value: "text/plain"},
 			{Name: "X-Remove", Value: "value1"},
 			{Name: "x-remove", Value: "value2"},
@@ -1465,11 +1466,11 @@ func TestRawHTTP1Response_SerializeHeaders(t *testing.T) {
 	t.Parallel()
 
 	t.Run("excludes_body", func(t *testing.T) {
-		resp := &RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Content-Type", Value: "text/plain"},
 			},
 			Body: []byte("This is the response body"),
@@ -1486,11 +1487,11 @@ func TestRawHTTP1Response_SerializeHeaders(t *testing.T) {
 	})
 
 	t.Run("updates_content_length", func(t *testing.T) {
-		resp := &RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Content-Length", Value: "999"},
 			},
 			Body: []byte("short"),
@@ -1504,11 +1505,11 @@ func TestRawHTTP1Response_SerializeHeaders(t *testing.T) {
 	})
 
 	t.Run("strips_chunked_encoding", func(t *testing.T) {
-		resp := &RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Transfer-Encoding", Value: "chunked"},
 			},
 			Body: []byte("decoded body"),
@@ -1522,11 +1523,11 @@ func TestRawHTTP1Response_SerializeHeaders(t *testing.T) {
 	})
 
 	t.Run("empty_body", func(t *testing.T) {
-		resp := &RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 204,
 			StatusText: "No Content",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "X-Custom", Value: "value"},
 			},
 		}
@@ -1695,11 +1696,11 @@ func TestReadChunkedBody(t *testing.T) {
 func TestSerializeRequestWithTrailers(t *testing.T) {
 	t.Parallel()
 
-	req := &RawHTTP1Request{
+	req := &types.RawHTTP1Request{
 		Method:  "POST",
 		Path:    "/upload",
 		Version: "HTTP/1.1",
-		Headers: []Header{
+		Headers: []types.Header{
 			{Name: "Host", Value: "example.com"},
 			{Name: "Content-Length", Value: "5"},
 		},
@@ -1722,58 +1723,58 @@ func TestReadLineWithEnding(t *testing.T) {
 		name        string
 		input       string
 		wantLine    string
-		wantEnding  LineEnding
+		wantEnding  types.LineEnding
 		wantNextRem string // remaining bytes left in reader after the call
 	}{
 		{
 			name:       "crlf",
 			input:      "hello\r\n",
 			wantLine:   "hello",
-			wantEnding: EndingCRLF,
+			wantEnding: types.EndingCRLF,
 		},
 		{
 			name:       "bare_lf",
 			input:      "hello\n",
 			wantLine:   "hello",
-			wantEnding: EndingBareLF,
+			wantEnding: types.EndingBareLF,
 		},
 		{
 			name:       "empty_crlf",
 			input:      "\r\n",
 			wantLine:   "",
-			wantEnding: EndingCRLF,
+			wantEnding: types.EndingCRLF,
 		},
 		{
 			name:       "empty_lf",
 			input:      "\n",
 			wantLine:   "",
-			wantEnding: EndingBareLF,
+			wantEnding: types.EndingBareLF,
 		},
 		{
 			name:        "bare_cr_followed_by_content",
 			input:       "abc\rdef\n",
 			wantLine:    "abc",
-			wantEnding:  EndingBareCR,
+			wantEnding:  types.EndingBareCR,
 			wantNextRem: "def\n",
 		},
 		{
 			name:        "cr_then_crlf",
 			input:       "a\r\r\nb",
 			wantLine:    "a",
-			wantEnding:  EndingBareCR,
+			wantEnding:  types.EndingBareCR,
 			wantNextRem: "\r\nb",
 		},
 		{
 			name:       "cr_at_eof",
 			input:      "abc\r",
 			wantLine:   "abc",
-			wantEnding: EndingBareCR,
+			wantEnding: types.EndingBareCR,
 		},
 		{
 			name:       "empty_bare_cr",
 			input:      "\rabc",
 			wantLine:   "",
-			wantEnding: EndingBareCR,
+			wantEnding: types.EndingBareCR,
 			// \r consumed, "abc" remains
 			wantNextRem: "abc",
 		},
@@ -1797,7 +1798,7 @@ func TestReadLineWithEnding(t *testing.T) {
 		br := bufio.NewReader(strings.NewReader("abc"))
 		line, ending, err := readLineWithEnding(br)
 		assert.Equal(t, "abc", string(line))
-		assert.Equal(t, EndingNone, ending)
+		assert.Equal(t, types.EndingNone, ending)
 		assert.ErrorIs(t, err, io.EOF)
 	})
 }
@@ -1894,7 +1895,7 @@ func TestWireFormatTracking(t *testing.T) {
 		require.NotNil(t, req.Wire)
 		assert.True(t, req.Wire.UsedBareCR)
 		assert.False(t, req.Wire.UsedBareLF)
-		assert.Equal(t, EndingBareCR, req.RequestLineEnding)
+		assert.Equal(t, types.EndingBareCR, req.RequestLineEnding)
 	})
 
 	t.Run("bare_cr_response", func(t *testing.T) {
@@ -1904,7 +1905,7 @@ func TestWireFormatTracking(t *testing.T) {
 		require.NotNil(t, resp.Wire)
 		assert.True(t, resp.Wire.UsedBareCR)
 		assert.False(t, resp.Wire.UsedBareLF)
-		assert.Equal(t, EndingBareCR, resp.StatusLineEnding)
+		assert.Equal(t, types.EndingBareCR, resp.StatusLineEnding)
 	})
 
 	t.Run("mixed_endings", func(t *testing.T) {
@@ -1922,16 +1923,16 @@ func TestSerializeRawBareLF(t *testing.T) {
 	t.Parallel()
 
 	t.Run("request_bare_lf", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/",
 			Version: "HTTP/1.1",
-			Headers: []Header{
-				{Name: "Host", Value: "example.com", LineEnding: EndingBareLF},
+			Headers: []types.Header{
+				{Name: "Host", Value: "example.com", LineEnding: types.EndingBareLF},
 			},
-			RequestLineEnding: EndingBareLF,
-			HeaderBlockEnding: EndingBareLF,
-			Wire:              &WireFormat{UsedBareLF: true},
+			RequestLineEnding: types.EndingBareLF,
+			HeaderBlockEnding: types.EndingBareLF,
+			Wire:              &types.WireFormat{UsedBareLF: true},
 		}
 
 		var buf bytes.Buffer
@@ -1941,17 +1942,17 @@ func TestSerializeRawBareLF(t *testing.T) {
 	})
 
 	t.Run("response_bare_lf", func(t *testing.T) {
-		resp := &RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []Header{
-				{Name: "X-Test", Value: "value", LineEnding: EndingBareLF},
+			Headers: []types.Header{
+				{Name: "X-Test", Value: "value", LineEnding: types.EndingBareLF},
 			},
 			Body:              []byte("Hi"),
-			StatusLineEnding:  EndingBareLF,
-			HeaderBlockEnding: EndingBareLF,
-			Wire:              &WireFormat{UsedBareLF: true},
+			StatusLineEnding:  types.EndingBareLF,
+			HeaderBlockEnding: types.EndingBareLF,
+			Wire:              &types.WireFormat{UsedBareLF: true},
 		}
 
 		var buf bytes.Buffer
@@ -1963,16 +1964,16 @@ func TestSerializeRawBareLF(t *testing.T) {
 	})
 
 	t.Run("request_bare_cr", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/",
 			Version: "HTTP/1.1",
-			Headers: []Header{
-				{Name: "Host", Value: "example.com", LineEnding: EndingBareCR},
+			Headers: []types.Header{
+				{Name: "Host", Value: "example.com", LineEnding: types.EndingBareCR},
 			},
-			RequestLineEnding: EndingBareCR,
-			HeaderBlockEnding: EndingBareCR,
-			Wire:              &WireFormat{UsedBareCR: true},
+			RequestLineEnding: types.EndingBareCR,
+			HeaderBlockEnding: types.EndingBareCR,
+			Wire:              &types.WireFormat{UsedBareCR: true},
 		}
 
 		var buf bytes.Buffer
@@ -1982,17 +1983,17 @@ func TestSerializeRawBareLF(t *testing.T) {
 	})
 
 	t.Run("response_bare_cr", func(t *testing.T) {
-		resp := &RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []Header{
-				{Name: "X-Test", Value: "value", LineEnding: EndingBareCR},
+			Headers: []types.Header{
+				{Name: "X-Test", Value: "value", LineEnding: types.EndingBareCR},
 			},
 			Body:              []byte("Hi"),
-			StatusLineEnding:  EndingBareCR,
-			HeaderBlockEnding: EndingBareCR,
-			Wire:              &WireFormat{UsedBareCR: true},
+			StatusLineEnding:  types.EndingBareCR,
+			HeaderBlockEnding: types.EndingBareCR,
+			Wire:              &types.WireFormat{UsedBareCR: true},
 		}
 
 		var buf bytes.Buffer
@@ -2008,16 +2009,16 @@ func TestSerializeRawChunked(t *testing.T) {
 	t.Parallel()
 
 	t.Run("request_chunked", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Transfer-Encoding", Value: "chunked"},
 			},
 			Body: []byte("Hello"),
-			Wire: &WireFormat{WasChunked: true},
+			Wire: &types.WireFormat{WasChunked: true},
 		}
 
 		var buf bytes.Buffer
@@ -2029,17 +2030,17 @@ func TestSerializeRawChunked(t *testing.T) {
 	})
 
 	t.Run("request_chunked_with_trailers", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Transfer-Encoding", Value: "chunked"},
 			},
 			Body:     []byte("Hello"),
 			Trailers: []byte("Checksum: abc\r\n"),
-			Wire:     &WireFormat{WasChunked: true},
+			Wire:     &types.WireFormat{WasChunked: true},
 		}
 
 		var buf bytes.Buffer
@@ -2049,15 +2050,15 @@ func TestSerializeRawChunked(t *testing.T) {
 	})
 
 	t.Run("response_chunked", func(t *testing.T) {
-		resp := &RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Transfer-Encoding", Value: "chunked"},
 			},
 			Body: []byte("Hello"),
-			Wire: &WireFormat{WasChunked: true},
+			Wire: &types.WireFormat{WasChunked: true},
 		}
 
 		var buf bytes.Buffer
@@ -2118,8 +2119,8 @@ func TestChunkedRoundTrip(t *testing.T) {
 		assert.Equal(t, "wikipes", string(resp.Body))
 		require.Len(t, resp.Chunks, 3) // two data chunks + final 0
 		assert.Equal(t, "4;foo=bar", string(resp.Chunks[0].SizeLine))
-		assert.Equal(t, EndingBareLF, resp.Chunks[0].SizeEnding)
-		assert.Equal(t, EndingBareLF, resp.Chunks[0].DataEnding)
+		assert.Equal(t, types.EndingBareLF, resp.Chunks[0].SizeEnding)
+		assert.Equal(t, types.EndingBareLF, resp.Chunks[0].DataEnding)
 
 		var buf bytes.Buffer
 		got := resp.SerializeRaw(&buf)
@@ -2152,11 +2153,11 @@ func TestSerializeRawFallback(t *testing.T) {
 	t.Parallel()
 
 	t.Run("nil_wire", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 			},
 		}
@@ -2169,11 +2170,11 @@ func TestSerializeRawFallback(t *testing.T) {
 	})
 
 	t.Run("no_raw_line", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "X-New", Value: "added"}, // Programmatically added, no RawLine
 			},
@@ -2187,11 +2188,11 @@ func TestSerializeRawFallback(t *testing.T) {
 	})
 
 	t.Run("preserve_raw_line", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Header ", Value: "value", RawLine: []byte("Header : value")},
 			},
 		}

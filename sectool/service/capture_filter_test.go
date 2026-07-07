@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-appsec/toolbox/sectool/config"
-	"github.com/go-appsec/toolbox/sectool/service/proxy"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 )
 
 func TestBuildCaptureFilter(t *testing.T) {
@@ -70,23 +70,8 @@ func TestBuildCaptureFilter(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, f)
 
-		entry := &proxy.HistoryEntry{
-			Protocol: "h2",
-			H2Request: &proxy.H2RequestData{
-				Method: "GET",
-				Path:   "/logo.png?v=2",
-			},
-		}
-		assert.False(t, f(entry))
-
-		entry2 := &proxy.HistoryEntry{
-			Protocol: "h2",
-			H2Request: &proxy.H2RequestData{
-				Method: "GET",
-				Path:   "/api/users",
-			},
-		}
-		assert.True(t, f(entry2))
+		assert.False(t, f(h2Entry("GET", "/logo.png?v=2")))
+		assert.True(t, f(h2Entry("GET", "/api/users")))
 	})
 
 	t.Run("invalid_regex", func(t *testing.T) {
@@ -113,13 +98,26 @@ func TestBuildCaptureFilter(t *testing.T) {
 	})
 }
 
-// h1Entry creates an HTTP/1.1 HistoryEntry for testing.
-func h1Entry(method, urlPath string) *proxy.HistoryEntry {
-	return &proxy.HistoryEntry{
-		Protocol: "http/1.1",
-		Request: &proxy.RawHTTP1Request{
+// h1Entry creates an HTTP/1.1 Flow for testing.
+func h1Entry(method, urlPath string) *types.Flow {
+	return &types.Flow{
+		ProtocolTag: "http/1.1",
+		Request: &types.Message{
 			Method: method,
 			Path:   urlPath,
+		},
+	}
+}
+
+// h2Entry creates an HTTP/2 Flow with the path folded into the :path pseudo-header.
+func h2Entry(method, urlPath string) *types.Flow {
+	return &types.Flow{
+		ProtocolTag: "http/2",
+		Request: &types.Message{
+			Headers: types.Headers{
+				{Name: ":method", Value: method},
+				{Name: ":path", Value: urlPath},
+			},
 		},
 	}
 }

@@ -14,6 +14,7 @@ require (
 	github.com/klauspost/compress v1.19.0
 	github.com/mark3labs/mcp-go v0.55.1
 	github.com/pmezard/go-difflib v1.0.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
 	github.com/tdewolff/parse/v2 v2.8.13
@@ -40,7 +41,6 @@ require (
 	github.com/nlnwa/whatwg-url v0.6.2 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/temoto/robotstxt v1.1.2 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect

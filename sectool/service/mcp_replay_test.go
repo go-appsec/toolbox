@@ -498,6 +498,66 @@ func TestHandleReplaySend(t *testing.T) {
 	})
 }
 
+// TestBuildMutations pins the ordered op list the sidecar replay path forwards.
+// Routing of a sidecar-owned flow through its adapter is covered end-to-end by
+// TestSidecarReplaySendE2E; here we assert the structured mutation grammar that
+// must mirror executeSend's native application.
+func TestBuildMutations(t *testing.T) {
+	t.Parallel()
+
+	t.Run("documented_op_order", func(t *testing.T) {
+		req := argRequest(map[string]interface{}{
+			"remove_headers": []interface{}{"X-Old"},
+			"set_headers":    []interface{}{"X-New: 1"},
+			"set_json":       map[string]interface{}{"a": 1},
+			"remove_json":    []interface{}{"b"},
+			"set_form":       map[string]interface{}{"f": "v"},
+			"remove_form":    []interface{}{"g"},
+			"remove_query":   []interface{}{"q"},
+			"set_query":      []interface{}{"r=2"},
+			"method":         "PUT",
+			"path":           "/p",
+			"query":          "x=1",
+			"body":           "raw",
+		})
+		muts := buildMutations(req)
+		ops := make([]string, 0, len(muts))
+		for _, mu := range muts {
+			ops = append(ops, mu.Op)
+		}
+		assert.Equal(t, []string{
+			"remove_header", "set_header",
+			"set_json", "remove_json",
+			"set_form", "remove_form",
+			"remove_query", "set_query",
+			"method", "path", "query", "body",
+		}, ops)
+	})
+
+	t.Run("empty_request_no_mutations", func(t *testing.T) {
+		assert.Empty(t, buildMutations(argRequest(map[string]interface{}{})))
+	})
+}
+
+func TestHandleReplaySendSidecarRouting(t *testing.T) {
+	t.Parallel()
+
+	t.Run("unregistered_adapter_stays_native", func(t *testing.T) {
+		_, mcpClient, mockHTTP, _, _ := setupMockMCPServer(t, nil)
+		// Adapter set but no sidecar registry (mock backend): native replay runs.
+		flowID := mockHTTP.AddProxyEntryAdapter(
+			"GET /x HTTP/1.1\r\nHost: mock.test\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n", "ghost")
+		mockHTTP.SetSendResult("HTTP/1.1 200 OK\r\n", "native")
+
+		resp := CallMCPToolJSONOK[protocol.ReplaySendResponse](t, mcpClient, "replay_send", map[string]interface{}{
+			"flow_id": flowID,
+		})
+		// Native replay produced a real flow and actually sent upstream
+		assert.NotEmpty(t, resp.FlowID)
+		assert.NotEmpty(t, mockHTTP.LastSentRequest())
+	})
+}
+
 func TestHandleRequestSend(t *testing.T) {
 	t.Parallel()
 

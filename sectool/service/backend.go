@@ -2,13 +2,15 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
-	"github.com/go-appsec/toolbox/sectool/service/proxy"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
+	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
 // ErrLabelExists is returned when label conflicts with an existing entry (rule or OAST).
@@ -19,18 +21,6 @@ var ErrNotFound = errors.New("not found")
 
 // ErrNotSupported is returned when a backend cannot perform an operation.
 var ErrNotSupported = errors.New("not supported by backend")
-
-// Rule type constants for find/replace rules.
-const (
-	RuleTypeRequestHeader  = "request_header"
-	RuleTypeRequestBody    = "request_body"
-	RuleTypeResponseHeader = "response_header"
-	RuleTypeResponseBody   = "response_body"
-
-	RuleTypeWSToServer = "ws:to-server"
-	RuleTypeWSToClient = "ws:to-client"
-	RuleTypeWSBoth     = "ws:both"
-)
 
 const sinceLast = "last"
 
@@ -57,6 +47,11 @@ type HttpBackend interface {
 	// Returns ErrNotFound if no entry exists for the flow_id.
 	GetProxyEntry(ctx context.Context, flowID string) (*ProxyEntry, error)
 
+	// GetProxyChildren returns the child flows of parentFlowID in emission order
+	// (stream children, session inner flows). Empty on backends without nested
+	// flows (Burp).
+	GetProxyChildren(ctx context.Context, parentFlowID string) ([]ProxyEntry, error)
+
 	// DeleteProxyEntries removes proxy history entries by flow_id and returns the number actually deleted.
 	// Unknown flow_ids are silently ignored. Returns ErrNotSupported on backends without delete (Burp).
 	DeleteProxyEntries(ctx context.Context, flowIDs []string) (int, error)
@@ -77,6 +72,28 @@ type HttpBackend interface {
 	// DeleteRule removes a rule by ID or label.
 	// Searches both HTTP and WebSocket rules automatically.
 	DeleteRule(ctx context.Context, idOrLabel string) error
+
+	// Sidecars returns the connected sidecar registry, or nil on backends that
+	// host no sidecars (Burp).
+	Sidecars() SidecarRegistry
+}
+
+// SidecarRegistry is the connected-sidecar surface the MCP server consumes for
+// replay routing and tool composition. The native proxy backend's sidecar
+// manager implements it; it is defined here (in wire terms only) so the service
+// depends on this contract rather than the deep sidecar package.
+type SidecarRegistry interface {
+	// HasAdapter reports whether a healthy sidecar is registered under name.
+	HasAdapter(name string) bool
+	// AdapterTools returns each healthy adapter's MCP tools keyed by adapter name,
+	// as a single consistent snapshot.
+	AdapterTools() map[string][]wire.MCPTool
+	// InvokeTool delegates a sidecar-registered tool call to its owning adapter.
+	InvokeTool(ctx context.Context, name string, args json.RawMessage) (wire.InvokeToolResult, *wire.Error)
+	// SidecarSend routes a replay or origination to the named adapter.
+	SidecarSend(ctx context.Context, adapter string, p wire.SidecarSendParams) (wire.SidecarSendResult, *wire.Error)
+	// SetToolsChangedHook registers a callback invoked when the connected adapter set changes.
+	SetToolsChangedHook(fn func())
 }
 
 // ResponderBackend defines the interface for managing proxy responders.
@@ -96,17 +113,23 @@ type ResponderBackend interface {
 // ProxyEntryMeta holds lightweight metadata for a proxy history entry.
 // Used by summary/list paths to avoid deserializing full request/response bodies.
 type ProxyEntryMeta struct {
-	FlowID      string
-	Timestamp   time.Time // capture-start for native; first observation for Burp
-	Method      string
-	Host        string
-	Path        string // includes query string
-	Status      int
-	RespLen     int
-	Protocol    string
-	Scheme      string // "http" or "https" (empty = infer from host)
-	Port        int    // original port (0 = infer from scheme)
-	ContentType string
+	FlowID       string
+	Timestamp    time.Time // capture-start for native; first observation for Burp
+	Method       string
+	Host         string
+	Path         string // includes query string
+	Status       int
+	RespLen      int
+	Protocol     string
+	Adapter      string // emitting adapter name
+	ParentFlowID string // parent flow when nested (stream child, session inner flow)
+	Scheme       string // "http" or "https" (empty = infer from host)
+	Port         int    // original port (0 = infer from scheme)
+	ContentType  string
+	// Annotations carries sidecar-authored flow metadata.
+	Annotations       map[string]any
+	InvokedBy         string
+	SidecarInstanceID string
 	// Placeholder marks an unparseable Burp entry that preserves offset contiguity; skipped for display.
 	Placeholder bool
 }
@@ -120,25 +143,27 @@ type ProxyEntry struct {
 	// InterimResponses holds wire-formatted 1xx responses that preceded Response.
 	InterimResponses []string `json:"interim_responses,omitempty"`
 	Notes            string   `json:"notes"`
-	Protocol         string   `json:"protocol"`         // "http/1.1" or "h2" (empty defaults to http/1.1)
-	Scheme           string   `json:"scheme,omitempty"` // "http" or "https" (empty = infer from host)
-	Port             int      `json:"port,omitempty"`   // original port (0 = infer from scheme)
+	Protocol         string   `json:"protocol"`                 // "http/1.1" or "http/2" (empty defaults to http/1.1)
+	Adapter          string   `json:"adapter,omitempty"`        // emitting adapter name
+	ParentFlowID     string   `json:"parent_flow_id,omitempty"` // parent flow when nested
+	Scheme           string   `json:"scheme,omitempty"`         // "http" or "https" (empty = infer from host)
+	Port             int      `json:"port,omitempty"`           // original port (0 = infer from scheme)
+	// Annotations carries sidecar-authored flow metadata.
+	Annotations       map[string]any `json:"annotations,omitempty"`
+	InvokedBy         string         `json:"invoked_by,omitempty"`
+	SidecarInstanceID string         `json:"sidecar_instance_id,omitempty"`
 	// Placeholder marks an unparseable Burp entry that preserves offset contiguity; skipped for display.
 	Placeholder bool `json:"-"`
 }
 
-// Target specifies the destination for a request.
-// Type alias for proxy.Target to enable unified target handling across packages.
-type Target = proxy.Target
-
 // SendRequestInput contains all parameters for sending a request.
 type SendRequestInput struct {
 	RawRequest      []byte
-	Target          Target
+	Target          types.Target
 	FollowRedirects bool
 	Force           bool // Skip validation for protocol-level tests
 
-	// Protocol from the original history entry ("http/1.1" or "h2")
+	// Protocol from the original history entry ("http/1.1" or "http/2")
 	// Empty defaults to HTTP/1.1
 	Protocol string
 }

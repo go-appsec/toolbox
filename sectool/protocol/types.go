@@ -31,6 +31,13 @@ type FlowEntry struct {
 	ResponseLength int            `json:"response_length"`
 	Source         string         `json:"source,omitempty"` // "proxy" or "replay"
 	Notes          []FlowNoteInfo `json:"notes,omitempty"`
+	// Adapter and ProtocolTag: emitting adapter and wire protocol; empty for native HTTP
+	Adapter     string `json:"adapter,omitempty"`
+	ProtocolTag string `json:"protocol_tag,omitempty"`
+	// Annotations is sidecar-authored flow metadata; empty for HTTP flows.
+	Annotations       map[string]any `json:"annotations,omitempty"`
+	InvokedBy         string         `json:"invoked_by,omitempty"`
+	SidecarInstanceID string         `json:"sidecar_instance_id,omitempty"`
 }
 
 // RequestLine contains path and version from the HTTP request line.
@@ -95,6 +102,10 @@ type FlowGetResponse struct {
 	Depth             int                 `json:"depth,omitempty"`
 	Truncated         bool                `json:"truncated,omitempty"`
 	Note              string              `json:"note,omitempty"`
+	// Annotations is sidecar-authored flow metadata; empty for HTTP flows.
+	Annotations       map[string]any `json:"annotations,omitempty"`
+	InvokedBy         string         `json:"invoked_by,omitempty"`
+	SidecarInstanceID string         `json:"sidecar_instance_id,omitempty"`
 }
 
 // =============================================================================
@@ -199,7 +210,9 @@ type RuleListResponse struct {
 	Rules []RuleEntry `json:"rules"`
 }
 
-// RuleEntry represents a find/replace rule.
+// RuleEntry represents a find/replace rule. Adapter scopes the rule: empty applies
+// everywhere, "sectool" scopes it to the in-process proxy, any other value names a
+// sidecar adapter.
 type RuleEntry struct {
 	RuleID  string `json:"rule_id"`
 	Type    string `json:"type"`
@@ -207,6 +220,7 @@ type RuleEntry struct {
 	IsRegex bool   `json:"is_regex,omitempty"`
 	Find    string `json:"find,omitempty"`
 	Replace string `json:"replace,omitempty"`
+	Adapter string `json:"adapter,omitempty"`
 }
 
 // =============================================================================

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -43,11 +44,39 @@ type mcpServer struct {
 	// "test-report" - test-report instructions, no crawl tools
 	workflowMode        string
 	workflowInitialized atomic.Bool
+
+	// responder is the native backend's responder surface, captured once at
+	// construction; nil under Burp (no responder support).
+	responder ResponderBackend
+
+	// sidecars is the connected sidecar registry, captured at construction; nil
+	// under Burp or when sidecars are disabled.
+	sidecars SidecarRegistry
+
+	// coreTools is the static core tool name set captured after registerTools,
+	// used to collision-check sidecar tool names.
+	coreTools []string
+
+	// sidecar tool composition: global registrations synced to the connected
+	// adapter set, guarded so concurrent registry changes serialize.
+	sidecarMu         sync.Mutex
+	sidecarToolNames  map[string]struct{}
+	sidecarCoreParams bool
 }
 
-// newMCPServer creates a new MCP server instance.
+// newMCPServer creates a new MCP server instance. The responder and sidecar
+// capabilities are captured once from the backend (both nil under Burp).
 func newMCPServer(svc *Server, workflowMode string) *mcpServer {
-	// define server hooks to hide internal tools from tools list while leaving them callable
+	m := &mcpServer{
+		service:      svc,
+		workflowMode: workflowMode,
+	}
+	if rb, ok := svc.httpBackend.(ResponderBackend); ok {
+		m.responder = rb
+	}
+	m.sidecars = svc.httpBackend.Sidecars()
+
+	// hide internal tools from tools/list while leaving them callable
 	hooks := &server.Hooks{}
 	hooks.AddAfterListTools(func(_ context.Context, _ any, _ *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
 		result.Tools = bulk.SliceFilterInPlace(func(t mcp.Tool) bool {
@@ -72,7 +101,7 @@ func newMCPServer(svc *Server, workflowMode string) *mcpServer {
 		instructions = workflowMultiContent
 	}
 	if instructions != "" {
-		if _, ok := svc.httpBackend.(ResponderBackend); ok {
+		if m.responder != nil {
 			instructions += workflowRespondSection
 		}
 		if svc.oastBackend.SupportsRedirect() {
@@ -84,15 +113,17 @@ func newMCPServer(svc *Server, workflowMode string) *mcpServer {
 		opts = append(opts, server.WithInstructions(instructions))
 	}
 
-	mcpSrv := server.NewMCPServer("sectool", config.Version, opts...)
-
-	m := &mcpServer{
-		server:       mcpSrv,
-		service:      svc,
-		workflowMode: workflowMode,
-	}
+	m.server = server.NewMCPServer("sectool", config.Version, opts...)
 
 	m.registerTools()
+	// Snapshot core tool names before any sidecar tools are registered
+	m.coreTools = bulk.MapKeysSlice(m.server.ListTools())
+
+	// Compose sidecar tools; keep the advertised list in sync as adapters connect/disconnect
+	if m.sidecars != nil {
+		m.sidecars.SetToolsChangedHook(m.syncSidecarTools)
+		m.syncSidecarTools()
+	}
 
 	return m
 }
@@ -216,8 +247,8 @@ func (m *mcpServer) registerTools() {
 	}
 
 	// Register responder tools only when native proxy backend is used
-	if rb, ok := m.service.httpBackend.(ResponderBackend); ok {
-		m.addRespondTools(rb)
+	if m.responder != nil {
+		m.addRespondTools(m.responder)
 	}
 
 	if m.service.notesEnabled {
@@ -323,7 +354,7 @@ func (m *mcpServer) handleWorkflow(ctx context.Context, req mcp.CallToolRequest)
 		return errorResult("invalid task: use 'explore' or 'test-report'"), nil
 	}
 
-	if _, ok := m.service.httpBackend.(ResponderBackend); ok {
+	if m.responder != nil {
 		content += workflowRespondSection
 	}
 	if m.service.oastBackend.SupportsRedirect() {
@@ -332,6 +363,7 @@ func (m *mcpServer) handleWorkflow(ctx context.Context, req mcp.CallToolRequest)
 	if m.service.notesEnabled {
 		content += workflowNotesSection
 	}
+	content += m.sidecarToolsSection()
 
 	m.workflowInitialized.Store(true)
 	log.Printf("workflow: initialized task=%s", task)
@@ -467,15 +499,20 @@ type resolvedFlow struct {
 	RawRequest       []byte
 	ModifiedRequest  []byte // post-rule request for display; nil if no rules applied
 	RawResponse      []byte
-	InterimResponses []string      // wire-formatted 1xx responses preceding RawResponse (proxy only)
-	Source           string        // "proxy", "replay", "crawl"
-	Scheme           string        // "http" or "https" (empty = infer from host)
-	Port             int           // original port (0 = infer from scheme)
-	Protocol         string        // "http/1.1", "h2", or empty (defaults to http/1.1)
-	Duration         time.Duration // replay, crawl (zero = not available)
-	FoundOn          string        // crawl only
-	Depth            int           // crawl only
-	Truncated        bool          // crawl only
+	InterimResponses []string       // wire-formatted 1xx responses preceding RawResponse (proxy only)
+	Source           string         // "proxy", "replay", "crawl"
+	Adapter          string         // emitting adapter name (proxy flows; empty for built-in HTTP)
+	Scheme           string         // "http" or "https" (empty = infer from host)
+	Port             int            // original port (0 = infer from scheme)
+	Protocol         string         // "http/1.1", "http/2", or empty (defaults to http/1.1)
+	Duration         time.Duration  // replay, crawl (zero = not available)
+	FoundOn          string         // crawl only
+	Depth            int            // crawl only
+	Truncated        bool           // crawl only
+	Annotations      map[string]any // sidecar-authored metadata (proxy); nil otherwise
+
+	InvokedBy         string // originating sidecar (proxy, replay); empty otherwise
+	SidecarInstanceID string // emitting sidecar instance (proxy); empty otherwise
 }
 
 // DisplayRequest returns the request as shown when retrieved.
@@ -495,21 +532,28 @@ func (m *mcpServer) resolveFlow(ctx context.Context, flowID string) (*resolvedFl
 			ModifiedRequest: entry.ModifiedRequest,
 			RawResponse:     slices.Concat(entry.RespHeaders, entry.RespBody),
 			Source:          SourceReplay,
+			Adapter:         entry.Adapter,
 			Scheme:          entry.Scheme,
 			Port:            entry.Port,
 			Protocol:        entry.Protocol,
 			Duration:        entry.Duration,
+			Annotations:     entry.Annotations,
+			InvokedBy:       entry.InvokedBy,
 		}, nil
 	}
 	if entry, err := m.service.httpBackend.GetProxyEntry(ctx, flowID); err == nil && entry != nil {
 		return &resolvedFlow{
-			RawRequest:       []byte(entry.Request),
-			RawResponse:      []byte(entry.Response),
-			InterimResponses: entry.InterimResponses,
-			Source:           SourceProxy,
-			Scheme:           entry.Scheme,
-			Port:             entry.Port,
-			Protocol:         entry.Protocol,
+			RawRequest:        []byte(entry.Request),
+			RawResponse:       []byte(entry.Response),
+			InterimResponses:  entry.InterimResponses,
+			Source:            SourceProxy,
+			Adapter:           entry.Adapter,
+			Scheme:            entry.Scheme,
+			Port:              entry.Port,
+			Protocol:          entry.Protocol,
+			Annotations:       entry.Annotations,
+			InvokedBy:         entry.InvokedBy,
+			SidecarInstanceID: entry.SidecarInstanceID,
 		}, nil
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, errorResultFromErr("failed to fetch flow: ", err)

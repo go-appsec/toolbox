@@ -19,7 +19,9 @@ import (
 	"github.com/go-appsec/toolbox/sectool/service/ids"
 	"github.com/go-appsec/toolbox/sectool/service/mcp"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
+	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
 const burpFlowIndexKeyPrefix = "b:off:"
@@ -44,6 +46,9 @@ type BurpBackend struct {
 
 // Compile-time check that BurpBackend implements HttpBackend
 var _ HttpBackend = (*BurpBackend)(nil)
+
+// Sidecars reports no sidecars; the Burp backend does not host the sidecar listener.
+func (b *BurpBackend) Sidecars() SidecarRegistry { return nil }
 
 // ConnectBurpBackend creates a new Burp HttpBackend with the given MCP URL.
 func ConnectBurpBackend(ctx context.Context, url string, storage store.Provider, opts ...mcp.Option) (*BurpBackend, error) {
@@ -71,15 +76,15 @@ func NewBurpBackend(client *mcp.BurpClient, storage store.Provider) (*BurpBacken
 	}, nil
 }
 
-// burpFlowIndex maps Burp offsets, observation timestamps, and request fingerprints to flow_ids.
-// The fingerprint detects when a Burp UI delete shifts entries down into existing offsets so
-// flow_id identity is preserved across reshuffles via byFingerprint.
+// burpFlowIndex maps Burp offsets, observation timestamps, and request fingerprints to flow_ids,
+// preserving flow_id identity across Burp UI deletes that reshuffle offsets.
 type burpFlowIndex struct {
-	mu             sync.RWMutex
-	storage        store.Storage
-	byOffset       map[int]burpFlowEntry
-	byFlowID       map[string]int    // flow_id -> offset
-	byFingerprint  map[uint64]string // fp -> flow_id, used to relocate shifted entries
+	mu       sync.RWMutex
+	storage  store.Storage
+	byOffset map[int]burpFlowEntry
+	byFlowID map[string]int // flow_id -> offset
+	// byFingerprint relocates entries shifted down into existing offsets by a Burp UI delete.
+	byFingerprint  map[uint64]string // fp -> flow_id
 	maxObservedOff int
 	hasObserved    bool
 }
@@ -451,6 +456,11 @@ func (b *BurpBackend) GetProxyEntry(ctx context.Context, flowID string) (*ProxyE
 	}, nil
 }
 
+// GetProxyChildren returns no children: the Burp backend has no nested flows.
+func (b *BurpBackend) GetProxyChildren(ctx context.Context, parentFlowID string) ([]ProxyEntry, error) {
+	return nil, nil
+}
+
 func (b *BurpBackend) DeleteProxyEntries(ctx context.Context, flowIDs []string) (int, error) {
 	return 0, ErrNotSupported
 }
@@ -482,9 +492,8 @@ func (b *BurpBackend) SendRequest(ctx context.Context, name string, req SendRequ
 	return result, nil
 }
 
-// doSendRequest builds a closure that creates a Repeater tab for every request
-// (including redirect hops) and sends via the appropriate protocol.
-// Rules are applied per-hop inside the closure. firstHopRequest captures the
+// doSendRequest sends req via Burp, creating a Repeater tab and applying rules
+// for each request including redirect hops. firstHopRequest receives the
 // post-rule bytes of the initial request for ModifiedRequest tracking.
 func (b *BurpBackend) doSendRequest(ctx context.Context, name string, req SendRequestInput, firstHopRequest *[]byte) (*SendRequestResult, error) {
 	// Build descriptive tab name: st-domain/path [id]
@@ -552,7 +561,7 @@ func (b *BurpBackend) sendWithRepeater(ctx context.Context, tabName string, req 
 	// Route to appropriate send method
 	var rawResponse string
 	var err error
-	if req.Protocol == "h2" {
+	if req.Protocol == "http/2" {
 		params := rawRequestToH2Params(req.RawRequest, req.Target)
 		rawResponse, err = b.client.SendHTTP2Request(ctx, params)
 	} else {
@@ -586,7 +595,7 @@ func (b *BurpBackend) sendWithRepeater(ctx context.Context, tabName string, req 
 // rawRequestToH2Params converts raw HTTP/1.1-format request bytes to H2 params.
 // Extracts method and path from the request line, maps Host to :authority,
 // and lowercases header names per H2 convention.
-func rawRequestToH2Params(raw []byte, target Target) mcp.SendHTTP2RequestParams {
+func rawRequestToH2Params(raw []byte, target types.Target) mcp.SendHTTP2RequestParams {
 	// Extract request URI from first line
 	requestURI := "/"
 	lines := bytes.SplitN(raw, []byte("\r\n"), 2)
@@ -929,9 +938,9 @@ func applyRequestRulesToRaw(rawRequest []byte, rules []protocol.RuleEntry) []byt
 			stored.compiled = compiled
 		}
 		switch r.Type {
-		case RuleTypeRequestHeader:
+		case wire.RuleTypeRequestHeader:
 			headerRules = append(headerRules, stored)
-		case RuleTypeRequestBody:
+		case wire.RuleTypeRequestBody:
 			bodyRules = append(bodyRules, stored)
 		}
 	}

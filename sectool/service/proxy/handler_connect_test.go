@@ -230,7 +230,7 @@ func TestHandle(t *testing.T) {
 		testutil.WaitForCount(t, func() int { return proxy.History().Count() }, 1)
 
 		entry := firstEntry(t, proxy.History())
-		assert.Equal(t, "http/1.1", entry.Protocol)
+		assert.Equal(t, "http/1.1", entry.ProtocolTag)
 		assert.Equal(t, "GET", entry.Request.Method)
 		assert.Equal(t, 200, entry.Response.StatusCode)
 		assert.Contains(t, string(entry.Response.Body), "Hello from HTTPS server")

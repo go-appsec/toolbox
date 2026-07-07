@@ -42,6 +42,15 @@ func (c *Client) ProxyPoll(ctx context.Context, opts ProxyPollOpts) (*protocol.P
 	if opts.ExcludePath != "" {
 		args["exclude_path"] = opts.ExcludePath
 	}
+	if opts.Adapter != "" {
+		args["adapter"] = opts.Adapter
+	}
+	if opts.ProtocolTag != "" {
+		args["protocol_tag"] = opts.ProtocolTag
+	}
+	if opts.ParentFlowID != "" {
+		args["parent_flow_id"] = opts.ParentFlowID
+	}
 	if opts.Limit > 0 {
 		args["limit"] = opts.Limit
 	}
@@ -206,6 +215,9 @@ func (c *Client) ReplaySend(ctx context.Context, opts ReplaySendOpts) (*protocol
 	}
 	if opts.Force {
 		args["force"] = opts.Force
+	}
+	if opts.StreamStrategy != "" {
+		args["stream_strategy"] = opts.StreamStrategy
 	}
 
 	var resp protocol.ReplaySendResponse

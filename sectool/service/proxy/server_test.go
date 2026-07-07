@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 	"github.com/go-appsec/toolbox/sectool/service/testutil"
 )
@@ -50,7 +51,7 @@ func TestServe(t *testing.T) {
 		testutil.WaitForCount(t, func() int { return proxy.History().Count() }, 1)
 
 		entry := firstEntry(t, proxy.History())
-		assert.Equal(t, "http/1.1", entry.Protocol)
+		assert.Equal(t, "http/1.1", entry.ProtocolTag)
 		assert.Equal(t, "GET", entry.Request.Method)
 		assert.Equal(t, 200, entry.Response.StatusCode)
 	})
@@ -464,31 +465,21 @@ type trackingRuleApplier struct {
 	responseCalled atomic.Bool
 }
 
-func (t *trackingRuleApplier) ApplyRequestRules(req *RawHTTP1Request) *RawHTTP1Request {
+func (t *trackingRuleApplier) ApplyRequestRules(req *types.RawHTTP1Request) *types.RawHTTP1Request {
 	t.requestCalled.Store(true)
 	return req
 }
 
-func (t *trackingRuleApplier) ApplyResponseRules(resp *RawHTTP1Response) *RawHTTP1Response {
+func (t *trackingRuleApplier) ApplyResponseRules(resp *types.RawHTTP1Response) *types.RawHTTP1Response {
 	t.responseCalled.Store(true)
 	return resp
 }
 
-func (t *trackingRuleApplier) ApplyH2RequestRules(req *H2RequestData) *H2RequestData {
-	t.requestCalled.Store(true)
-	return req
-}
-
-func (t *trackingRuleApplier) ApplyH2ResponseRules(resp *H2ResponseData) *H2ResponseData {
-	t.responseCalled.Store(true)
-	return resp
-}
-
-func (t *trackingRuleApplier) ApplyRequestBodyOnlyRules(body []byte, headers Headers) ([]byte, error) {
+func (t *trackingRuleApplier) ApplyRequestBodyOnlyRules(body []byte, headers types.Headers) ([]byte, error) {
 	return body, nil
 }
 
-func (t *trackingRuleApplier) ApplyResponseBodyOnlyRules(body []byte, headers Headers) []byte {
+func (t *trackingRuleApplier) ApplyResponseBodyOnlyRules(body []byte, headers types.Headers) []byte {
 	return body
 }
 

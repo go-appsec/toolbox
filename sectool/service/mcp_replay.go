@@ -8,15 +8,20 @@ import (
 	"log"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 
+	"github.com/go-analyze/bulk"
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/go-appsec/toolbox/pkg/mutate"
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/ids"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
+	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
 func (m *mcpServer) replaySendTool() mcp.Tool {
@@ -44,6 +49,7 @@ Processing: remove_* is applied before set_*. Content-Length auto-updates on bod
 		mcp.WithArray("remove_form", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("Form field names to remove (form-encoded bodies only)")),
 		mcp.WithBoolean("follow_redirects", mcp.Description("Follow HTTP redirects (default: false)")),
 		mcp.WithBoolean("force", mcp.Description("Skip validation for protocol-level tests (smuggling, CRLF injection)")),
+		mcp.WithString("stream_strategy", mcp.Description("For streamed flows only: 'per_chunk' (default) replays chunk-by-chunk in order; 'collapsed' merges chunks (rejected by adapters requiring ordered framing)")),
 	)
 }
 
@@ -95,6 +101,13 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 	if errResult != nil {
 		return errResult, nil
 	}
+
+	// Sidecar-owned flows replay through their adapter (re-encode/re-wrap/send);
+	// built-in HTTP flows fall through to the native path below
+	if resolved.Adapter != "" && m.sidecars != nil && m.sidecars.HasAdapter(resolved.Adapter) {
+		return m.replaySidecar(ctx, req, resolved.Adapter, flowID)
+	}
+
 	rawRequest := resolved.RawRequest
 	httpProtocol := resolved.Protocol
 
@@ -132,6 +145,139 @@ func (m *mcpServer) handleReplaySend(ctx context.Context, req mcp.CallToolReques
 	}
 
 	return m.executeSend(ctx, rawRequest, httpProtocol, mods, flowID)
+}
+
+// replaySidecar routes a replay of a sidecar-owned flow to its owning adapter.
+// The adapter applies the mutations, re-encodes/re-wraps, and sends; sectool
+// returns the produced flow and response form to the agent.
+func (m *mcpServer) replaySidecar(ctx context.Context, req mcp.CallToolRequest, adapter, flowID string) (*mcp.CallToolResult, error) {
+	wait := true
+	res, rpcErr := m.sidecars.SidecarSend(ctx, adapter, wire.SidecarSendParams{
+		FlowID:          flowID,
+		Destination:     req.GetString("target", ""),
+		Mutations:       buildMutations(req),
+		FollowRedirects: req.GetBool("follow_redirects", false),
+		Force:           req.GetBool("force", false),
+		StreamStrategy:  req.GetString("stream_strategy", ""),
+		WaitForResponse: &wait,
+	})
+	if rpcErr != nil {
+		return errorResult("sidecar replay failed: " + rpcErr.Error()), nil
+	} else if len(res.NewFlowIDs) == 0 {
+		return errorResult("sidecar replay produced no flow"), nil
+	}
+
+	out := protocol.ReplaySendResponse{FlowID: res.NewFlowIDs[0]}
+	if r := res.Response; r != nil {
+		var hb strings.Builder
+		for _, h := range r.Headers {
+			hb.WriteString(h.Name)
+			hb.WriteString(": ")
+			hb.WriteString(h.Value)
+			hb.WriteString("\r\n")
+		}
+		headers := hb.String()
+		out.ResponseDetails = protocol.ResponseDetails{
+			Status:      r.StatusCode,
+			RespHeaders: headers,
+			RespSize:    len(r.Body),
+			RespPreview: previewBody(r.Body, responsePreviewSize, extractHeader(headers, "Content-Type")),
+		}
+	}
+	return jsonResult(out)
+}
+
+// Mutation op names, the shared vocabulary of buildMutations and mutationsToOpts.
+const (
+	opSetHeader    = "set_header"
+	opRemoveHeader = "remove_header"
+	opSetJSON      = "set_json"
+	opRemoveJSON   = "remove_json"
+	opSetForm      = "set_form"
+	opRemoveForm   = "remove_form"
+	opSetQuery     = "set_query"
+	opRemoveQuery  = "remove_query"
+	opMethod       = "method"
+	opPath         = "path"
+	opQuery        = "query"
+	opBody         = "body"
+)
+
+// buildMutations translates the replay_send MCP params into the ordered wire
+// mutation list applied by a sidecar adapter (mutate via sidecar.ApplyMutations).
+// It is the structured-path counterpart to executeSend's raw-byte application:
+// the two paths must support the same mutation ops, so a new op added to one
+// must be added to the other. The native path is intentionally NOT routed
+// through this list (it edits raw bytes for force=true wire fidelity).
+func buildMutations(req mcp.CallToolRequest) []wire.Mutation {
+	var muts []wire.Mutation
+	for _, h := range req.GetStringSlice("remove_headers", nil) {
+		muts = append(muts, wire.Mutation{Op: opRemoveHeader, Name: h})
+	}
+	for _, h := range getHeaderArg(req, "set_headers") {
+		if name, value, ok := splitPair(h, ":"); ok {
+			muts = append(muts, wire.Mutation{Op: opSetHeader, Name: name, Value: value})
+		}
+	}
+	// Sorted for a deterministic mutation array across calls
+	setJSON := getJSONArg(req)
+	jsonPaths := bulk.MapKeysSlice(setJSON)
+	slices.Sort(jsonPaths)
+	for _, path := range jsonPaths {
+		// strings pass through (adapter-side type inference applies); others are JSON-encoded
+		val := setJSON[path]
+		sv, ok := val.(string)
+		if !ok {
+			if b, err := json.Marshal(val); err == nil {
+				sv = string(b)
+			} else {
+				sv = fmt.Sprint(val)
+			}
+		}
+		muts = append(muts, wire.Mutation{Op: opSetJSON, Name: path, Value: sv})
+	}
+	for _, path := range req.GetStringSlice("remove_json", nil) {
+		muts = append(muts, wire.Mutation{Op: opRemoveJSON, Name: path})
+	}
+	setForm := getFormArg(req)
+	formNames := bulk.MapKeysSlice(setForm)
+	slices.Sort(formNames)
+	for _, name := range formNames {
+		muts = append(muts, wire.Mutation{Op: opSetForm, Name: name, Value: setForm[name]})
+	}
+	for _, name := range req.GetStringSlice("remove_form", nil) {
+		muts = append(muts, wire.Mutation{Op: opRemoveForm, Name: name})
+	}
+	for _, name := range req.GetStringSlice("remove_query", nil) {
+		muts = append(muts, wire.Mutation{Op: opRemoveQuery, Name: name})
+	}
+	for _, q := range req.GetStringSlice("set_query", nil) {
+		if name, value, ok := splitPair(q, "="); ok {
+			muts = append(muts, wire.Mutation{Op: opSetQuery, Name: name, Value: value})
+		}
+	}
+	if v := req.GetString("method", ""); v != "" {
+		muts = append(muts, wire.Mutation{Op: opMethod, Value: v})
+	}
+	if v := req.GetString("path", ""); v != "" {
+		muts = append(muts, wire.Mutation{Op: opPath, Value: v})
+	}
+	if v := req.GetString("query", ""); v != "" {
+		muts = append(muts, wire.Mutation{Op: opQuery, Value: v})
+	}
+	if v := req.GetString("body", ""); v != "" {
+		muts = append(muts, wire.Mutation{Op: opBody, Value: v})
+	}
+	return muts
+}
+
+// splitPair splits s on the first sep into a trimmed name and value.
+func splitPair(s, sep string) (name, value string, ok bool) {
+	idx := strings.Index(s, sep)
+	if idx <= 0 {
+		return "", "", false
+	}
+	return strings.TrimSpace(s[:idx]), strings.TrimSpace(s[idx+len(sep):]), true
 }
 
 func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -193,8 +339,32 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 }
 
 // executeSend is the shared send pipeline for replay_send and request_send.
-// Applies header/body modifications, validates, sends, and stores the result.
 func (m *mcpServer) executeSend(ctx context.Context, rawRequest []byte, httpProtocol string, mods sendModifications, sourceFlowID string) (*mcp.CallToolResult, error) {
+	flowID, result, short, err := m.executeSendFlow(ctx, rawRequest, httpProtocol, mods, sourceFlowID, "")
+	if short != nil || err != nil {
+		return short, err
+	}
+	respCode, respStatusLine := parseResponseStatus(result.Headers)
+	return jsonResult(protocol.ReplaySendResponse{
+		FlowID:   flowID,
+		Duration: result.Duration.String(),
+		ResponseDetails: protocol.ResponseDetails{
+			Status:      respCode,
+			StatusLine:  respStatusLine,
+			RespHeaders: string(result.Headers),
+			RespSize:    len(result.Body),
+			RespPreview: previewBody(result.Body, responsePreviewSize, extractHeader(string(result.Headers), "Content-Type")),
+		},
+	})
+}
+
+// executeSendFlow applies header/body modifications, validates, sends, and stores
+// the result as a replay history flow. It returns the stored flow_id and the send
+// result, or a non-nil short-circuit result (validation/domain/send failure) when
+// the send does not complete. invokedBy attributes a sidecar-originated send; empty
+// for agent sends. This is the native raw-byte counterpart to buildMutations (the
+// sidecar path); a new mutation op supported here must also be emitted by buildMutations.
+func (m *mcpServer) executeSendFlow(ctx context.Context, rawRequest []byte, httpProtocol string, mods sendModifications, sourceFlowID, invokedBy string) (string, *SendRequestResult, *mcp.CallToolResult, error) {
 	headers, reqBody := splitHeadersBody(rawRequest)
 	headers = applyHeaderModifications(headers, mods.RemoveHeaders, mods.SetHeaders)
 
@@ -216,21 +386,21 @@ func (m *mcpServer) executeSend(ctx context.Context, rawRequest []byte, httpProt
 	}
 	if len(mods.SetJSON) > 0 || len(mods.RemoveJSON) > 0 {
 		if isFormEncodedContentType(extractHeader(string(headers), "Content-Type")) {
-			return errorResult(
+			return "", nil, errorResult(
 				"request body is application/x-www-form-urlencoded; use 'set_form'/'remove_form' to modify fields or 'body' to replace the raw payload. 'set_json' only applies to JSON bodies.",
 			), nil
 		}
-		modifiedBody, err := modifyJSONBodyMap(reqBody, mods.SetJSON, mods.RemoveJSON)
+		modifiedBody, err := mutate.JSON(reqBody, mods.SetJSON, mods.RemoveJSON)
 		if err != nil {
-			return errorResult("JSON body modification failed: " + err.Error()), nil
+			return "", nil, errorResult("JSON body modification failed: " + err.Error()), nil
 		}
 		reqBody = modifiedBody
 		bodyModified = true
 	}
 	if len(mods.SetForm) > 0 || len(mods.RemoveForm) > 0 {
-		modifiedBody, err := modifyFormBodyMap(reqBody, mods.SetForm, mods.RemoveForm)
+		modifiedBody, err := mutate.Form(reqBody, mods.SetForm, mods.RemoveForm)
 		if err != nil {
-			return errorResult("form body modification failed: " + err.Error()), nil
+			return "", nil, errorResult("form body modification failed: " + err.Error()), nil
 		}
 		reqBody = modifiedBody
 		bodyModified = true
@@ -266,7 +436,7 @@ func (m *mcpServer) executeSend(ctx context.Context, rawRequest []byte, httpProt
 			trailers = parsed.Trailers
 		}
 		var framed bytes.Buffer
-		proxy.EncodeStandardChunkedBody(&framed, reqBody, trailers)
+		types.EncodeStandardChunkedBody(&framed, reqBody, trailers)
 		reqBody = framed.Bytes()
 	}
 
@@ -281,20 +451,21 @@ func (m *mcpServer) executeSend(ctx context.Context, rawRequest []byte, httpProt
 	// Validate when force is not set
 	if !mods.Force {
 		if issues := validateRequest(rawRequest); len(issues) > 0 {
-			return validationResult(issues)
+			res, err := validationResult(issues)
+			return "", nil, res, err
 		}
 	}
 
 	// Parse target and check domain scoping
 	host, port, usesHTTPS := parseTarget(rawRequest, mods.Target)
 	if allowed, reason := m.service.cfg.IsDomainAllowed(host); !allowed {
-		return errorResult("domain rejected: " + reason), nil
+		return "", nil, errorResult("domain rejected: " + reason), nil
 	}
 
 	// HTTP/2 requires TLS
-	if httpProtocol == "h2" {
+	if httpProtocol == "http/2" {
 		if mods.Target != "" && strings.HasPrefix(strings.ToLower(mods.Target), "http://") {
-			return errorResult("cannot replay HTTP/2 request to http:// target: HTTP/2 requires TLS. To replay as HTTP/1.1, use a flow captured as HTTP/1.1 or manually construct the request."), nil
+			return "", nil, errorResult("cannot replay HTTP/2 request to http:// target: HTTP/2 requires TLS. To replay as HTTP/1.1, use a flow captured as HTTP/1.1 or manually construct the request."), nil
 		}
 		usesHTTPS = true
 	}
@@ -307,7 +478,7 @@ func (m *mcpServer) executeSend(ctx context.Context, rawRequest []byte, httpProt
 
 	result, err := m.service.httpBackend.SendRequest(ctx, "sectool-"+replayID, SendRequestInput{
 		RawRequest: rawRequest,
-		Target: Target{
+		Target: types.Target{
 			Hostname:  host,
 			Port:      port,
 			UsesHTTPS: usesHTTPS,
@@ -317,10 +488,10 @@ func (m *mcpServer) executeSend(ctx context.Context, rawRequest []byte, httpProt
 		Protocol:        httpProtocol,
 	})
 	if err != nil {
-		return errorResultFromErr("request failed: ", err), nil
+		return "", nil, errorResultFromErr("request failed: ", err), nil
 	}
 
-	respCode, respStatusLine := parseResponseStatus(result.Headers)
+	respCode, _ := parseResponseStatus(result.Headers)
 
 	// Extract metadata from post-rule request (what was actually sent)
 	displayRequest := rawRequest
@@ -347,19 +518,10 @@ func (m *mcpServer) executeSend(ctx context.Context, rawRequest []byte, httpProt
 		RespStatus:      respCode,
 		Duration:        result.Duration,
 		SourceFlowID:    sourceFlowID,
+		InvokedBy:       invokedBy,
 	})
 
-	return jsonResult(protocol.ReplaySendResponse{
-		FlowID:   replayID,
-		Duration: result.Duration.String(),
-		ResponseDetails: protocol.ResponseDetails{
-			Status:      respCode,
-			StatusLine:  respStatusLine,
-			RespHeaders: string(result.Headers),
-			RespSize:    len(result.Body),
-			RespPreview: previewBody(result.Body, responsePreviewSize, extractHeader(string(result.Headers), "Content-Type")),
-		},
-	})
+	return replayID, result, nil, nil
 }
 
 // getHeaderArg extracts a header array parameter from an MCP request.

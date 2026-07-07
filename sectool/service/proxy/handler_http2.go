@@ -15,13 +15,12 @@ import (
 	"time"
 
 	"github.com/go-analyze/bulk"
+	"github.com/go-appsec/toolbox/pkg/addr"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"golang.org/x/net/http2"
 )
 
 const (
-	// protocolH2 is the protocol string for HTTP/2
-	protocolH2 = "h2"
-
 	// initialWindowSize is the HTTP/2 default window (64KB)
 	initialWindowSize = 65535
 	streamIdleTimeout = 5 * time.Minute
@@ -59,7 +58,7 @@ const (
 // http2Handler handles HTTP/2 MITM interception.
 type http2Handler struct {
 	history             *HistoryStore
-	ruleApplier         RuleApplier
+	ruleApplier         types.RuleApplier
 	responseInterceptor ResponseInterceptor
 	maxBodyBytes        int
 	timeouts            TimeoutConfig
@@ -75,7 +74,7 @@ func newHTTP2Handler(history *HistoryStore, maxBodyBytes int, timeouts TimeoutCo
 }
 
 // SetRuleApplier sets the rule applier for header and body modifications.
-func (h *http2Handler) SetRuleApplier(applier RuleApplier) {
+func (h *http2Handler) SetRuleApplier(applier types.RuleApplier) {
 	h.ruleApplier = applier
 }
 
@@ -92,16 +91,15 @@ type h2Stream struct {
 	scheme     string
 	authority  string
 	path       string
-	reqHeaders Headers
+	reqHeaders types.Headers
 	reqBody    bytes.Buffer // history capture (limited to maxBodyBytes)
 
 	// Response data
 	statusCode  int
-	respHeaders Headers
+	respHeaders types.Headers
 	respBody    bytes.Buffer // history capture (limited to maxBodyBytes)
 
-	// Full body buffers for body rule application (when rules exist)
-	// These hold the complete body (up to maxBodyBytes) for modification
+	// Full body buffers holding the complete body (up to maxBodyBytes) for rule application
 	reqBodyFull  bytes.Buffer
 	respBodyFull bytes.Buffer
 
@@ -254,7 +252,6 @@ func (h *http2Handler) Handle(ctx context.Context, clientConn, upstreamConn *tls
 		return
 	}
 
-	// Send preface to upstream
 	if _, err := upstreamConn.Write([]byte(h2Preface)); err != nil {
 		log.Printf("h2: failed to send upstream preface: %v", err)
 		return
@@ -277,10 +274,8 @@ func (h *http2Handler) Handle(ctx context.Context, clientConn, upstreamConn *tls
 	go proxy.writeFrames(proxy.upstream, upstreamConn)
 	go proxy.writePump(proxy.client, proxy.upstream) // upstream -> client DATA
 
-	// Start cleanup goroutine
 	go proxy.cleanupStaleStreams()
 
-	// Wait for completion
 	proxy.wg.Wait()
 }
 
@@ -616,7 +611,7 @@ func (p *h2Proxy) processHeaders(buf *bytes.Buffer, streamID uint32, block []byt
 
 			// Check for response interception before rule application and forwarding
 			if p.handler.responseInterceptor != nil {
-				host, port := ParseAuthority(stream.authority, stream.scheme)
+				host, port := addr.Parse(stream.authority, stream.scheme)
 				if intercepted := p.handler.responseInterceptor.InterceptRequest(
 					host, port, PathWithoutQuery(stream.path), stream.method,
 				); intercepted != nil {
@@ -631,7 +626,7 @@ func (p *h2Proxy) processHeaders(buf *bytes.Buffer, streamID uint32, block []byt
 			if p.handler.ruleApplier != nil {
 				// Convert to RawHTTP1Request for rule application
 				pathPart, queryPart, _ := strings.Cut(stream.path, "?")
-				req := &RawHTTP1Request{
+				req := &types.RawHTTP1Request{
 					Method:  stream.method,
 					Path:    pathPart,
 					Query:   queryPart,
@@ -661,7 +656,7 @@ func (p *h2Proxy) processHeaders(buf *bytes.Buffer, streamID uint32, block []byt
 
 			// Apply response header rules
 			if p.handler.ruleApplier != nil {
-				resp := &RawHTTP1Response{
+				resp := &types.RawHTTP1Response{
 					StatusCode: stream.statusCode,
 					Headers:    headers,
 				}
@@ -722,7 +717,6 @@ func (p *h2Proxy) processHeaders(buf *bytes.Buffer, streamID uint32, block []byt
 		return
 	}
 
-	// Write HEADERS frame
 	p.writeHeadersFrame(buf, dst, streamID, encoded, endStream)
 
 	// Check if stream is complete (after unlock to avoid holding lock during history store)
@@ -1489,36 +1483,44 @@ func (p *h2Proxy) storeStreamInHistory(stream *h2Stream) {
 	stream.mu.Lock()
 	scheme := stream.scheme
 	if scheme == "" {
-		scheme = schemeHTTPS // h2 is always tunneled over TLS via CONNECT
+		scheme = types.SchemeHTTPS // h2 is always tunneled over TLS via CONNECT
 	}
-	_, port := ParseAuthority(stream.authority, scheme)
-	entry := &HistoryEntry{
-		Protocol:   protocolH2,
-		Scheme:     scheme,
-		Port:       port,
-		H2StreamID: stream.id,
-		H2Request: &H2RequestData{
-			Method:    stream.method,
-			Scheme:    stream.scheme,
-			Authority: stream.authority,
-			Path:      stream.path,
-			Headers:   stream.reqHeaders,
-			Body:      append([]byte(nil), stream.reqBody.Bytes()...), // copy to avoid holding reference
+	_, port := addr.Parse(stream.authority, scheme)
+
+	// Fold HTTP/2 pseudo-headers and the stream id ahead of regular headers
+	reqHeaders := make(types.Headers, 0, len(stream.reqHeaders)+5)
+	reqHeaders = append(reqHeaders,
+		types.Header{Name: ":method", Value: stream.method},
+		types.Header{Name: ":scheme", Value: stream.scheme},
+		types.Header{Name: ":authority", Value: stream.authority},
+		types.Header{Name: ":path", Value: stream.path},
+		types.Header{Name: types.HeaderStreamID, Value: strconv.FormatUint(uint64(stream.id), 10)},
+	)
+	reqHeaders = append(reqHeaders, stream.reqHeaders...)
+
+	flow := &types.Flow{
+		Adapter:     types.ProtocolH2,
+		ProtocolTag: types.ProtocolH2,
+		Scheme:      scheme,
+		Port:        port,
+		Request: &types.Message{
+			Headers: reqHeaders,
+			Body:    append([]byte(nil), stream.reqBody.Bytes()...), // copy to avoid holding reference
 		},
-		H2Response: &H2ResponseData{
+		Response: &types.Message{
 			StatusCode: stream.statusCode,
 			Headers:    stream.respHeaders,
 			Body:       append([]byte(nil), stream.respBody.Bytes()...), // copy to avoid holding reference
 		},
-		Timestamp: stream.startTime,
-		Duration:  time.Since(stream.startTime),
+		StartedAt:   stream.startTime,
+		CompletedAt: time.Now(),
 	}
 	stream.mu.Unlock()
 
-	if !p.handler.history.ShouldCapture(entry) {
+	if !p.handler.history.ShouldCapture(flow) {
 		return
 	}
-	p.handler.history.Store(entry)
+	p.handler.history.Store(flow)
 }
 
 // sendInterceptedH2Response sends a canned response to the client for an intercepted request.

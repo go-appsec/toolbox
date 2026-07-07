@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 	"github.com/go-appsec/toolbox/sectool/service/testutil"
 )
@@ -99,13 +100,13 @@ func TestH2StreamInitialState(t *testing.T) {
 type h2MockRuleApplier struct {
 	hasReqBodyRules  bool
 	hasRespBodyRules bool
-	reqHeaderMod     func([]Header) []Header
-	respHeaderMod    func([]Header) []Header
+	reqHeaderMod     func([]types.Header) []types.Header
+	respHeaderMod    func([]types.Header) []types.Header
 	reqBodyMod       func([]byte) []byte
 	respBodyMod      func([]byte) []byte
 }
 
-func (m *h2MockRuleApplier) ApplyRequestRules(req *RawHTTP1Request) *RawHTTP1Request {
+func (m *h2MockRuleApplier) ApplyRequestRules(req *types.RawHTTP1Request) *types.RawHTTP1Request {
 	if m.reqHeaderMod != nil {
 		req.Headers = m.reqHeaderMod(req.Headers)
 	}
@@ -115,7 +116,7 @@ func (m *h2MockRuleApplier) ApplyRequestRules(req *RawHTTP1Request) *RawHTTP1Req
 	return req
 }
 
-func (m *h2MockRuleApplier) ApplyResponseRules(resp *RawHTTP1Response) *RawHTTP1Response {
+func (m *h2MockRuleApplier) ApplyResponseRules(resp *types.RawHTTP1Response) *types.RawHTTP1Response {
 	if m.respHeaderMod != nil {
 		resp.Headers = m.respHeaderMod(resp.Headers)
 	}
@@ -136,14 +137,14 @@ func (m *h2MockRuleApplier) HasBodyRules(isRequest bool) bool {
 	return m.hasRespBodyRules
 }
 
-func (m *h2MockRuleApplier) ApplyRequestBodyOnlyRules(body []byte, headers Headers) ([]byte, error) {
+func (m *h2MockRuleApplier) ApplyRequestBodyOnlyRules(body []byte, headers types.Headers) ([]byte, error) {
 	if m.reqBodyMod != nil {
 		return m.reqBodyMod(body), nil
 	}
 	return body, nil
 }
 
-func (m *h2MockRuleApplier) ApplyResponseBodyOnlyRules(body []byte, headers Headers) []byte {
+func (m *h2MockRuleApplier) ApplyResponseBodyOnlyRules(body []byte, headers types.Headers) []byte {
 	if m.respBodyMod != nil {
 		return m.respBodyMod(body)
 	}
@@ -166,7 +167,7 @@ func TestApplyBodyRules(t *testing.T) {
 			id:         1,
 			method:     "POST",
 			path:       "/test",
-			reqHeaders: []Header{{Name: "content-type", Value: "text/plain"}},
+			reqHeaders: []types.Header{{Name: "content-type", Value: "text/plain"}},
 		}
 		stream.reqBodyFull.WriteString("hello")
 
@@ -186,7 +187,7 @@ func TestApplyBodyRules(t *testing.T) {
 				bodyOnlyCalled = true
 				return append(body, []byte("-modified")...)
 			},
-			respHeaderMod: func(headers []Header) []Header {
+			respHeaderMod: func(headers []types.Header) []types.Header {
 				fullMethodCalled = true
 				return headers
 			},
@@ -196,7 +197,7 @@ func TestApplyBodyRules(t *testing.T) {
 		stream := &h2Stream{
 			id:          1,
 			statusCode:  200,
-			respHeaders: []Header{{Name: "content-type", Value: "text/plain"}},
+			respHeaders: []types.Header{{Name: "content-type", Value: "text/plain"}},
 		}
 		stream.respBodyFull.WriteString("test body")
 
@@ -278,8 +279,8 @@ func TestStoreStreamInHistory(t *testing.T) {
 		path:        "/api/v1",
 		statusCode:  200,
 		startTime:   time.Now().Add(-100 * time.Millisecond),
-		reqHeaders:  []Header{{Name: "user-agent", Value: "test"}},
-		respHeaders: []Header{{Name: "content-type", Value: "application/json"}},
+		reqHeaders:  []types.Header{{Name: "user-agent", Value: "test"}},
+		respHeaders: []types.Header{{Name: "content-type", Value: "application/json"}},
 	}
 	stream.reqBody.WriteString("request body")
 	stream.respBody.WriteString(`{"ok": true}`)
@@ -293,17 +294,17 @@ func TestStoreStreamInHistory(t *testing.T) {
 	assert.Equal(t, 1, history.Count())
 
 	entry := firstEntry(t, history)
-	assert.Equal(t, "h2", entry.Protocol)
-	assert.Equal(t, uint32(1), entry.H2StreamID)
-	require.NotNil(t, entry.H2Request)
-	assert.Equal(t, "GET", entry.H2Request.Method)
-	assert.Equal(t, "https", entry.H2Request.Scheme)
-	assert.Equal(t, "test.example.com", entry.H2Request.Authority)
-	assert.Equal(t, "/api/v1", entry.H2Request.Path)
-	assert.Equal(t, "request body", string(entry.H2Request.Body))
-	require.NotNil(t, entry.H2Response)
-	assert.Equal(t, 200, entry.H2Response.StatusCode)
-	assert.Equal(t, `{"ok": true}`, string(entry.H2Response.Body))
+	assert.Equal(t, "http/2", entry.ProtocolTag)
+	assert.Equal(t, "1", entry.GetRequestHeader(types.HeaderStreamID))
+	require.NotNil(t, entry.Request)
+	assert.Equal(t, "GET", entry.GetMethod())
+	assert.Equal(t, "https", entry.GetRequestHeader(":scheme"))
+	assert.Equal(t, "test.example.com", entry.GetHost())
+	assert.Equal(t, "/api/v1", entry.GetPath())
+	assert.Equal(t, "request body", string(entry.Request.Body))
+	require.NotNil(t, entry.Response)
+	assert.Equal(t, 200, entry.GetStatusCode())
+	assert.Equal(t, `{"ok": true}`, string(entry.Response.Body))
 }
 
 func TestH2ConnConsumeRecvWindow(t *testing.T) {
@@ -577,13 +578,13 @@ func TestHTTP2ProxyEndToEnd(t *testing.T) {
 	testutil.WaitForCount(t, func() int { return proxy.History().Count() }, 1)
 
 	entry := firstEntry(t, proxy.History())
-	assert.Equal(t, "h2", entry.Protocol)
-	require.NotNil(t, entry.H2Request)
-	assert.Equal(t, "GET", entry.H2Request.Method)
-	assert.Contains(t, entry.H2Request.Path, "/test")
-	require.NotNil(t, entry.H2Response)
-	assert.Equal(t, 200, entry.H2Response.StatusCode)
-	assert.Contains(t, string(entry.H2Response.Body), "Hello from HTTP/2 server")
+	assert.Equal(t, "http/2", entry.ProtocolTag)
+	require.NotNil(t, entry.Request)
+	assert.Equal(t, "GET", entry.GetMethod())
+	assert.Contains(t, entry.GetPath(), "/test")
+	require.NotNil(t, entry.Response)
+	assert.Equal(t, 200, entry.GetStatusCode())
+	assert.Contains(t, string(entry.Response.Body), "Hello from HTTP/2 server")
 }
 
 // h2MockInterceptor serves a canned response for requests matching path.
@@ -625,7 +626,7 @@ func TestHTTP2ProxyInterceptWithRequestBody(t *testing.T) {
 		path: "/canned",
 		resp: &InterceptedResponse{
 			StatusCode: 200,
-			Headers:    Headers{{Name: "content-type", Value: "text/plain"}},
+			Headers:    types.Headers{{Name: "content-type", Value: "text/plain"}},
 			Body:       []byte(cannedBody),
 		},
 	})
@@ -682,8 +683,8 @@ func TestHTTP2ProxyHeaderRules(t *testing.T) {
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
 
 	applier := &h2MockRuleApplier{
-		reqHeaderMod: func(headers []Header) []Header {
-			return append(headers, Header{Name: "x-injected", Value: "rule-applied"})
+		reqHeaderMod: func(headers []types.Header) []types.Header {
+			return append(headers, types.Header{Name: "x-injected", Value: "rule-applied"})
 		},
 	}
 	proxy.SetRuleApplier(applier)

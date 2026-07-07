@@ -221,6 +221,8 @@ func newMockHttpBackend() *mockHttpBackend {
 
 func (b *mockHttpBackend) Close() error { return nil }
 
+func (b *mockHttpBackend) Sidecars() SidecarRegistry { return nil }
+
 func (b *mockHttpBackend) GetProxyHistory(ctx context.Context, count int, afterFlowID string) ([]ProxyEntry, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -271,6 +273,10 @@ func (b *mockHttpBackend) GetProxyEntry(ctx context.Context, flowID string) (*Pr
 		}
 	}
 	return nil, ErrNotFound
+}
+
+func (b *mockHttpBackend) GetProxyChildren(ctx context.Context, parentFlowID string) ([]ProxyEntry, error) {
+	return nil, nil
 }
 
 func (b *mockHttpBackend) DeleteProxyEntries(ctx context.Context, flowIDs []string) (int, error) {
@@ -445,6 +451,21 @@ func (b *mockHttpBackend) AddProxyEntryScheme(request, response, scheme string, 
 		Response:  response,
 		Scheme:    scheme,
 		Port:      port,
+	})
+	return flowID
+}
+
+// AddProxyEntryAdapter adds an entry owned by the named adapter. Returns the minted flow_id.
+func (b *mockHttpBackend) AddProxyEntryAdapter(request, response, adapter string) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	flowID := ids.Generate(ids.DefaultLength)
+	b.entries = append(b.entries, ProxyEntry{
+		FlowID:    flowID,
+		Timestamp: time.Now().UTC(),
+		Request:   request,
+		Response:  response,
+		Adapter:   adapter,
 	})
 	return flowID
 }

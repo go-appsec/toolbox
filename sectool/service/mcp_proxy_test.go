@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/protocol"
+	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
 func TestMCP_ProxyPoll(t *testing.T) {
@@ -677,7 +678,7 @@ func TestMCP_ProxyRules(t *testing.T) {
 
 		t.Run("add_rule", func(t *testing.T) {
 			text := CallMCPToolTextOK(t, mcpClient, "proxy_rule_add", map[string]interface{}{
-				"type":    RuleTypeRequestHeader,
+				"type":    wire.RuleTypeRequestHeader,
 				"label":   "mock-test-rule",
 				"replace": "X-Mock-Test: value",
 			})
@@ -690,7 +691,7 @@ func TestMCP_ProxyRules(t *testing.T) {
 
 		t.Run("add_with_regex", func(t *testing.T) {
 			rule := CallMCPToolJSONOK[protocol.RuleEntry](t, mcpClient, "proxy_rule_add", map[string]interface{}{
-				"type":     RuleTypeRequestBody,
+				"type":     wire.RuleTypeRequestBody,
 				"label":    "regex-rule",
 				"find":     "password=.*",
 				"replace":  "password=REDACTED",
@@ -772,7 +773,7 @@ func TestMCP_ProxyRules(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				args := map[string]interface{}{
-					"type":    RuleTypeRequestHeader,
+					"type":    wire.RuleTypeRequestHeader,
 					"label":   "escape-" + tc.name,
 					"find":    tc.find,
 					"replace": "Accept: application/json",
@@ -817,15 +818,25 @@ func TestMCP_ProxyRules(t *testing.T) {
 
 		t.Run("add_missing_find_replace", func(t *testing.T) {
 			result := CallMCPTool(t, mcpClient, "proxy_rule_add", map[string]interface{}{
-				"type": RuleTypeRequestHeader,
+				"type": wire.RuleTypeRequestHeader,
 			})
 			assert.True(t, result.IsError)
 			assert.Contains(t, ExtractMCPText(t, result), "find or replace is required")
 		})
 
+		t.Run("add_unknown_adapter", func(t *testing.T) {
+			result := CallMCPTool(t, mcpClient, "proxy_rule_add", map[string]interface{}{
+				"type":    wire.RuleTypeRequestHeader,
+				"replace": "X-Test: value",
+				"adapter": "no-such-adapter",
+			})
+			assert.True(t, result.IsError)
+			assert.Contains(t, ExtractMCPText(t, result), "unknown adapter")
+		})
+
 		t.Run("add_duplicate_label", func(t *testing.T) {
 			result := CallMCPTool(t, mcpClient, "proxy_rule_add", map[string]interface{}{
-				"type":    RuleTypeRequestHeader,
+				"type":    wire.RuleTypeRequestHeader,
 				"label":   "unique-label",
 				"replace": "X-Test: value",
 			})
@@ -833,7 +844,7 @@ func TestMCP_ProxyRules(t *testing.T) {
 				"proxy_rule_add failed: %s", ExtractMCPText(t, result))
 
 			result = CallMCPTool(t, mcpClient, "proxy_rule_add", map[string]interface{}{
-				"type":    RuleTypeRequestHeader,
+				"type":    wire.RuleTypeRequestHeader,
 				"label":   "unique-label",
 				"replace": "X-Test: value2",
 			})

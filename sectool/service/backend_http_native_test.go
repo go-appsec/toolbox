@@ -17,8 +17,10 @@ import (
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 	"github.com/go-appsec/toolbox/sectool/service/testutil"
+	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
 // sharedMemProvider returns a Provider that returns the shared stoarage for `name`, and fresh storages for others.
@@ -157,14 +159,14 @@ func TestNativeProxyBackend_Rules_CRUD(t *testing.T) {
 	// Add rule
 	rule, err := backend.AddRule(t.Context(), protocol.RuleEntry{
 		Label:   "test-rule",
-		Type:    RuleTypeRequestHeader,
+		Type:    wire.RuleTypeRequestHeader,
 		IsRegex: false,
 		Find:    "old-value",
 		Replace: "new-value",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "test-rule", rule.Label)
-	assert.Equal(t, RuleTypeRequestHeader, rule.Type)
+	assert.Equal(t, wire.RuleTypeRequestHeader, rule.Type)
 	assert.Equal(t, "old-value", rule.Find)
 
 	// List rules
@@ -193,7 +195,7 @@ func TestNativeProxyBackend_Rules_Persistence(t *testing.T) {
 
 	_, err = backend1.AddRule(t.Context(), protocol.RuleEntry{
 		Label:   "http-rule",
-		Type:    RuleTypeRequestHeader,
+		Type:    wire.RuleTypeRequestHeader,
 		IsRegex: false,
 		Find:    "old",
 		Replace: "new",
@@ -243,12 +245,12 @@ func TestNativeProxyBackend_Rules_DeletePersists(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = backend1.AddRule(t.Context(), protocol.RuleEntry{
-		Label: "to-delete", Type: RuleTypeRequestHeader,
+		Label: "to-delete", Type: wire.RuleTypeRequestHeader,
 		IsRegex: false, Find: "a", Replace: "b",
 	})
 	require.NoError(t, err)
 	_, err = backend1.AddRule(t.Context(), protocol.RuleEntry{
-		Label: "to-keep", Type: RuleTypeRequestBody,
+		Label: "to-keep", Type: wire.RuleTypeRequestBody,
 		IsRegex: false, Find: "c", Replace: "d",
 	})
 	require.NoError(t, err)
@@ -278,7 +280,7 @@ func TestNativeProxyBackend_Rules_LabelUniqueness(t *testing.T) {
 	// Add first rule
 	_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 		Label:   "unique-label",
-		Type:    RuleTypeRequestHeader,
+		Type:    wire.RuleTypeRequestHeader,
 		IsRegex: false,
 		Find:    "a",
 		Replace: "b",
@@ -288,7 +290,7 @@ func TestNativeProxyBackend_Rules_LabelUniqueness(t *testing.T) {
 	// Try to add duplicate label
 	_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 		Label:   "unique-label",
-		Type:    RuleTypeRequestHeader,
+		Type:    wire.RuleTypeRequestHeader,
 		IsRegex: false,
 		Find:    "c",
 		Replace: "d",
@@ -323,7 +325,7 @@ func TestNativeProxyBackend_Rules_Regex(t *testing.T) {
 
 	// Valid regex
 	rule, err := backend.AddRule(t.Context(), protocol.RuleEntry{
-		Type:    RuleTypeRequestHeader,
+		Type:    wire.RuleTypeRequestHeader,
 		IsRegex: true,
 		Find:    `\d+`,
 		Replace: "NUMBER",
@@ -333,7 +335,7 @@ func TestNativeProxyBackend_Rules_Regex(t *testing.T) {
 
 	// Invalid regex
 	_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
-		Type:    RuleTypeRequestHeader,
+		Type:    wire.RuleTypeRequestHeader,
 		IsRegex: true,
 		Find:    `[invalid`,
 		Replace: "x",
@@ -366,7 +368,7 @@ func TestNativeProxyBackend_SendRequest(t *testing.T) {
 	rawReq := []byte("GET /test HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 	result, err := backend.SendRequest(t.Context(), "test", SendRequestInput{
 		RawRequest: rawReq,
-		Target: Target{
+		Target: types.Target{
 			Hostname:  serverURL.Hostname(),
 			Port:      mustParsePort(t, serverURL.Port()),
 			UsesHTTPS: false,
@@ -404,7 +406,7 @@ func TestNativeProxyBackend_SendRequest_AppliesRules(t *testing.T) {
 		t.Cleanup(func() { _ = backend.Close() })
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
-			Type:    RuleTypeRequestHeader,
+			Type:    wire.RuleTypeRequestHeader,
 			Replace: "X-Rule-Added: from-rule\r\n",
 		})
 		require.NoError(t, err)
@@ -412,7 +414,7 @@ func TestNativeProxyBackend_SendRequest_AppliesRules(t *testing.T) {
 		rawReq := []byte("GET /test HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		result, err := backend.SendRequest(t.Context(), "test", SendRequestInput{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      mustParsePort(t, serverURL.Port()),
 				UsesHTTPS: false,
@@ -445,7 +447,7 @@ func TestNativeProxyBackend_SendRequest_AppliesRules(t *testing.T) {
 		rawReq := []byte("GET /test HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		result, err := backend.SendRequest(t.Context(), "test", SendRequestInput{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      mustParsePort(t, serverURL.Port()),
 				UsesHTTPS: false,
@@ -476,7 +478,7 @@ func TestNativeProxyBackend_SendRequest_AppliesRules(t *testing.T) {
 
 		// Add a rule that won't match
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
-			Type:    RuleTypeRequestHeader,
+			Type:    wire.RuleTypeRequestHeader,
 			Find:    "X-Nonexistent: value",
 			Replace: "X-Replaced: value",
 		})
@@ -485,7 +487,7 @@ func TestNativeProxyBackend_SendRequest_AppliesRules(t *testing.T) {
 		rawReq := []byte("GET /test HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		result, err := backend.SendRequest(t.Context(), "test", SendRequestInput{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      mustParsePort(t, serverURL.Port()),
 				UsesHTTPS: false,
@@ -520,7 +522,7 @@ func TestNativeProxyBackend_SendRequest_AppliesRules(t *testing.T) {
 		t.Cleanup(func() { _ = backend.Close() })
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
-			Type:    RuleTypeRequestHeader,
+			Type:    wire.RuleTypeRequestHeader,
 			Replace: "X-Rule-Added: from-rule\r\n",
 		})
 		require.NoError(t, err)
@@ -529,7 +531,7 @@ func TestNativeProxyBackend_SendRequest_AppliesRules(t *testing.T) {
 		result, err := backend.SendRequest(t.Context(), "test", SendRequestInput{
 			RawRequest:      rawReq,
 			FollowRedirects: true,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      mustParsePort(t, serverURL.Port()),
 				UsesHTTPS: false,
@@ -631,18 +633,18 @@ func TestApplyRequestRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "header-rule",
-			Type:    RuleTypeRequestHeader,
+			Type:    wire.RuleTypeRequestHeader,
 			IsRegex: false,
 			Find:    "old-value",
 			Replace: "new-value",
 		})
 		require.NoError(t, err)
 
-		req := &proxy.RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "X-Test", Value: "old-value"},
 			},
@@ -660,18 +662,18 @@ func TestApplyRequestRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "regex-header-rule",
-			Type:    RuleTypeRequestHeader,
+			Type:    wire.RuleTypeRequestHeader,
 			IsRegex: true,
 			Find:    `\d+`,
 			Replace: "NUMBER",
 		})
 		require.NoError(t, err)
 
-		req := &proxy.RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "X-ID", Value: "user-12345-session"},
 			},
@@ -689,18 +691,18 @@ func TestApplyRequestRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "body-rule",
-			Type:    RuleTypeRequestBody,
+			Type:    wire.RuleTypeRequestBody,
 			IsRegex: false,
 			Find:    "secret",
 			Replace: "REDACTED",
 		})
 		require.NoError(t, err)
 
-		req := &proxy.RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/api",
 			Version: "HTTP/1.1",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Content-Length", Value: "27"},
 			},
@@ -721,18 +723,18 @@ func TestApplyRequestRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "no-match-rule",
-			Type:    RuleTypeRequestHeader,
+			Type:    wire.RuleTypeRequestHeader,
 			IsRegex: false,
 			Find:    "nonexistent",
 			Replace: "replacement",
 		})
 		require.NoError(t, err)
 
-		req := &proxy.RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "X-Test", Value: "unchanged"},
 			},
@@ -750,17 +752,17 @@ func TestApplyRequestRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "resp-body",
-			Type:    RuleTypeResponseBody,
+			Type:    wire.RuleTypeResponseBody,
 			Find:    "false",
 			Replace: "true",
 		})
 		require.NoError(t, err)
 
-		req := &proxy.RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Accept-Encoding", Value: "gzip, deflate, br, zstd, snappy"},
 			},
@@ -779,16 +781,16 @@ func TestApplyRequestRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "req-header-only",
-			Type:    RuleTypeRequestHeader,
+			Type:    wire.RuleTypeRequestHeader,
 			Replace: "X-Test: value",
 		})
 		require.NoError(t, err)
 
-		req := &proxy.RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Accept-Encoding", Value: "gzip, deflate, br, snappy"},
 			},
@@ -808,7 +810,7 @@ func TestApplyRequestRules(t *testing.T) {
 		// Add multiple rules - they should apply in order
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "rule1",
-			Type:    RuleTypeRequestHeader,
+			Type:    wire.RuleTypeRequestHeader,
 			IsRegex: false,
 			Find:    "AAA",
 			Replace: "BBB",
@@ -817,18 +819,18 @@ func TestApplyRequestRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "rule2",
-			Type:    RuleTypeRequestHeader,
+			Type:    wire.RuleTypeRequestHeader,
 			IsRegex: false,
 			Find:    "BBB",
 			Replace: "CCC",
 		})
 		require.NoError(t, err)
 
-		req := &proxy.RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "X-Test", Value: "AAA"},
 			},
 		}
@@ -846,7 +848,7 @@ func TestApplyRequestRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "body-rule",
-			Type:    RuleTypeRequestBody,
+			Type:    wire.RuleTypeRequestBody,
 			IsRegex: false,
 			Find:    "test",
 			Replace: "replaced",
@@ -854,11 +856,11 @@ func TestApplyRequestRules(t *testing.T) {
 		require.NoError(t, err)
 
 		// Request with no body
-		req := &proxy.RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 			},
 		}
@@ -876,7 +878,7 @@ func TestApplyRequestRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "body-rule",
-			Type:    RuleTypeRequestBody,
+			Type:    wire.RuleTypeRequestBody,
 			IsRegex: false,
 			Find:    "secret",
 			Replace: "HIDDEN",
@@ -888,11 +890,11 @@ func TestApplyRequestRules(t *testing.T) {
 		compressedBody, err := proxy.Compress(originalBody, "gzip")
 		require.NoError(t, err)
 
-		req := &proxy.RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/api",
 			Version: "HTTP/1.1",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Content-Encoding", Value: "gzip"},
 				{Name: "Content-Length", Value: strconv.Itoa(len(compressedBody))},
@@ -922,18 +924,18 @@ func TestApplyResponseRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "resp-header-rule",
-			Type:    RuleTypeResponseHeader,
+			Type:    wire.RuleTypeResponseHeader,
 			IsRegex: false,
 			Find:    "Apache/2.4",
 			Replace: "Hidden",
 		})
 		require.NoError(t, err)
 
-		resp := &proxy.RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Server", Value: "Apache/2.4"},
 				{Name: "Content-Type", Value: "text/html"},
 			},
@@ -951,18 +953,18 @@ func TestApplyResponseRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "resp-body-rule",
-			Type:    RuleTypeResponseBody,
+			Type:    wire.RuleTypeResponseBody,
 			IsRegex: false,
 			Find:    "internal-error-code-123",
 			Replace: "error",
 		})
 		require.NoError(t, err)
 
-		resp := &proxy.RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 500,
 			StatusText: "Internal Server Error",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Content-Type", Value: "text/plain"},
 				{Name: "Content-Length", Value: "35"},
 			},
@@ -982,7 +984,7 @@ func TestApplyResponseRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "compressed-body-rule",
-			Type:    RuleTypeResponseBody,
+			Type:    wire.RuleTypeResponseBody,
 			IsRegex: false,
 			Find:    "secret",
 			Replace: "HIDDEN",
@@ -994,11 +996,11 @@ func TestApplyResponseRules(t *testing.T) {
 		compressedBody, err := proxy.Compress(originalBody, "gzip")
 		require.NoError(t, err)
 
-		resp := &proxy.RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Content-Encoding", Value: "gzip"},
 				{Name: "Content-Length", Value: strconv.Itoa(len(compressedBody))},
 			},
@@ -1020,7 +1022,7 @@ func TestApplyResponseRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "brotli-body-rule",
-			Type:    RuleTypeResponseBody,
+			Type:    wire.RuleTypeResponseBody,
 			IsRegex: false,
 			Find:    "false",
 			Replace: "true",
@@ -1031,11 +1033,11 @@ func TestApplyResponseRules(t *testing.T) {
 		compressedBody, err := proxy.Compress(originalBody, "br")
 		require.NoError(t, err)
 
-		resp := &proxy.RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Content-Encoding", Value: "br"},
 				{Name: "Content-Length", Value: strconv.Itoa(len(compressedBody))},
 			},
@@ -1056,7 +1058,7 @@ func TestApplyResponseRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "body-rule",
-			Type:    RuleTypeResponseBody,
+			Type:    wire.RuleTypeResponseBody,
 			IsRegex: false,
 			Find:    "test",
 			Replace: "MODIFIED",
@@ -1067,11 +1069,11 @@ func TestApplyResponseRules(t *testing.T) {
 		fakeCompressed := []byte{0x1b, 0x03, 0x00, 0xf8, 0xff}
 		originalBody := slices.Clone(fakeCompressed)
 
-		resp := &proxy.RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Content-Encoding", Value: "br"},
 				{Name: "Content-Length", Value: strconv.Itoa(len(fakeCompressed))},
 			},
@@ -1090,7 +1092,7 @@ func TestApplyResponseRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "body-rule",
-			Type:    RuleTypeResponseBody,
+			Type:    wire.RuleTypeResponseBody,
 			IsRegex: false,
 			Find:    "test",
 			Replace: "MODIFIED",
@@ -1101,11 +1103,11 @@ func TestApplyResponseRules(t *testing.T) {
 		fakeBody := []byte("some test data")
 		originalBody := slices.Clone(fakeBody)
 
-		resp := &proxy.RawHTTP1Response{
+		resp := &types.RawHTTP1Response{
 			Version:    "HTTP/1.1",
 			StatusCode: 200,
 			StatusText: "OK",
-			Headers: []proxy.Header{
+			Headers: []types.Header{
 				{Name: "Content-Encoding", Value: "gzip, br"},
 				{Name: "Content-Length", Value: strconv.Itoa(len(fakeBody))},
 			},
@@ -1350,19 +1352,19 @@ func TestParseHeadersFromText(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
-		want  []proxy.Header
+		want  []types.Header
 	}{
 		{
 			name:  "single_header",
 			input: "Content-Type: text/plain\r\n",
-			want: []proxy.Header{
+			want: []types.Header{
 				{Name: "Content-Type", Value: "text/plain"},
 			},
 		},
 		{
 			name:  "multiple_headers",
 			input: "Host: example.com\r\nContent-Type: application/json\r\nX-Custom: value\r\n",
-			want: []proxy.Header{
+			want: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Content-Type", Value: "application/json"},
 				{Name: "X-Custom", Value: "value"},
@@ -1371,28 +1373,28 @@ func TestParseHeadersFromText(t *testing.T) {
 		{
 			name:  "header_with_spaces",
 			input: "X-Test:   value with spaces   \r\n",
-			want: []proxy.Header{
+			want: []types.Header{
 				{Name: "X-Test", Value: "value with spaces"},
 			},
 		},
 		{
 			name:  "empty_value",
 			input: "X-Empty:\r\n",
-			want: []proxy.Header{
+			want: []types.Header{
 				{Name: "X-Empty", Value: ""},
 			},
 		},
 		{
 			name:  "malformed_no_colon",
 			input: "MalformedHeader\r\nValid: value\r\n",
-			want: []proxy.Header{
+			want: []types.Header{
 				{Name: "Valid", Value: "value"},
 			},
 		},
 		{
 			name:  "empty_input",
 			input: "",
-			want:  []proxy.Header{},
+			want:  []types.Header{},
 		},
 	}
 
@@ -1416,7 +1418,7 @@ func TestApplyRequestBodyOnlyRules(t *testing.T) {
 		// Add body rule
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "body-rule",
-			Type:    RuleTypeRequestBody,
+			Type:    wire.RuleTypeRequestBody,
 			IsRegex: false,
 			Find:    "token",
 			Replace: "REDACTED",
@@ -1428,7 +1430,7 @@ func TestApplyRequestBodyOnlyRules(t *testing.T) {
 		compressedBody, err := proxy.Compress(originalBody, "gzip")
 		require.NoError(t, err)
 
-		headers := []proxy.Header{
+		headers := []types.Header{
 			{Name: "Content-Encoding", Value: "gzip"},
 		}
 
@@ -1448,7 +1450,7 @@ func TestApplyRequestBodyOnlyRules(t *testing.T) {
 
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "body-rule",
-			Type:    RuleTypeRequestBody,
+			Type:    wire.RuleTypeRequestBody,
 			IsRegex: false,
 			Find:    "test",
 			Replace: "MODIFIED",
@@ -1459,7 +1461,7 @@ func TestApplyRequestBodyOnlyRules(t *testing.T) {
 		fakeCompressed := []byte{0x1b, 0x03, 0x00, 0xf8, 0xff}
 		originalBody := slices.Clone(fakeCompressed)
 
-		headers := []proxy.Header{
+		headers := []types.Header{
 			{Name: "Content-Encoding", Value: "br"},
 		}
 
@@ -1476,7 +1478,7 @@ func TestApplyRequestBodyOnlyRules(t *testing.T) {
 		// Add body rule
 		_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 			Label:   "body-rule",
-			Type:    RuleTypeRequestBody,
+			Type:    wire.RuleTypeRequestBody,
 			IsRegex: false,
 			Find:    "original",
 			Replace: "modified",
@@ -1484,11 +1486,45 @@ func TestApplyRequestBodyOnlyRules(t *testing.T) {
 		require.NoError(t, err)
 
 		body := []byte(`{"data":"original-value"}`)
-		headers := []proxy.Header{} // no Content-Encoding
+		headers := []types.Header{} // no Content-Encoding
 
 		modified, modErr := backend.ApplyRequestBodyOnlyRules(body, headers)
 		require.NoError(t, modErr)
 
 		assert.JSONEq(t, `{"data":"modified-value"}`, string(modified))
 	})
+}
+
+func TestNativeProxyBackend_RuleSnapshot(t *testing.T) {
+	t.Parallel()
+
+	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = backend.Close() })
+
+	add := func(label, adapter string) {
+		_, err := backend.AddRule(t.Context(), protocol.RuleEntry{
+			Label: label, Type: wire.RuleTypeRequestBody, Find: "x", Replace: "y", Adapter: adapter,
+		})
+		require.NoError(t, err)
+	}
+	add("r-empty", "")
+	add("r-alpha", "alpha")
+	add("r-beta", "beta")
+	add("r-sectool", types.AdapterScopeCore)
+
+	// alpha receives empty-scoped and its own rules; beta and sectool are excluded.
+	version, rules := backend.RuleSnapshot("alpha")
+	assert.Equal(t, uint64(4), version)
+	labels := make([]string, len(rules))
+	for i, r := range rules {
+		labels[i] = r.Label
+	}
+	assert.ElementsMatch(t, []string{"r-empty", "r-alpha"}, labels)
+
+	require.NoError(t, backend.DeleteRule(t.Context(), "r-alpha"))
+	version, rules = backend.RuleSnapshot("alpha")
+	assert.Equal(t, uint64(5), version)
+	require.Len(t, rules, 1)
+	assert.Equal(t, "r-empty", rules[0].Label)
 }

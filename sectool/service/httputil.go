@@ -24,6 +24,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/util"
 )
 
@@ -341,7 +342,7 @@ func isBinaryContentType(contentType string) bool {
 	if contentType == "" {
 		return false
 	}
-	// Strip parameters (e.g. "; charset=utf-8")
+	// Strip parameters
 	mediaType, _, _ := strings.Cut(contentType, ";")
 	mediaType = strings.TrimSpace(strings.ToLower(mediaType))
 
@@ -636,21 +637,28 @@ func parseURLWithDefaultHTTPS(urlStr string) (*url.URL, error) {
 }
 
 // targetFromURL extracts Target (hostname, port, usesHTTPS) from a parsed URL.
-func targetFromURL(u *url.URL) Target {
-	t := Target{
+func targetFromURL(u *url.URL) types.Target {
+	usesHTTPS, port := parseHttpsAndPort(u.Scheme, u.Port())
+	return types.Target{
 		Hostname:  u.Hostname(),
-		UsesHTTPS: u.Scheme != schemeHTTP,
+		UsesHTTPS: usesHTTPS,
+		Port:      port,
 	}
+}
 
-	if u.Port() != "" {
-		t.Port, _ = strconv.Atoi(u.Port())
-	} else if t.UsesHTTPS {
-		t.Port = 443
-	} else {
-		t.Port = 80
+func parseHttpsAndPort(scheme, portStr string) (usesHTTPS bool, port int) {
+	usesHTTPS = scheme != schemeHTTP
+	if portStr != "" {
+		port, _ = strconv.Atoi(portStr)
 	}
-
-	return t
+	if port == 0 { // port string was empty or failed to parse
+		if usesHTTPS {
+			port = 443
+		} else {
+			port = 80
+		}
+	}
+	return
 }
 
 // buildRawRequestManual constructs a raw HTTP/1.1 request preserving wire
@@ -956,7 +964,6 @@ func validateRequest(raw []byte) []protocol.ValidationIssue {
 
 // validateContentLength checks if Content-Length header matches actual body length.
 func validateContentLength(headers, body []byte) string {
-	// Extract Content-Length header
 	clMatch := contentLengthValueRe.FindSubmatch(headers)
 	if clMatch == nil {
 		return "" // No Content-Length header, no validation needed
@@ -981,13 +988,7 @@ func parseTarget(raw []byte, targetOverride string) (host string, port int, uses
 		u, err := url.Parse(targetOverride)
 		if err == nil {
 			host = u.Hostname()
-			port = 443
-			if u.Port() != "" {
-				port, _ = strconv.Atoi(u.Port())
-			} else if u.Scheme == schemeHTTP {
-				port = 80
-			}
-			usesHTTPS = u.Scheme == schemeHTTPS
+			usesHTTPS, port = parseHttpsAndPort(u.Scheme, u.Port())
 			return
 		}
 	}
@@ -1001,14 +1002,7 @@ func parseTarget(raw []byte, targetOverride string) (host string, port int, uses
 		if strings.HasPrefix(requestURI, "http://") || strings.HasPrefix(requestURI, "https://") {
 			if u, err := url.Parse(requestURI); err == nil {
 				host = u.Hostname()
-				usesHTTPS = u.Scheme == schemeHTTPS
-				if u.Port() != "" {
-					port, _ = strconv.Atoi(u.Port())
-				} else if usesHTTPS {
-					port = 443
-				} else {
-					port = 80
-				}
+				usesHTTPS, port = parseHttpsAndPort(u.Scheme, u.Port())
 				return
 			}
 		}
@@ -1055,7 +1049,6 @@ func extractRequestPath(raw []byte) string {
 	if idx := bytes.IndexByte(raw, '\n'); idx >= 0 {
 		line = raw[:idx]
 	}
-	// Trim trailing CR if present
 	line = bytes.TrimRight(line, "\r")
 	// Extract request-target (second token: METHOD <path> HTTP/1.x)
 	parts := bytes.SplitN(line, []byte(" "), 3)
@@ -1072,7 +1065,7 @@ func extractRequestPath(raw []byte) string {
 // buildRedirectRequest builds a new request for following a redirect.
 // Preserves headers (including cookies and Authorization),
 // handles method/body per status code.
-func buildRedirectRequest(originalReq []byte, location string, currentTarget Target, currentPath string, status int) ([]byte, Target, string, error) {
+func buildRedirectRequest(originalReq []byte, location string, currentTarget types.Target, currentPath string, status int) ([]byte, types.Target, string, error) {
 	var preserveMethod, preserveBody bool
 	switch status {
 	case 307, 308:
@@ -1082,7 +1075,7 @@ func buildRedirectRequest(originalReq []byte, location string, currentTarget Tar
 
 	newTarget, newPath, err := resolveRedirectLocation(location, currentTarget, currentPath)
 	if err != nil {
-		return nil, Target{}, "", err
+		return nil, types.Target{}, "", err
 	}
 
 	method := proxy.ExtractMethod(originalReq)
@@ -1118,11 +1111,11 @@ func buildRedirectRequest(originalReq []byte, location string, currentTarget Tar
 }
 
 // resolveRedirectLocation resolves a Location header value to a target and path.
-func resolveRedirectLocation(location string, currentTarget Target, currentPath string) (Target, string, error) {
+func resolveRedirectLocation(location string, currentTarget types.Target, currentPath string) (types.Target, string, error) {
 	if strings.HasPrefix(location, "http://") || strings.HasPrefix(location, "https://") {
 		u, err := url.Parse(location)
 		if err != nil {
-			return Target{}, "", err
+			return types.Target{}, "", err
 		}
 		return targetFromURL(u), u.RequestURI(), nil
 	}
@@ -1134,7 +1127,7 @@ func resolveRedirectLocation(location string, currentTarget Target, currentPath 
 		}
 		u, err := url.Parse(scheme + ":" + location)
 		if err != nil {
-			return Target{}, "", err
+			return types.Target{}, "", err
 		}
 		return targetFromURL(u), u.RequestURI(), nil
 	}
@@ -1156,7 +1149,7 @@ func resolveRedirectLocation(location string, currentTarget Target, currentPath 
 
 // copyHeadersForRedirect copies headers from original request to buffer,
 // applying redirect-appropriate modifications.
-func copyHeadersForRedirect(originalReq []byte, buf *bytes.Buffer, newTarget Target, preserveBody, dropTE bool) {
+func copyHeadersForRedirect(originalReq []byte, buf *bytes.Buffer, newTarget types.Target, preserveBody, dropTE bool) {
 	headers, _ := splitHeadersBody(originalReq)
 
 	newHost := newTarget.Hostname

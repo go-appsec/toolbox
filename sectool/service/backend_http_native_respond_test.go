@@ -9,6 +9,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
 	"github.com/go-appsec/toolbox/sectool/service/store"
+	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
 func TestNativeProxyBackend_AddResponder(t *testing.T) {
@@ -254,7 +255,7 @@ func TestNativeProxyBackend_Responder_LabelUniqueness(t *testing.T) {
 	// Labels are independent from rules - same label allowed
 	_, err = backend.AddRule(t.Context(), protocol.RuleEntry{
 		Label: "rule-label",
-		Type:  RuleTypeRequestHeader,
+		Type:  wire.RuleTypeRequestHeader,
 		Find:  "test",
 	})
 	require.NoError(t, err)

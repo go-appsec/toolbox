@@ -53,6 +53,9 @@ type ProxyListRequest struct {
 	Since        string `json:"since,omitempty"`
 	ExcludeHost  string `json:"exclude_host,omitempty"`
 	ExcludePath  string `json:"exclude_path,omitempty"`
+	Adapter      string `json:"adapter,omitempty"`
+	ProtocolTag  string `json:"protocol_tag,omitempty"`
+	ParentFlowID string `json:"parent_flow_id,omitempty"`
 	Limit        int    `json:"limit,omitempty"`
 	Offset       int    `json:"offset,omitempty"`
 	Source       string `json:"source,omitempty"`
@@ -62,7 +65,8 @@ type ProxyListRequest struct {
 func (r *ProxyListRequest) HasFilters() bool {
 	return r.Host != "" || r.Path != "" || r.Method != "" || r.Status != "" ||
 		r.SearchHeader != "" || r.SearchBody != "" || r.Since != "" ||
-		r.ExcludeHost != "" || r.ExcludePath != "" || r.Limit > 0 ||
+		r.ExcludeHost != "" || r.ExcludePath != "" || r.Adapter != "" ||
+		r.ProtocolTag != "" || r.ParentFlowID != "" || r.Limit > 0 ||
 		r.Source != ""
 }
 

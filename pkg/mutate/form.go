@@ -1,4 +1,4 @@
-package service
+package mutate
 
 import (
 	"bytes"
@@ -9,9 +9,9 @@ import (
 	"github.com/go-analyze/bulk"
 )
 
-// modifyFormBodyMap applies set/remove edits to an application/x-www-form-urlencoded
-// body and returns the re-encoded result. Output is key-sorted for stable diffing.
-func modifyFormBodyMap(body []byte, setForm map[string]string, removeForm []string) ([]byte, error) {
+// Form applies set/remove edits to an application/x-www-form-urlencoded body and
+// returns the re-encoded result. Output is key-sorted for stable diffing.
+func Form(body []byte, setForm map[string]string, removeForm []string) ([]byte, error) {
 	if len(setForm) == 0 && len(removeForm) == 0 {
 		return body, nil
 	}

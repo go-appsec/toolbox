@@ -9,7 +9,7 @@ test test-all: .SHELLFLAGS := -o pipefail -c
 _FILTER := | grep -v "no test files"
 endif
 
-.PHONY: build build-cross clean test test-all test-cover bench lint
+.PHONY: build build-cross clean test test-all test-cover bench fmt-changed lint
 
 build:
 	@mkdir -p bin
@@ -48,5 +48,11 @@ test-cover:
 bench:
 	go test --benchmem -benchtime=20s -bench='Benchmark.*' -run='^$$' ./...
 
-lint:
+fmt-changed:
+	@files=$$( { git diff --name-only --diff-filter=d HEAD -- '*.go'; git ls-files --others --exclude-standard -- '*.go'; } | sort -u); \
+	if [ -n "$$files" ]; then \
+		gofmt -w $$files; \
+	fi
+
+lint: fmt-changed
 	golangci-lint run --timeout=600s && go vet ./...

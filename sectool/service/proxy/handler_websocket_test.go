@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,16 +15,16 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 
 	tests := []struct {
 		name string
-		req  *RawHTTP1Request
+		req  *types.RawHTTP1Request
 		want bool
 	}{
 		{
 			name: "valid_websocket_upgrade",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/socket",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 					{Name: "Upgrade", Value: "websocket"},
 					{Name: "Connection", Value: "Upgrade"},
@@ -33,11 +34,11 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		},
 		{
 			name: "case_insensitive_upgrade",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/socket",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 					{Name: "Upgrade", Value: "WebSocket"},
 					{Name: "Connection", Value: "upgrade"},
@@ -47,11 +48,11 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		},
 		{
 			name: "connection_keep_alive_upgrade",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/socket",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 					{Name: "Upgrade", Value: "websocket"},
 					{Name: "Connection", Value: "keep-alive, Upgrade"},
@@ -61,11 +62,11 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		},
 		{
 			name: "missing_upgrade_header",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/socket",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 					{Name: "Connection", Value: "Upgrade"},
 				},
@@ -74,11 +75,11 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		},
 		{
 			name: "missing_connection_header",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/socket",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 					{Name: "Upgrade", Value: "websocket"},
 				},
@@ -87,11 +88,11 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		},
 		{
 			name: "wrong_upgrade_value",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/socket",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 					{Name: "Upgrade", Value: "h2c"},
 					{Name: "Connection", Value: "Upgrade"},
@@ -101,11 +102,11 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		},
 		{
 			name: "connection_no_upgrade",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/socket",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Host", Value: "example.com"},
 					{Name: "Upgrade", Value: "websocket"},
 					{Name: "Connection", Value: "close"},
@@ -115,7 +116,7 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		},
 		{
 			name: "empty_request",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
@@ -124,11 +125,11 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		},
 		{
 			name: "multiple_connection_tokens",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/ws",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Upgrade", Value: "websocket"},
 					{Name: "Connection", Value: "keep-alive, Upgrade, close"},
 				},
@@ -137,11 +138,11 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		},
 		{
 			name: "whitespace_trimming",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/ws",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Upgrade", Value: "  websocket  "},
 					{Name: "Connection", Value: "  Upgrade  "},
 				},
@@ -150,11 +151,11 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		},
 		{
 			name: "h2c_upgrade_not_websocket",
-			req: &RawHTTP1Request{
+			req: &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/",
 				Version: "HTTP/1.1",
-				Headers: []Header{
+				Headers: []types.Header{
 					{Name: "Upgrade", Value: "h2c"},
 					{Name: "Connection", Value: "Upgrade, HTTP2-Settings"},
 				},
@@ -627,7 +628,7 @@ func TestEncodeWSFrame_LargePayloadLengthEncoding(t *testing.T) {
 	t.Parallel()
 
 	t.Run("16bit_length_boundary", func(t *testing.T) {
-		// Test payload length at 16-bit boundary (65535)
+		// Payload length at 16-bit boundary (65535)
 		payload := bytes.Repeat([]byte{'x'}, 65535)
 		frame := &wsFrame{
 			fin:     true,
@@ -707,12 +708,12 @@ func TestStripExtensions(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		inputHeaders  []Header
+		inputHeaders  []types.Header
 		expectRemoved bool
 	}{
 		{
 			name: "removes_extensions_header",
-			inputHeaders: []Header{
+			inputHeaders: []types.Header{
 				{Name: "Upgrade", Value: "websocket"},
 				{Name: "Connection", Value: "Upgrade"},
 				{Name: "Sec-WebSocket-Extensions", Value: "permessage-deflate"},
@@ -722,7 +723,7 @@ func TestStripExtensions(t *testing.T) {
 		},
 		{
 			name: "no_extensions_header",
-			inputHeaders: []Header{
+			inputHeaders: []types.Header{
 				{Name: "Upgrade", Value: "websocket"},
 				{Name: "Connection", Value: "Upgrade"},
 				{Name: "Sec-WebSocket-Key", Value: "abc123"},
@@ -731,7 +732,7 @@ func TestStripExtensions(t *testing.T) {
 		},
 		{
 			name: "multiple_extensions",
-			inputHeaders: []Header{
+			inputHeaders: []types.Header{
 				{Name: "Sec-WebSocket-Extensions", Value: "permessage-deflate; client_max_window_bits"},
 				{Name: "Upgrade", Value: "websocket"},
 			},
@@ -741,7 +742,7 @@ func TestStripExtensions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := &RawHTTP1Request{
+			req := &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/ws",
 				Version: "HTTP/1.1",
@@ -771,12 +772,12 @@ func TestStripResponseExtensions(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		inputHeaders  []Header
+		inputHeaders  []types.Header
 		expectRemoved bool
 	}{
 		{
 			name: "removes_extensions_from_response",
-			inputHeaders: []Header{
+			inputHeaders: []types.Header{
 				{Name: "Upgrade", Value: "websocket"},
 				{Name: "Connection", Value: "Upgrade"},
 				{Name: "Sec-WebSocket-Extensions", Value: "permessage-deflate"},
@@ -786,7 +787,7 @@ func TestStripResponseExtensions(t *testing.T) {
 		},
 		{
 			name: "no_extensions_in_response",
-			inputHeaders: []Header{
+			inputHeaders: []types.Header{
 				{Name: "Upgrade", Value: "websocket"},
 				{Name: "Sec-WebSocket-Accept", Value: "hash123"},
 			},
@@ -796,7 +797,7 @@ func TestStripResponseExtensions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp := &RawHTTP1Response{
+			resp := &types.RawHTTP1Response{
 				Version:    "HTTP/1.1",
 				StatusCode: 101,
 				StatusText: "Switching Protocols",

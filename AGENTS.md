@@ -30,6 +30,7 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 
 - `sectool/main.go` - Entry point; routes `mcp` subcommand to server mode, else CLI command dispatch
 - `sectool/config/config.go` - Config loading/saving, defaults, auto-creation
+- `sectool/config/socket_unix.go` / `socket_windows.go` - `DefaultSidecarSocket`: per-OS sidecar IPC address (Unix domain socket, or loopback TCP on Windows)
 - `sectool/mcpclient/client.go` - MCP client wrapper for CLI usage
 - `sectool/mcpclient/tools.go` - Typed methods for each MCP tool
 - `sectool/mcpclient/types.go` - Client-specific option types (*Opts structs)
@@ -68,7 +69,7 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/js/secrets.go` - secrets detection
 - `sectool/service/mcp_notes.go` - Notes tool handlers (save, list) and flow listing attachment
 - `sectool/service/mcp_respond.go` - Proxy responder tool handlers (respond_add, respond_delete, respond_list); native backend only
-- `sectool/service/flags.go` - MCP server flag parsing (`--port`, `--workflow`, `--config`, `--notes`)
+- `sectool/service/flags.go` - MCP server flag parsing (`--port`, `--proxy-port`, `--burp`, `--workflow`, `--config`, `--notes`, `--sidecar-socket`)
 - `sectool/service/backend.go` - HttpBackend, ResponderBackend, OastBackend, CrawlerBackend interfaces
 - `sectool/service/backend_http_native.go` - Native built-in proxy implementation of HttpBackend
 - `sectool/service/backend_http_native_respond.go` - Native backend implementation of ResponderBackend
@@ -77,15 +78,22 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/smtputil.go` - SMTP email header parsing utilities
 - `sectool/service/backend_crawler_colly.go` - Colly-based crawler implementation
 - `sectool/service/capture_filter.go` - BuildCaptureFilter: compiles proxy exclusion patterns from config
-- `sectool/service/formutil.go` - Form parsing utilities
+- `sectool/service/mcp_coreinvoke.go` - `CoreInvoke` dispatch for sidecars: invoke a core MCP tool by name (reuses the handlers agents call; internal tools excluded)
+- `sectool/service/mcp_replay_originate.go` - Native HTTP origination for sidecar sends (`originateNative`); mirrors request_send, produces an attributable flow
+- `sectool/service/mcp_sidecar_tools.go` - Recomposes the advertised MCP tool list as sidecars connect/disconnect; adds sidecar-conditional params to core tools
+- `sectool/service/sidecar_replay_sink.go` - `replayRoutingSink`: diverts sidecar-performed replays (annotated `replay=true`) into the replay history store, else proxy history
 - `sectool/service/search.go` - RE2 pattern compilation with LLM-friendly double-escape correction; flow content matching
 - `sectool/service/httputil.go` - HTTP request/response parsing utilities
-- `sectool/service/jsonutil.go` - JSON field modification utilities
+- `sectool/service/jsonutil.go` - JSON read/analysis helpers (flatten, parse list)
 - `sectool/service/types.go` - Service-specific request and internal types
+- `sectool/service/dedupe/dedupe.go` - Order-preserving slice deduplication helpers
+- `sectool/service/fileutil/fileutil.go` - Filesystem helpers (`AtomicWriteFile`)
 
 ### Proxy Package
 
-- `sectool/service/proxy/types.go` - Core types (Header, RawHTTP1Request/Response, H2RequestData/Response, HistoryEntry, Target, RuleApplier)
+- `sectool/service/proxy/types/types.go` - Core proxy data model: wire-fidelity HTTP/1.1 request/response types, protocol tags, `RuleApplier` contract
+- `sectool/service/proxy/types/flow.go` - `Flow` store record (generalized `HistoryEntry`): request/response `Message` under one flow_id, `ParentFlowID` for child flows
+- `sectool/service/proxy/types/serialize.go` - Header/status-line serialization helpers
 - `sectool/service/proxy/parser.go` - HTTP/1.1 tolerant parser with wire fidelity
 - `sectool/service/proxy/validate.go` - Optional request validation
 - `sectool/service/proxy/server.go` - TCP listener, accept loop, protocol detection
@@ -93,6 +101,7 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/proxy/handler_connect.go` - CONNECT tunnel and TLS MITM with ALPN negotiation
 - `sectool/service/proxy/handler_http2.go` - HTTP/2 stream handler with HPACK
 - `sectool/service/proxy/handler_websocket.go` - WebSocket frame proxying
+- `sectool/service/proxy/adapter_shims.go` - Wraps the built-in HTTP/1.1, HTTP/2, and WebSocket handlers as protocol adapters registered with the registry
 - `sectool/service/proxy/cert.go` - CA and per-hostname certificate management
 - `sectool/service/proxy/history.go` - Thread-safe history storage
 - `sectool/service/proxy/filter.go` - CaptureFilter type, SetCaptureFilter/ShouldCapture
@@ -101,6 +110,56 @@ MCP Agent  → MCP Server → Backends (Built-in Proxy or Burp MCP, OAST, Crawle
 - `sectool/service/proxy/sender.go` - Wire-fidelity request sender (H1 and H2)
 - `sectool/service/proxy/httputil.go` - HTTP method extraction, header grouping, and raw query modification utilities
 - `sectool/service/proxy/hpack.go` - HPACK encoder/decoder management
+
+### Protocol Adapters
+
+Generalized capture pipeline letting built-in and out-of-process protocol adapters share the native proxy's connection seams. See `sidecar/README.md` for the full contract.
+
+- `sectool/service/proxy/protocol/adapter.go` - Adapter interfaces and claim contexts (`EarlyClaimCtx`, `UpgradeClaimCtx`, `UpgradeConns`)
+- `sectool/service/proxy/protocol/registry.go` - Ordered claim-seam registry (first claim wins; fallthrough HTTP adapter last); runtime insert/remove for sidecar bridges
+- `sectool/service/proxy/protocol/sidecar/manager.go` - Sidecar registry and connection lifecycle (`Manager`, `HandleConn`); per-connection `session`
+- `sectool/service/proxy/protocol/sidecar/listener.go` - Sidecar IPC listener and accept loop
+- `sectool/service/proxy/protocol/sidecar/listener_unix.go` / `listener_windows.go` - Per-OS listen (Unix domain socket, or loopback TCP on Windows)
+- `sectool/service/proxy/protocol/sidecar/register.go` - `register` handshake: validation, version negotiation (major reject, minor cap), resume/reconnect, rules snapshot
+- `sectool/service/proxy/protocol/sidecar/conflict.go` - Registration conflict checks (port ranges, claim matchers, tool names)
+- `sectool/service/proxy/protocol/sidecar/record.go` - `Record` registry entry per adapter; `Liveness` heartbeat tracking
+- `sectool/service/proxy/protocol/sidecar/bridge.go` - Adapter shim exposing a sidecar's claims to the registry and driving claimed streams
+- `sectool/service/proxy/protocol/sidecar/streams.go` - Per-connection stream set; client/upgrade/upstream byte pumping and `writes` application
+- `sectool/service/proxy/protocol/sidecar/dial.go` - `dial_upstream` handler: scope policy, TLS termination, audit dial flow
+- `sectool/service/proxy/protocol/sidecar/flow.go` - `push_flow`/`core_invoke`/`log` handlers and `FlowSink`/`CoreService`/`RuleSource` interfaces
+- `sectool/service/proxy/protocol/sidecar/rules.go` - `PushRules`: pushes the adapter-filtered rule snapshot via `sync_rules`
+- `sectool/service/proxy/protocol/sidecar/send.go` - Replay/origination routing: `Manager.SidecarSend` (to the owning adapter, source flow inline) and `invoke_adapter` (records `annotations.invoked_by`)
+- `sectool/service/proxy/protocol/sidecar/tools.go` - Sidecar-registered MCP tool listing (`AdapterTools`) and delegated invocation (`InvokeTool`)
+
+### Sidecar SDK (`sidecar/`)
+
+Go client library for building out-of-process protocol adapters; see `sidecar/README.md`. Must stay in sync with the wire types.
+
+- `sidecar/conn.go` - `Conn`, `Dial` (register handshake, `ErrVersionUnsupported`), `Serve`, inbound request/notification routing
+- `sidecar/dial.go` - `Conn.DialUpstream`
+- `sidecar/handler.go` - `Registration`, `Handler` callback interface, `BaseHandler` no-op defaults
+- `sidecar/flow.go` - Flow emission (`PushFlow`, `CompleteFlow`, `EmitMutatedPair`), `Log`, `ReportMetrics`, `CoreInvoke`
+- `sidecar/send.go` - Send surface: `ApplyMutations` (ordered §3.4 ops via `pkg/mutate`) and `Conn.InvokeAdapter`
+- `sidecar/stream.go` - `CloseStream`, `StreamWrite`, and the `Forward` writes helper
+- `sidecar/rules.go` - `RuleCache`: hot-path find/replace scoped to this adapter
+- `sidecar/reassembly.go` - `Reassembler`: buffers stream bytes into complete protocol frames
+- `sidecar/net_unix.go` / `sidecar/net_windows.go` - Per-OS dial network selection (UDS vs loopback TCP)
+
+### Sidecar Wire Protocol (`sidecar/wire/`)
+
+Shared JSON-RPC 2.0 contract types imported by both the SDK and the service side (byte-identical encoding).
+
+- `sidecar/wire/methods.go` - Contract version constants and JSON-RPC method-name constants
+- `sidecar/wire/params.go` - All params/result structs (register, flow, rule, capabilities, mutation, stream, dial, invoke, …)
+- `sidecar/wire/jsonrpc.go` - `Message` envelope and request/response/notification discriminators
+- `sidecar/wire/peer.go` - `Peer`: framed JSON-RPC transport, symmetric call/notify, request dispatch
+- `sidecar/wire/codec.go` - Length-prefixed frame read/write (`MaxFrameBytes`)
+- `sidecar/wire/errors.go` - `Error`/`ErrorData` and the sectool-specific error code registry (-33000..-33999)
+
+### Shared Mutation Helpers (`pkg/mutate/`)
+
+- `pkg/mutate/json.go` - JSON body set/remove by dot/bracket path (no HTML escaping)
+- `pkg/mutate/form.go` - Form (`application/x-www-form-urlencoded`) body set/remove; consumed by service replay and the sidecar SDK
 
 ### Burp MCP Client
 
@@ -270,6 +329,10 @@ CLI subcommands (`sectool <module> <sub>`) generally provide access to the MCP t
 - All list operations must support `--limit` flag
 - Flatten `--help` details at the first subcommand level
 - CLI requires running MCP server; error message guides user to start it
+
+### Documentation
+
+- `sidecar/README.md` documents both the Go SDK and the JSON-RPC 2.0 wire protocol. Keep it in sync with any sidecar API or SDK change: wire method/params/result shapes, error codes, capabilities, versioning behavior, or exported SDK surface. A non-SDK author relies on it, so treat it as part of the contract, not an afterthought.
 
 ### Code Style
 

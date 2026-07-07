@@ -19,6 +19,15 @@ const (
 	DefaultMCPPort       = 9119
 	DefaultProxyPort     = 8080
 
+	// DefaultSidecarPort is the loopback TCP port used for the sidecar IPC
+	// socket on Windows, which lacks reliable Unix domain socket support.
+	DefaultSidecarPort = 9229
+
+	// DefaultSidecarHeartbeatIntervalSecs and DefaultSidecarHeartbeatTimeoutSecs
+	// are the default sidecar heartbeat timings in seconds.
+	DefaultSidecarHeartbeatIntervalSecs = 10
+	DefaultSidecarHeartbeatTimeoutSecs  = 30
+
 	// DefaultExcludeExtensions is the default RE2 alternation for file
 	// extensions that should be excluded from proxy capture.
 	DefaultExcludeExtensions = "gif|jpg|jpeg|png|ico|webp|woff|woff2|ttf|eot"
@@ -49,18 +58,19 @@ func DefaultPath() string {
 }
 
 type Config struct {
-	Version             string        `json:"version"`
-	MCPPort             int           `json:"mcp_port"`
-	ProxyPort           int           `json:"proxy_port"`
-	BurpRequired        *bool         `json:"burp_required"`
-	MaxBodyBytes        int           `json:"max_body_bytes"` // limits request/response body sizes
-	IncludeSubdomains   *bool         `json:"include_subdomains"`
-	AllowedDomains      []string      `json:"allowed_domains"`
-	ExcludeDomains      []string      `json:"exclude_domains"`
-	InteractshServerURL string        `json:"interactsh_server_url"` // empty = use default public servers
-	InteractshAuthToken string        `json:"interactsh_auth_token"` // optional, for protected servers; INTERACTSH_TOKEN env var used as fallback
-	Proxy               ProxyConfig   `json:"proxy"`
-	Crawler             CrawlerConfig `json:"crawler"`
+	Version             string         `json:"version"`
+	MCPPort             int            `json:"mcp_port"`
+	ProxyPort           int            `json:"proxy_port"`
+	BurpRequired        *bool          `json:"burp_required"`
+	MaxBodyBytes        int            `json:"max_body_bytes"` // limits request/response body sizes
+	IncludeSubdomains   *bool          `json:"include_subdomains"`
+	AllowedDomains      []string       `json:"allowed_domains"`
+	ExcludeDomains      []string       `json:"exclude_domains"`
+	InteractshServerURL string         `json:"interactsh_server_url"` // empty = use default public servers
+	InteractshAuthToken string         `json:"interactsh_auth_token"` // optional, for protected servers; INTERACTSH_TOKEN env var used as fallback
+	Proxy               ProxyConfig    `json:"proxy"`
+	Crawler             CrawlerConfig  `json:"crawler"`
+	Sidecars            SidecarsConfig `json:"sidecars"`
 }
 
 type ProxyConfig struct {
@@ -70,6 +80,17 @@ type ProxyConfig struct {
 
 	// RE2 alternation of extensions to exclude from capture
 	ExcludeExtensions *string `json:"exclude_extensions"`
+}
+
+// SidecarsConfig holds declarative settings for out-of-process protocol
+// sidecars. Sidecars are operator-launched (attached) and dial Socket;
+// sectool does not spawn them.
+type SidecarsConfig struct {
+	// Enabled gates the listener, created only under the native proxy backend.
+	Enabled               *bool  `json:"enabled"`
+	Socket                string `json:"sidecar_socket"` // local IPC socket for protocol sidecars (UDS path or host:port)
+	HeartbeatIntervalSecs int    `json:"heartbeat_interval_secs"`
+	HeartbeatTimeoutSecs  int    `json:"heartbeat_timeout_secs"`
 }
 
 type CrawlerConfig struct {
@@ -97,6 +118,12 @@ func DefaultConfig() *Config {
 		IncludeSubdomains: &t,
 		AllowedDomains:    []string{},
 		ExcludeDomains:    []string{},
+		Sidecars: SidecarsConfig{
+			Enabled:               &t,
+			Socket:                DefaultSidecarSocket(),
+			HeartbeatIntervalSecs: DefaultSidecarHeartbeatIntervalSecs,
+			HeartbeatTimeoutSecs:  DefaultSidecarHeartbeatTimeoutSecs,
+		},
 		Proxy: ProxyConfig{
 			DialTimeoutSecs:  20,
 			ReadTimeoutSecs:  240,
@@ -150,6 +177,18 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if cfg.IncludeSubdomains == nil {
 		cfg.IncludeSubdomains = defaults.IncludeSubdomains
+	}
+	if cfg.Sidecars.Socket == "" {
+		cfg.Sidecars.Socket = defaults.Sidecars.Socket
+	}
+	if cfg.Sidecars.Enabled == nil {
+		cfg.Sidecars.Enabled = defaults.Sidecars.Enabled
+	}
+	if cfg.Sidecars.HeartbeatIntervalSecs == 0 {
+		cfg.Sidecars.HeartbeatIntervalSecs = defaults.Sidecars.HeartbeatIntervalSecs
+	}
+	if cfg.Sidecars.HeartbeatTimeoutSecs == 0 {
+		cfg.Sidecars.HeartbeatTimeoutSecs = defaults.Sidecars.HeartbeatTimeoutSecs
 	}
 	if cfg.Proxy.DialTimeoutSecs == 0 {
 		cfg.Proxy.DialTimeoutSecs = defaults.Proxy.DialTimeoutSecs

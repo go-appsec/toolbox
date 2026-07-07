@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/go-appsec/toolbox/sectool/service/proxy/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
@@ -44,6 +46,9 @@ type ProxyServer struct {
 	http2Handler   *http2Handler
 	connectHandler *connectHandler
 	wsHandler      *webSocketHandler
+
+	// registry: per-connection adapter claim/dispatch
+	registry *protocol.Registry
 
 	// Shutdown coordination
 	ctx          context.Context
@@ -79,13 +84,25 @@ func NewProxyServer(port int, configDir string, maxBodyBytes int, historyStorage
 	http1Handler := &http1Handler{
 		history:      history,
 		maxBodyBytes: maxBodyBytes,
-		wsHandler:    wsHandler,
 		timeouts:     timeouts,
 	}
 
 	http2Handler := newHTTP2Handler(history, maxBodyBytes, timeouts)
 
 	connectHandler := newConnectHandler(certManager, http1Handler, http2Handler, history, maxBodyBytes, timeouts)
+
+	// http1 is the unconditional fallthrough and must be registered last
+	registry := &protocol.Registry{
+		Early: []protocol.EarlyAdapter{
+			http2Adapter{h: http2Handler},
+			http1Adapter{h: http1Handler},
+		},
+		Upgrade: []protocol.UpgradeAdapter{
+			wsAdapter{h: wsHandler},
+		},
+	}
+	http1Handler.reg = registry
+	connectHandler.reg = registry
 
 	s := &ProxyServer{
 		listener:       listener,
@@ -97,6 +114,7 @@ func NewProxyServer(port int, configDir string, maxBodyBytes int, historyStorage
 		http2Handler:   http2Handler,
 		connectHandler: connectHandler,
 		wsHandler:      wsHandler,
+		registry:       registry,
 		ctx:            ctx,
 		cancel:         cancel,
 	}
@@ -131,7 +149,7 @@ func (s *ProxyServer) SetCaptureFilter(f CaptureFilter) {
 
 // SetRuleApplier sets the rule applier for all handlers.
 // Call after construction but before Serve().
-func (s *ProxyServer) SetRuleApplier(applier RuleApplier) {
+func (s *ProxyServer) SetRuleApplier(applier types.RuleApplier) {
 	s.http1Handler.ruleApplier = applier
 	s.http2Handler.SetRuleApplier(applier)
 	s.connectHandler.SetRuleApplier(applier)
@@ -157,6 +175,9 @@ func (s *ProxyServer) WaitReady(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Registry returns the per-connection claim registry.
+func (s *ProxyServer) Registry() *protocol.Registry { return s.registry }
 
 // Serve starts accepting connections. Blocks until shutdown.
 func (s *ProxyServer) Serve() error {
@@ -198,11 +219,20 @@ func (s *ProxyServer) handleConnection(conn net.Conn) {
 
 	br := bufio.NewReader(conn)
 
-	// Peek first bytes to detect protocol
-	peek, err := br.Peek(24)
+	// Peek only the first byte to avoid blocking a binary protocol whose opening
+	// message is shorter than the HTTP discriminators; widen only for openings that
+	// could be the HTTP/2 cleartext preface or a CONNECT request, which genuine
+	// clients send in full immediately
+	first, err := br.Peek(1)
 	if err != nil {
 		// Connection closed or error before any data
 		return
+	}
+	peek := first
+	if first[0] == 'P' || first[0] == 'C' {
+		if wide, werr := br.Peek(24); werr == nil {
+			peek = wide
+		}
 	}
 
 	// HTTP/2 preface: "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
@@ -212,14 +242,18 @@ func (s *ProxyServer) handleConnection(conn net.Conn) {
 		return
 	}
 
-	// CONNECT requests - handle HTTPS MITM
+	// CONNECT: tunnel + MITM, then re-enter the early seam via routeByProtocol
 	if bytes.HasPrefix(peek, []byte("CONNECT ")) {
 		s.connectHandler.Handle(s.ctx, conn, br)
 		return
 	}
 
-	// Default: HTTP/1.1 request
-	s.http1Handler.Handle(s.ctx, conn, br)
+	// raw accept; http1 adapter is the fallthrough
+	s.registry.DispatchEarly(s.ctx, &protocol.EarlyClaimCtx{
+		Peek:         peek,
+		ClientConn:   conn,
+		ClientReader: br,
+	})
 }
 
 // Shutdown gracefully stops the server.

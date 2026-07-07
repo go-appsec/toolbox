@@ -5,6 +5,7 @@ import (
 	"net"
 	"testing"
 
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
@@ -16,11 +17,11 @@ func TestDecodeHeaders(t *testing.T) {
 	tests := []struct {
 		name            string
 		pseudos         map[string]string
-		headers         []Header
+		headers         []types.Header
 		wantErr         bool
 		invalidBlock    []byte
 		expectedPseudos map[string]string
-		expectedHeaders []Header
+		expectedHeaders []types.Header
 	}{
 		{
 			name: "request_headers",
@@ -30,7 +31,7 @@ func TestDecodeHeaders(t *testing.T) {
 				":authority": "example.com",
 				":path":      "/test",
 			},
-			headers: []Header{
+			headers: []types.Header{
 				{Name: "user-agent", Value: "test/1.0"},
 				{Name: "accept", Value: "*/*"},
 			},
@@ -40,7 +41,7 @@ func TestDecodeHeaders(t *testing.T) {
 				":authority": "example.com",
 				":path":      "/test",
 			},
-			expectedHeaders: []Header{
+			expectedHeaders: []types.Header{
 				{Name: "user-agent", Value: "test/1.0"},
 				{Name: "accept", Value: "*/*"},
 			},
@@ -54,7 +55,7 @@ func TestDecodeHeaders(t *testing.T) {
 			name:            "empty_block",
 			invalidBlock:    []byte{},
 			expectedPseudos: map[string]string{},
-			expectedHeaders: []Header{},
+			expectedHeaders: []types.Header{},
 		},
 		{
 			name:         "truncated_block",
@@ -111,7 +112,7 @@ func TestEncodeHeaders(t *testing.T) {
 	tests := []struct {
 		name            string
 		pseudos         map[string]string
-		headers         []Header
+		headers         []types.Header
 		expectedPseudos map[string]string
 		expectedCount   int
 	}{
@@ -120,7 +121,7 @@ func TestEncodeHeaders(t *testing.T) {
 			pseudos: map[string]string{
 				":status": "200",
 			},
-			headers: []Header{
+			headers: []types.Header{
 				{Name: "content-type", Value: "text/plain"},
 			},
 			expectedPseudos: map[string]string{
@@ -143,7 +144,7 @@ func TestEncodeHeaders(t *testing.T) {
 				":method": "GET",
 				":path":   "/",
 			},
-			headers: []Header{
+			headers: []types.Header{
 				{Name: "accept", Value: "text/html"},
 				{Name: "accept", Value: "application/json"},
 				{Name: "accept-encoding", Value: "gzip, deflate"},
@@ -195,12 +196,12 @@ func TestEncodeHeadersForbiddenFiltering(t *testing.T) {
 
 	// Include forbidden HTTP/2 headers
 	pseudos := map[string]string{":status": "200"}
-	headers := []Header{
+	headers := []types.Header{
 		{Name: "connection", Value: "keep-alive"},
 		{Name: "keep-alive", Value: "timeout=5"},
 		{Name: "transfer-encoding", Value: "chunked"},
 		{Name: "proxy-connection", Value: "keep-alive"},
-		{Name: "content-type", Value: "text/plain"}, // this should survive
+		{Name: "content-type", Value: "text/plain"}, // survives filtering
 	}
 
 	encoded, err := h.encodeHeaders(pseudos, headers)
@@ -230,7 +231,7 @@ func TestEncodeHeadersEmptyBlock(t *testing.T) {
 
 	// Only status pseudo-header, no regular headers
 	pseudos := map[string]string{":status": "204"}
-	var headers []Header
+	var headers []types.Header
 
 	encoded, err := h.encodeHeaders(pseudos, headers)
 	require.NoError(t, err)
@@ -261,12 +262,12 @@ func TestNewH2Conn(t *testing.T) {
 		h2 := newH2Conn(c2a)
 
 		pseudos1 := map[string]string{":method": "POST"}
-		headers1 := []Header{{Name: "x-custom", Value: "value1"}}
+		headers1 := []types.Header{{Name: "x-custom", Value: "value1"}}
 		encoded1, err := h1.encodeHeaders(pseudos1, headers1)
 		require.NoError(t, err)
 
 		pseudos2 := map[string]string{":method": "GET"}
-		headers2 := []Header{{Name: "x-other", Value: "value2"}}
+		headers2 := []types.Header{{Name: "x-other", Value: "value2"}}
 		encoded2, err := h2.encodeHeaders(pseudos2, headers2)
 		require.NoError(t, err)
 
@@ -330,7 +331,7 @@ func TestHeaderListSize(t *testing.T) {
 	tests := []struct {
 		name     string
 		pseudos  map[string]string
-		headers  []Header
+		headers  []types.Header
 		expected int
 	}{
 		{
@@ -350,7 +351,7 @@ func TestHeaderListSize(t *testing.T) {
 		{
 			name:    "headers_only",
 			pseudos: nil,
-			headers: []Header{
+			headers: []types.Header{
 				{Name: "content-type", Value: "text/plain"},
 			},
 			expected: len("content-type") + len("text/plain") + 32,
@@ -360,7 +361,7 @@ func TestHeaderListSize(t *testing.T) {
 			pseudos: map[string]string{
 				":status": "200",
 			},
-			headers: []Header{
+			headers: []types.Header{
 				{Name: "content-type", Value: "text/plain"},
 			},
 			expected: len(":status") + len("200") + 32 + len("content-type") + len("text/plain") + 32,
@@ -583,7 +584,7 @@ func TestEncodeDecodeHeaders_LargeValues(t *testing.T) {
 	}
 
 	pseudos := map[string]string{":status": "200"}
-	headers := []Header{
+	headers := []types.Header{
 		{Name: "x-large-header", Value: largeValue},
 	}
 
@@ -613,9 +614,9 @@ func TestEncodeDecodeHeaders_ManyHeaders(t *testing.T) {
 	h := newH2Conn(serverConn)
 
 	// Create 100 headers
-	headers := make([]Header, 100)
+	headers := make([]types.Header, 100)
 	for i := 0; i < 100; i++ {
-		headers[i] = Header{
+		headers[i] = types.Header{
 			Name:  "x-header-" + string(rune('0'+i/10)) + string(rune('0'+i%10)),
 			Value: "value-" + string(rune('0'+i/10)) + string(rune('0'+i%10)),
 		}
@@ -647,7 +648,7 @@ func TestEncodeDecodeHeaders_BinaryValues(t *testing.T) {
 
 	// Test with non-ASCII characters (should be encoded as-is for HPACK)
 	pseudos := map[string]string{":status": "200"}
-	headers := []Header{
+	headers := []types.Header{
 		{Name: "x-custom", Value: "value-with-unicode-ñ-€"},
 	}
 
@@ -763,7 +764,7 @@ func TestEncodeHeadersTEFiltering(t *testing.T) {
 			decoder := newH2Conn(clientConn)
 
 			pseudos := map[string]string{":method": "GET", ":path": "/"}
-			headers := []Header{
+			headers := []types.Header{
 				{Name: "te", Value: tt.teValue},
 				{Name: "accept", Value: "*/*"},
 			}

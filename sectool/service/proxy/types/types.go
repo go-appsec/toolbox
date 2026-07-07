@@ -1,4 +1,8 @@
-package proxy
+// Package types holds the proxy capture data model: the wire-fidelity HTTP/1.1
+// request/response types, the common Flow/Message envelope, and the rule-applier
+// contract. It is depended on by the proxy package and the adapter registry
+// (proxy/protocol) without forming an import cycle.
+package types
 
 import (
 	"slices"
@@ -6,6 +10,33 @@ import (
 	"time"
 
 	"github.com/go-analyze/bulk"
+)
+
+// Protocol tags identify the protocol within a stored Flow.
+const (
+	ProtocolHTTP11 = "http/1.1"
+	ProtocolH2     = "http/2"
+
+	ProtocolTagWS      = "websocket"       // upgrade handshake flow
+	ProtocolTagWSFrame = "websocket.frame" // per-frame child flow
+
+	// AdapterScopeCore is the reserved scope naming the in-process proxy (HTTP/1.1,
+	// HTTP/2, WebSocket) and Burp. It scopes rules and attributes core tools;
+	// sidecars may not register under it.
+	AdapterScopeCore = "sectool"
+
+	SchemeHTTP  = "http"
+	SchemeHTTPS = "https"
+
+	DirectionC2S = "client_to_server"
+	DirectionS2C = "server_to_client"
+
+	// HeaderStreamID carries the wire stream id (e.g. an HTTP/2 stream id);
+	// folded into request headers and skipped when serializing for display.
+	HeaderStreamID = "X-Sectool-Stream-Id"
+
+	// MethodFrame is the synthetic method used for WebSocket frame child flows.
+	MethodFrame = "FRAME"
 )
 
 // LineEnding identifies the terminator used on a single HTTP line.
@@ -237,102 +268,159 @@ func (r *RawHTTP1Response) SetBody(b []byte) {
 	r.Chunks = nil
 }
 
-// HistoryEntry represents a stored request/response pair.
-// Embeds the parsed types directly for memory efficiency.
-// The SerializeRaw() methods on Request/Response reconstruct wire bytes on demand.
-type HistoryEntry struct {
-	// FlowID is the unique identifier for this entry, minted at Store time.
-	FlowID string `json:"flow_id" msgpack:"fid"`
-
-	// Protocol identifies the HTTP version: "http/1.1", "h2", or "websocket"
-	Protocol string `json:"protocol" msgpack:"pr"`
-
-	// Scheme is the captured request scheme ("http" or "https").
-	Scheme string `json:"scheme,omitempty" msgpack:"sc,omitempty"`
-	// Port is the captured upstream port.
-	Port int `json:"port,omitempty" msgpack:"po,omitempty"`
-
-	// HTTP/1.1 request/response (nil for HTTP/2)
-	Request  *RawHTTP1Request  `json:"request,omitempty" msgpack:"rq,omitempty"`
-	Response *RawHTTP1Response `json:"response,omitempty" msgpack:"rs,omitempty"`
-
-	// InterimResponses holds 1xx responses (e.g. 100 Continue, 103 Early Hints)
-	// received before the final Response.
-	InterimResponses []*RawHTTP1Response `json:"interim_responses,omitempty" msgpack:"ir,omitempty"`
-
-	// HTTP/2 request/response (nil for HTTP/1.1)
-	H2Request  *H2RequestData  `json:"h2_request,omitempty" msgpack:"h2q,omitempty"`
-	H2Response *H2ResponseData `json:"h2_response,omitempty" msgpack:"h2r,omitempty"`
-	H2StreamID uint32          `json:"h2_stream_id,omitempty" msgpack:"h2s,omitempty"` // for debugging/correlation
-
-	// WSFrames contains WebSocket frames for Protocol="websocket" entries.
-	// The handshake is stored in Request/Response; frames are appended here.
-	WSFrames []WSFrame `json:"ws_frames,omitempty" msgpack:"ws,omitempty"`
-
-	// Timing metadata
-	Timestamp time.Time     `json:"timestamp" msgpack:"ts"`
-	Duration  time.Duration `json:"duration" msgpack:"d"`
+// BodyCodec is the transform chain and logical content-type mapping a Message's
+// BodyRaw to its Body, supplied by adapters whose wire form sectool cannot
+// natively decode.
+type BodyCodec struct {
+	Transforms  []string `json:"transforms,omitempty" msgpack:"tr,omitempty"`
+	ContentType string   `json:"content_type,omitempty" msgpack:"ct,omitempty"`
 }
 
-// WSFrame represents a single WebSocket frame stored in history.
-type WSFrame struct {
-	// Direction is "to-server" or "to-client"
-	Direction string `json:"direction" msgpack:"dr"`
+// Message is the common store envelope for one side of a Flow. It is the
+// structural union of RawHTTP1Request and RawHTTP1Response: a request side
+// leaves the status fields zero, a response side leaves method/path/query zero.
+// Wire-fidelity fields carry over verbatim for HTTP/1.1; HTTP/2 folds its
+// pseudo-headers into Headers (":method", ":status", etc).
+type Message struct {
+	// Request-line fields (request side)
+	Method string `json:"method,omitempty" msgpack:"m,omitempty"`
+	Path   string `json:"path,omitempty" msgpack:"p,omitempty"`
+	Query  string `json:"query,omitempty" msgpack:"q,omitempty"`
 
-	// Opcode is the WebSocket opcode (1=text, 2=binary, 8=close, 9=ping, 10=pong)
-	Opcode byte `json:"opcode" msgpack:"op"`
+	// Version is "HTTP/1.1" / "HTTP/1.0" on either side.
+	Version string `json:"version,omitempty" msgpack:"v,omitempty"`
 
-	// Payload is the frame payload (unmasked)
-	Payload []byte `json:"payload,omitempty" msgpack:"pl,omitempty"`
+	// Status-line fields (response side)
+	StatusCode int    `json:"status_code,omitempty" msgpack:"sc,omitempty"`
+	StatusText string `json:"status_text,omitempty" msgpack:"st,omitempty"`
 
-	// Timestamp when the frame was captured
-	Timestamp time.Time `json:"timestamp" msgpack:"ts"`
-}
-
-// H2RequestData represents an HTTP/2 request for history storage.
-type H2RequestData struct {
-	// Pseudo-headers
-	Method    string `json:"method" msgpack:"m"`    // from :method
-	Scheme    string `json:"scheme" msgpack:"s"`    // from :scheme
-	Authority string `json:"authority" msgpack:"a"` // from :authority
-	Path      string `json:"path" msgpack:"p"`      // from :path
-
-	// Regular headers (not pseudo-headers)
+	// Headers preserves order and original name casing/whitespace.
 	Headers Headers `json:"headers" msgpack:"h"`
 
-	// Body is the request body
+	// Body is the message body (decoded if chunked, raw otherwise).
 	Body []byte `json:"body,omitempty" msgpack:"b,omitempty"`
-}
 
-// H2ResponseData represents an HTTP/2 response for history storage.
-type H2ResponseData struct {
-	// StatusCode from :status pseudo-header
-	StatusCode int `json:"status_code" msgpack:"sc"`
+	// BodyRaw holds the original wire bytes, set by an adapter only when they
+	// differ from a decoded logical Body (protobuf, custom framing). nil
+	// whenever Body already is the wire payload (HTTP and most flows). Replayed
+	// verbatim when Body is unmutated.
+	BodyRaw []byte `json:"body_raw,omitempty" msgpack:"br,omitempty"`
 
-	// Regular headers (not pseudo-headers)
-	Headers Headers `json:"headers" msgpack:"h"`
+	// BodyCodec is the transform chain and logical content-type mapping BodyRaw
+	// to Body, used to re-encode a mutated Body on replay. Set only with BodyRaw.
+	BodyCodec *BodyCodec `json:"body_codec,omitempty" msgpack:"bc,omitempty"`
 
-	// Body is the response body
-	Body []byte `json:"body,omitempty" msgpack:"b,omitempty"`
+	// Trailers for chunked encoding (raw bytes).
+	Trailers []byte `json:"trailers,omitempty" msgpack:"t,omitempty"`
+
+	// Chunks preserves per-chunk wire framing for chunked messages.
+	Chunks []ChunkFrame `json:"chunks,omitempty" msgpack:"ck,omitempty"`
+
+	// FirstLineEnding is the terminator on the request-line or status-line.
+	FirstLineEnding LineEnding `json:"first_line_ending,omitempty" msgpack:"fle,omitempty"`
+
+	// HeaderBlockEnding is the terminator on the blank line ending the header block.
+	HeaderBlockEnding LineEnding `json:"header_block_ending,omitempty" msgpack:"hbe,omitempty"`
+
+	// Wire contains metadata about the original wire encoding.
+	Wire *WireFormat `json:"wire,omitempty" msgpack:"w,omitempty"`
+
+	// CloseDelimited indicates a response body framed by connection close.
+	CloseDelimited bool `json:"-" msgpack:"-"`
 }
 
 // GetHeader returns the first header value with the given name (case-insensitive).
-func (r *H2RequestData) GetHeader(name string) string { return r.Headers.Get(name) }
+func (m *Message) GetHeader(name string) string { return m.Headers.Get(name) }
 
 // SetHeader sets or replaces the first header with the given name (case-insensitive).
-func (r *H2RequestData) SetHeader(name, value string) { r.Headers.Set(name, value) }
+func (m *Message) SetHeader(name, value string) { m.Headers.Set(name, value) }
 
-// GetHeader returns the first header value with the given name (case-insensitive).
-func (r *H2ResponseData) GetHeader(name string) string { return r.Headers.Get(name) }
+// RemoveHeader removes all headers with the given name (case-insensitive).
+func (m *Message) RemoveHeader(name string) { m.Headers.Remove(name) }
 
-// SetHeader sets or replaces the first header with the given name (case-insensitive).
-func (r *H2ResponseData) SetHeader(name, value string) { r.Headers.Set(name, value) }
+// SetBody replaces the body and clears chunk wire state.
+func (m *Message) SetBody(b []byte) {
+	m.Body = b
+	m.Chunks = nil
+}
+
+// RequestToMessage converts a parsed HTTP/1.1 request into a store Message.
+func RequestToMessage(r *RawHTTP1Request) *Message {
+	return &Message{
+		Method:            r.Method,
+		Path:              r.Path,
+		Query:             r.Query,
+		Version:           r.Version,
+		Headers:           r.Headers,
+		Body:              r.Body,
+		Trailers:          r.Trailers,
+		Chunks:            r.Chunks,
+		FirstLineEnding:   r.RequestLineEnding,
+		HeaderBlockEnding: r.HeaderBlockEnding,
+		Wire:              r.Wire,
+	}
+}
+
+// ResponseToMessage converts a parsed HTTP/1.1 response into a store Message.
+func ResponseToMessage(r *RawHTTP1Response) *Message {
+	return &Message{
+		Version:           r.Version,
+		StatusCode:        r.StatusCode,
+		StatusText:        r.StatusText,
+		Headers:           r.Headers,
+		Body:              r.Body,
+		Trailers:          r.Trailers,
+		Chunks:            r.Chunks,
+		FirstLineEnding:   r.StatusLineEnding,
+		HeaderBlockEnding: r.HeaderBlockEnding,
+		Wire:              r.Wire,
+		CloseDelimited:    r.CloseDelimited,
+	}
+}
+
+// toRawRequest converts the Message back into a wire-serializable request.
+func (m *Message) toRawRequest() *RawHTTP1Request {
+	return &RawHTTP1Request{
+		Method:            m.Method,
+		Path:              m.Path,
+		Query:             m.Query,
+		Version:           m.Version,
+		Headers:           m.Headers,
+		Body:              m.Body,
+		Trailers:          m.Trailers,
+		Chunks:            m.Chunks,
+		Protocol:          ProtocolHTTP11,
+		RequestLineEnding: m.FirstLineEnding,
+		HeaderBlockEnding: m.HeaderBlockEnding,
+		Wire:              m.Wire,
+	}
+}
+
+// toRawResponse converts the Message back into a wire-serializable response.
+func (m *Message) toRawResponse() *RawHTTP1Response {
+	return &RawHTTP1Response{
+		Version:           m.Version,
+		StatusCode:        m.StatusCode,
+		StatusText:        m.StatusText,
+		Headers:           m.Headers,
+		Body:              m.Body,
+		Trailers:          m.Trailers,
+		Chunks:            m.Chunks,
+		StatusLineEnding:  m.FirstLineEnding,
+		HeaderBlockEnding: m.HeaderBlockEnding,
+		Wire:              m.Wire,
+		CloseDelimited:    m.CloseDelimited,
+	}
+}
 
 // HistoryMeta holds lightweight metadata extracted at store time.
 // Used by summary/list paths to avoid deserializing full request/response bodies.
 type HistoryMeta struct {
-	FlowID      string        `msgpack:"fid"`
-	Protocol    string        `msgpack:"pr"`
+	FlowID       string `msgpack:"fid"`
+	Protocol     string `msgpack:"pr"`
+	Adapter      string `msgpack:"ad,omitempty"`
+	ParentFlowID string `msgpack:"pid,omitempty"`
+
 	Scheme      string        `msgpack:"sc,omitempty"`
 	Port        int           `msgpack:"po,omitempty"`
 	Method      string        `msgpack:"m"`
@@ -341,9 +429,14 @@ type HistoryMeta struct {
 	Status      int           `msgpack:"s"`
 	ContentType string        `msgpack:"ct"`
 	RespLen     int           `msgpack:"rl"`
-	H2StreamID  uint32        `msgpack:"h2,omitempty"`
 	Timestamp   time.Time     `msgpack:"ts"`
 	Duration    time.Duration `msgpack:"d"`
+
+	// Annotations carries the flow's sidecar-authored metadata.
+	Annotations map[string]any `msgpack:"an,omitempty"`
+
+	InvokedBy         string `msgpack:"ib,omitempty"`
+	SidecarInstanceID string `msgpack:"si,omitempty"`
 }
 
 // Target specifies where to send a request.
@@ -356,9 +449,9 @@ type Target struct {
 // Scheme returns "https" when UsesHTTPS, else "http".
 func (t *Target) Scheme() string {
 	if t.UsesHTTPS {
-		return schemeHTTPS
+		return SchemeHTTPS
 	}
-	return schemeHTTP
+	return SchemeHTTP
 }
 
 // RuleApplier applies find/replace rules to requests and responses.

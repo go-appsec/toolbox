@@ -160,6 +160,15 @@ func (c *Client) CallToolJSON(ctx context.Context, name string, args map[string]
 	return nil
 }
 
+// ListTools returns the tools the server advertises to this client session.
+func (c *Client) ListTools(ctx context.Context) ([]mcp.Tool, error) {
+	result, err := c.mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		return nil, translateTimeoutError(err)
+	}
+	return result.Tools, nil
+}
+
 // CallToolText calls an MCP tool and returns the text result.
 func (c *Client) CallToolText(ctx context.Context, name string, args map[string]interface{}) (string, error) {
 	result, err := c.CallTool(ctx, name, args)

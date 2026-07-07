@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
@@ -36,7 +37,7 @@ func TestSender_Send(t *testing.T) {
 		rawReq := []byte("GET /test-path HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		result, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -67,7 +68,7 @@ func TestSender_Send(t *testing.T) {
 		rawReq := []byte("POST /api HTTP/1.1\r\nHost: " + serverURL.Host + "\r\nContent-Length: 5\r\n\r\nHello")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -96,7 +97,7 @@ func TestSender_Send(t *testing.T) {
 		rawReq := []byte("GET /api HTTP/1.1\r\nHost: " + serverURL.Host + "\r\nX-Old: value\r\n\r\n")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -132,7 +133,7 @@ func TestSender_Send(t *testing.T) {
 		rawReq := []byte("GET /api?old=value&keep=this HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -151,16 +152,12 @@ func TestSender_Send(t *testing.T) {
 	})
 
 	t.Run("json_modifier_error", func(t *testing.T) {
-		sender := &Sender{
-			JSONModifier: func(body []byte, setJSON map[string]any, removeJSON []string) ([]byte, error) {
-				return nil, assert.AnError
-			},
-		}
+		sender := &Sender{}
 
-		rawReq := []byte("POST /api HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\r\n{}")
+		rawReq := []byte("POST /api HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 8\r\n\r\nnot json")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  "localhost",
 				Port:      80,
 				UsesHTTPS: false,
@@ -186,22 +183,18 @@ func TestSender_Send(t *testing.T) {
 		serverURL, _ := url.Parse(testServer.URL)
 		port, _ := strconv.Atoi(serverURL.Port())
 
-		sender := &Sender{
-			JSONModifier: func(body []byte, setJSON map[string]any, removeJSON []string) ([]byte, error) {
-				return []byte(`{"modified":"true"}`), nil
-			},
-		}
+		sender := &Sender{}
 
 		rawReq := []byte("POST /api HTTP/1.1\r\nHost: " + serverURL.Host + "\r\nContent-Length: 2\r\n\r\n{}")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
 			},
 			Modifications: &Modifications{
-				SetJSON: map[string]any{"key": "value"},
+				SetJSON: map[string]any{"modified": "true"},
 			},
 			Force: false, // Content-Length should auto-update to match modified body
 		})
@@ -227,7 +220,7 @@ func TestSender_Send(t *testing.T) {
 		rawReq := []byte("GET / HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -242,7 +235,7 @@ func TestSender_Send(t *testing.T) {
 
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: []byte("INVALID"),
-			Target: Target{
+			Target: types.Target{
 				Hostname:  "localhost",
 				Port:      80,
 				UsesHTTPS: false,
@@ -259,7 +252,7 @@ func TestSender_Send(t *testing.T) {
 		rawReq := []byte("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  "localhost",
 				Port:      1, // Port 1 typically not listening
 				UsesHTTPS: false,
@@ -277,7 +270,7 @@ func TestSender_Send(t *testing.T) {
 		rawReq := []byte("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  "localhost",
 				Port:      8080,
 				UsesHTTPS: false,
@@ -311,7 +304,7 @@ func TestSender_Send(t *testing.T) {
 		rawReq := []byte("POST /api HTTP/1.1\r\nHost: " + serverURL.Host + "\r\nContent-Length: 100\r\n\r\nshort")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -334,7 +327,7 @@ func TestSender_Send(t *testing.T) {
 		rawReq := []byte("GET /api HTTP/1.1\r\nHost: localhost\r\nX-Bad: val\x00ue\r\n\r\n")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  "localhost",
 				Port:      80,
 				UsesHTTPS: false,
@@ -361,7 +354,7 @@ func TestSender_Send(t *testing.T) {
 		rawReq := []byte("GET /test HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		result, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -394,7 +387,7 @@ func TestSender_Send(t *testing.T) {
 			"\r\nX-Test: value\r\nX-Injected: crlf\r\n\r\n")
 		result, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -431,7 +424,7 @@ func TestSender_Send(t *testing.T) {
 			"\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\nX-Injected: crlf\r\n\r\nhello")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -460,7 +453,7 @@ func TestSender_Send(t *testing.T) {
 		rawReq := []byte("PROPFIND /test HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -515,12 +508,12 @@ func TestSender_Send_H2(t *testing.T) {
 		rawReq := []byte("GET /h2-test HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		result, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: true,
 			},
-			Protocol: "h2",
+			Protocol: types.ProtocolH2,
 			Force:    true,
 		})
 
@@ -549,12 +542,12 @@ func TestSender_Send_H2(t *testing.T) {
 		rawReq := []byte("POST /api HTTP/1.1\r\nHost: " + serverURL.Host + "\r\nContent-Length: 13\r\n\r\nH2 body test!")
 		result, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: true,
 			},
-			Protocol: "h2",
+			Protocol: types.ProtocolH2,
 			Force:    true,
 		})
 
@@ -577,12 +570,12 @@ func TestSender_Send_H2(t *testing.T) {
 		rawReq := []byte("GET / HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: true,
 			},
-			Protocol: "h2",
+			Protocol: types.ProtocolH2,
 			Force:    true,
 		})
 
@@ -597,12 +590,12 @@ func TestSender_Send_H2(t *testing.T) {
 		rawReq := []byte("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  "localhost",
 				Port:      80,
 				UsesHTTPS: false,
 			},
-			Protocol: "h2",
+			Protocol: types.ProtocolH2,
 			Force:    true,
 		})
 
@@ -636,12 +629,12 @@ func TestSender_Send_H2(t *testing.T) {
 
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: true,
 			},
-			Protocol: "h2",
+			Protocol: types.ProtocolH2,
 			Force:    true,
 		})
 
@@ -679,12 +672,12 @@ func TestSender_Send_H2(t *testing.T) {
 
 		_, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: true,
 			},
-			Protocol: "h2",
+			Protocol: types.ProtocolH2,
 			Modifications: &Modifications{
 				Method:        "POST",
 				SetHeaders:    []string{"X-Added: new-value"},
@@ -727,12 +720,12 @@ func TestSender_Send_H2(t *testing.T) {
 
 		result, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: true,
 			},
-			Protocol: "h2",
+			Protocol: types.ProtocolH2,
 			Force:    true,
 		})
 
@@ -766,12 +759,12 @@ func TestSender_Send_H2(t *testing.T) {
 
 		result, err := sender.Send(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: true,
 			},
-			Protocol: "h2",
+			Protocol: types.ProtocolH2,
 			Force:    true,
 		})
 
@@ -807,7 +800,7 @@ func TestSender_SendWithRedirects(t *testing.T) {
 		rawReq := []byte("GET /redirect HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		result, err := sender.SendWithRedirects(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -838,7 +831,7 @@ func TestSender_SendWithRedirects(t *testing.T) {
 		rawReq := []byte("GET /loop HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		_, err := sender.SendWithRedirects(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -868,8 +861,8 @@ func TestSender_SendWithRedirects(t *testing.T) {
 		port, _ := strconv.Atoi(serverURL.Port())
 
 		sender := &Sender{
-			RequestRuleApplier: func(req *RawHTTP1Request) *RawHTTP1Request {
-				req.Headers = append(req.Headers, Header{Name: "X-Injected", Value: "rule-applied"})
+			RequestRuleApplier: func(req *types.RawHTTP1Request) *types.RawHTTP1Request {
+				req.Headers = append(req.Headers, types.Header{Name: "X-Injected", Value: "rule-applied"})
 				return req
 			},
 		}
@@ -877,7 +870,7 @@ func TestSender_SendWithRedirects(t *testing.T) {
 		rawReq := []byte("GET /redirect HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		result, err := sender.SendWithRedirects(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: false,
@@ -915,8 +908,8 @@ func TestSender_SendWithRedirects(t *testing.T) {
 		port, _ := strconv.Atoi(serverURL.Port())
 
 		sender := &Sender{
-			RequestRuleApplier: func(req *RawHTTP1Request) *RawHTTP1Request {
-				req.Headers = append(req.Headers, Header{Name: "X-Injected", Value: "once"})
+			RequestRuleApplier: func(req *types.RawHTTP1Request) *types.RawHTTP1Request {
+				req.Headers = append(req.Headers, types.Header{Name: "X-Injected", Value: "once"})
 				return req
 			},
 		}
@@ -924,7 +917,7 @@ func TestSender_SendWithRedirects(t *testing.T) {
 		rawReq := []byte("GET /a HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		result, err := sender.SendWithRedirects(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target:     Target{Hostname: serverURL.Hostname(), Port: port},
+			Target:     types.Target{Hostname: serverURL.Hostname(), Port: port},
 			Force:      true,
 		})
 
@@ -955,7 +948,7 @@ func TestSender_SendWithRedirects(t *testing.T) {
 		rawReq := []byte("GET /hop HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		result, err := sender.SendWithRedirects(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target:     Target{Hostname: serverURL.Hostname(), Port: port},
+			Target:     types.Target{Hostname: serverURL.Hostname(), Port: port},
 			Force:      true,
 		})
 
@@ -986,12 +979,12 @@ func TestSender_SendWithRedirects(t *testing.T) {
 		rawReq := []byte("GET /redirect HTTP/1.1\r\nHost: " + serverURL.Host + "\r\n\r\n")
 		result, err := sender.SendWithRedirects(t.Context(), SendOptions{
 			RawRequest: rawReq,
-			Target: Target{
+			Target: types.Target{
 				Hostname:  serverURL.Hostname(),
 				Port:      port,
 				UsesHTTPS: true,
 			},
-			Protocol: "h2",
+			Protocol: types.ProtocolH2,
 			Force:    true,
 		})
 
@@ -1005,7 +998,7 @@ func TestSender_SendWithRedirects(t *testing.T) {
 func TestResolveRedirectLocation(t *testing.T) {
 	t.Parallel()
 
-	currentTarget := Target{
+	currentTarget := types.Target{
 		Hostname:  "example.com",
 		Port:      443,
 		UsesHTTPS: true,
@@ -1015,14 +1008,14 @@ func TestResolveRedirectLocation(t *testing.T) {
 	tests := []struct {
 		name       string
 		location   string
-		wantTarget Target
+		wantTarget types.Target
 		wantPath   string
 		wantErr    bool
 	}{
 		{
 			name:     "absolute_https",
 			location: "https://other.com/new/path",
-			wantTarget: Target{
+			wantTarget: types.Target{
 				Hostname:  "other.com",
 				Port:      443,
 				UsesHTTPS: true,
@@ -1032,7 +1025,7 @@ func TestResolveRedirectLocation(t *testing.T) {
 		{
 			name:     "absolute_http",
 			location: "http://other.com/new/path",
-			wantTarget: Target{
+			wantTarget: types.Target{
 				Hostname:  "other.com",
 				Port:      80,
 				UsesHTTPS: false,
@@ -1042,7 +1035,7 @@ func TestResolveRedirectLocation(t *testing.T) {
 		{
 			name:     "with_port",
 			location: "https://other.com:8443/path",
-			wantTarget: Target{
+			wantTarget: types.Target{
 				Hostname:  "other.com",
 				Port:      8443,
 				UsesHTTPS: true,
@@ -1052,7 +1045,7 @@ func TestResolveRedirectLocation(t *testing.T) {
 		{
 			name:     "with_query",
 			location: "https://other.com/path?foo=bar",
-			wantTarget: Target{
+			wantTarget: types.Target{
 				Hostname:  "other.com",
 				Port:      443,
 				UsesHTTPS: true,
@@ -1062,7 +1055,7 @@ func TestResolveRedirectLocation(t *testing.T) {
 		{
 			name:     "protocol_relative",
 			location: "//other.com/path",
-			wantTarget: Target{
+			wantTarget: types.Target{
 				Hostname:  "other.com",
 				Port:      443,
 				UsesHTTPS: true,
@@ -1103,7 +1096,7 @@ func TestResolveRedirectLocation(t *testing.T) {
 		{
 			name:     "ipv6_host",
 			location: "https://[::1]:8443/path",
-			wantTarget: Target{
+			wantTarget: types.Target{
 				Hostname:  "::1",
 				Port:      8443,
 				UsesHTTPS: true,
@@ -1191,11 +1184,11 @@ func TestBuildRedirectRequest(t *testing.T) {
 	t.Parallel()
 
 	t.Run("status_302", func(t *testing.T) {
-		originalReq := &RawHTTP1Request{
+		originalReq := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/original",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Content-Type", Value: "application/json"},
 				{Name: "Content-Length", Value: "10"},
@@ -1205,7 +1198,7 @@ func TestBuildRedirectRequest(t *testing.T) {
 			Body: []byte(`{"a":"b"}`),
 		}
 
-		target := Target{Hostname: "example.com", Port: 443, UsesHTTPS: true}
+		target := types.Target{Hostname: "example.com", Port: 443, UsesHTTPS: true}
 
 		newReq, newTarget, _, err := buildRedirectRequest(originalReq, "/new-path", target, "/original", 302)
 		require.NoError(t, err)
@@ -1222,11 +1215,11 @@ func TestBuildRedirectRequest(t *testing.T) {
 	})
 
 	t.Run("status_307", func(t *testing.T) {
-		originalReq := &RawHTTP1Request{
+		originalReq := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/original",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Content-Type", Value: "application/json"},
 				{Name: "Authorization", Value: "Bearer token"},
@@ -1234,7 +1227,7 @@ func TestBuildRedirectRequest(t *testing.T) {
 			Body: []byte(`{"a":"b"}`),
 		}
 
-		target := Target{Hostname: "example.com", Port: 443, UsesHTTPS: true}
+		target := types.Target{Hostname: "example.com", Port: 443, UsesHTTPS: true}
 
 		newReq, newTarget, _, err := buildRedirectRequest(originalReq, "/new-path", target, "/original", 307)
 		require.NoError(t, err)
@@ -1246,18 +1239,18 @@ func TestBuildRedirectRequest(t *testing.T) {
 	})
 
 	t.Run("cross_origin", func(t *testing.T) {
-		originalReq := &RawHTTP1Request{
+		originalReq := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/original",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "Authorization", Value: "Bearer token"},
 				{Name: "X-Custom", Value: "keep"},
 			},
 		}
 
-		target := Target{Hostname: "example.com", Port: 443, UsesHTTPS: true}
+		target := types.Target{Hostname: "example.com", Port: 443, UsesHTTPS: true}
 
 		newReq, newTarget, _, err := buildRedirectRequest(originalReq, "https://other.com/path", target, "/original", 302)
 		require.NoError(t, err)
@@ -1347,7 +1340,7 @@ func TestApplyQueryModifications(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := &RawHTTP1Request{
+			req := &types.RawHTTP1Request{
 				Method:  "GET",
 				Path:    "/test",
 				Query:   tt.query,
@@ -1375,11 +1368,11 @@ func TestApplyModifications(t *testing.T) {
 	t.Parallel()
 
 	t.Run("nil_mods_is_noop", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Host", Value: "example.com"}},
+			Headers: []types.Header{{Name: "Host", Value: "example.com"}},
 		}
 
 		sender := &Sender{}
@@ -1392,7 +1385,7 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("method_override", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
@@ -1408,11 +1401,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("set_headers_adds_new", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Host", Value: "example.com"}},
+			Headers: []types.Header{{Name: "Host", Value: "example.com"}},
 		}
 
 		sender := &Sender{}
@@ -1426,11 +1419,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("set_headers_replaces_existing", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Authorization", Value: "Bearer old"}},
+			Headers: []types.Header{{Name: "Authorization", Value: "Bearer old"}},
 		}
 
 		sender := &Sender{}
@@ -1443,11 +1436,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("remove_headers", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "X-Remove-Me", Value: "gone"},
 			},
@@ -1464,7 +1457,7 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("set_params", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Query:   "existing=value",
@@ -1482,7 +1475,7 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("remove_params", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Query:   "keep=yes&remove=me",
@@ -1499,11 +1492,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("body_replacement", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Content-Length", Value: "5"}},
+			Headers: []types.Header{{Name: "Content-Length", Value: "5"}},
 			Body:    []byte("hello"),
 		}
 
@@ -1518,19 +1511,15 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("set_json", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Content-Length", Value: "13"}},
+			Headers: []types.Header{{Name: "Content-Length", Value: "13"}},
 			Body:    []byte(`{"key":"old"}`),
 		}
 
-		sender := &Sender{
-			JSONModifier: func(body []byte, setJSON map[string]any, removeJSON []string) ([]byte, error) {
-				return []byte(`{"key":"new"}`), nil
-			},
-		}
+		sender := &Sender{}
 		err := sender.applyModifications(req, &Modifications{
 			SetJSON: map[string]any{"key": "new"},
 		}, false)
@@ -1541,19 +1530,15 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("remove_json", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Content-Length", Value: "25"}},
+			Headers: []types.Header{{Name: "Content-Length", Value: "25"}},
 			Body:    []byte(`{"keep":"yes","drop":"no"}`),
 		}
 
-		sender := &Sender{
-			JSONModifier: func(body []byte, setJSON map[string]any, removeJSON []string) ([]byte, error) {
-				return []byte(`{"keep":"yes"}`), nil
-			},
-		}
+		sender := &Sender{}
 		err := sender.applyModifications(req, &Modifications{
 			RemoveJSON: []string{"drop"},
 		}, false)
@@ -1564,20 +1549,15 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("empty_body_with_set_json", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{},
+			Headers: []types.Header{},
 			Body:    nil,
 		}
 
-		sender := &Sender{
-			JSONModifier: func(body []byte, setJSON map[string]any, removeJSON []string) ([]byte, error) {
-				assert.Equal(t, []byte("{}"), body)
-				return []byte(`{"new":"value"}`), nil
-			},
-		}
+		sender := &Sender{}
 		err := sender.applyModifications(req, &Modifications{
 			SetJSON: map[string]any{"new": "value"},
 		}, false)
@@ -1587,11 +1567,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("update_content_length", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Content-Length", Value: "5"}},
+			Headers: []types.Header{{Name: "Content-Length", Value: "5"}},
 			Body:    []byte("hello"),
 		}
 
@@ -1607,11 +1587,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("user_cl_preserved", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Content-Length", Value: "5"}},
+			Headers: []types.Header{{Name: "Content-Length", Value: "5"}},
 			Body:    []byte("hello"),
 		}
 
@@ -1628,11 +1608,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("auto_cl_without_user", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Content-Length", Value: "5"}},
+			Headers: []types.Header{{Name: "Content-Length", Value: "5"}},
 			Body:    []byte("hello"),
 		}
 
@@ -1649,11 +1629,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("user_cl_case_insensitive", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Content-Length", Value: "5"}},
+			Headers: []types.Header{{Name: "Content-Length", Value: "5"}},
 			Body:    []byte("hello"),
 		}
 
@@ -1670,19 +1650,15 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("json_mod_user_cl", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Content-Length", Value: "2"}},
+			Headers: []types.Header{{Name: "Content-Length", Value: "2"}},
 			Body:    []byte("{}"),
 		}
 
-		sender := &Sender{
-			JSONModifier: func(body []byte, setJSON map[string]any, removeJSON []string) ([]byte, error) {
-				return []byte(`{"key":"value"}`), nil // 15 bytes
-			},
-		}
+		sender := &Sender{}
 		err := sender.applyModifications(req, &Modifications{
 			SetJSON:    map[string]any{"key": "value"},
 			SetHeaders: []string{"Content-Length: 999"},
@@ -1694,11 +1670,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("te_skips_cl_update", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Transfer-Encoding", Value: "chunked"},
 			},
 			Body: []byte("5\r\nHELLO\r\n0\r\n\r\n"),
@@ -1717,11 +1693,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("no_te_updates_cl", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "POST",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Content-Length", Value: "5"},
 			},
 			Body: []byte("hello"),
@@ -1737,11 +1713,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("duplicate_headers", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{{Name: "Host", Value: "example.com"}},
+			Headers: []types.Header{{Name: "Host", Value: "example.com"}},
 		}
 
 		sender := &Sender{}
@@ -1760,11 +1736,11 @@ func TestApplyModifications(t *testing.T) {
 	})
 
 	t.Run("remove_then_set_header", func(t *testing.T) {
-		req := &RawHTTP1Request{
+		req := &types.RawHTTP1Request{
 			Method:  "GET",
 			Path:    "/test",
 			Version: "HTTP/1.1",
-			Headers: []Header{
+			Headers: []types.Header{
 				{Name: "Host", Value: "example.com"},
 				{Name: "X-Old", Value: "old-value"},
 			},
@@ -1818,7 +1794,7 @@ func TestReadH2Response(t *testing.T) {
 		// first block seeds the dynamic table on a non-target stream; the target
 		// stream's block references the same header by index, so it only decodes
 		// if the first block was decoded too
-		hdrs := Headers{{Name: "x-shared", Value: "dyn-table-value"}}
+		hdrs := types.Headers{{Name: "x-shared", Value: "dyn-table-value"}}
 		block1, err := enc.encodeHeaders(map[string]string{":status": "200"}, hdrs)
 		require.NoError(t, err)
 		block2, err := enc.encodeHeaders(map[string]string{":status": "200"}, hdrs)
