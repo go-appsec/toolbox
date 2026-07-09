@@ -57,11 +57,13 @@ A **Flow** is one logical exchange. It MAY carry a `request` side and a `respons
 
 ## Capabilities
 
-A sidecar declares which connection-handling seams it claims at registration:
+A sidecar declares which connection-handling seams it claims at registration. Each kind is a list (`early_claims`, `upgrade_claims`, `injection_targets`), so one registration can claim several protocol entry points:
 
 - **`early_claim`** — claim TCP connections from accept on a port range, optionally gated by `magic_bytes_prefix`, `host_match`, `sni_match`, or a dynamic `probe`. With `tls.terminate`, `sectool` MitMs TLS and the sidecar receives the decrypted contents. A connection matching no claim falls through to the HTTP adapter.
 - **`upgrade_claim`** — claim a byte stream after an HTTP upgrade (`http_101` or `connect`). Sectool captures the triggering request as a normal flow, synthesizes the upgrade response, and routes subsequent bytes to the sidecar; the captured request's `flow_id` and headers are surfaced on stream open.
 - **`injection_target`** — declare the adapter can originate new outbound messages, enabling `replay_send` routing and cross-adapter `invoke_adapter`.
+
+A sidecar with multiple claims routes an inbound stream on the protocol input `stream_open` carries — `host`/`path`/`request_headers` for an upgrade claim, `host` plus the opening `stream_deliver` bytes for an early claim.
 
 Any sidecar may emit flows and apply pushed rules without declaring a capability. Conflicts (overlapping port ranges, ambiguous matchers, duplicate names) are rejected at registration time, naming both parties.
 
@@ -107,10 +109,10 @@ func main() {
         Name:      "my-protocol",
         Protocols: []string{"myproto/1"},
         Capabilities: wire.Capabilities{
-            EarlyClaim: &wire.EarlyClaim{
+            EarlyClaims: []wire.EarlyClaim{{
                 PortRange:        wire.PortRange{Low: 9443, High: 9443},
                 MagicBytesPrefix: "bXlwcm90bw==", // base64 of magic bytes
-            },
+            }},
         },
     }
 
@@ -578,7 +580,7 @@ The method behind agent `replay_send` and the destination side of `invoke_adapte
 
 ### stream_open (sectool → sidecar)
 
-**params:** `stream_id` (string), `host`, `path`, `matched_claim`, `peer_addr` (strings, optional), plus `request_flow_id` (string) and `request_headers` (`[Header]`), present only for an `upgrade_claim`, absent for `early_claim`.
+**params:** `stream_id` (string), `host`, `path`, `peer_addr` (strings, optional), plus `request_flow_id` (string) and `request_headers` (`[Header]`), present only for an `upgrade_claim`, absent for `early_claim`.
 
 **result:** `{ "writes": [StreamWrite] }` (usually empty; the client speaks first).
 
@@ -659,21 +661,21 @@ All fields `omitempty`. `annotations` is a free-form object the sidecar owns (we
 
 ```json
 {
-  "early_claim": {
+  "early_claims": [{
     "port_range": { "low": 9443, "high": 9443 },
     "tls": { "terminate": true, "sni_match": "mqtt.example.com" },
     "magic_bytes_prefix": "<base64>", "host_match": "",
     "probe": false, "probe_max_bytes": 0
-  },
-  "upgrade_claim": {
+  }],
+  "upgrade_claims": [{
     "host_pattern": "example.com", "path_pattern": "/ws/custom",
     "upgrade_signal": "http_101", "method_set": ["GET"]
-  },
-  "injection_target": { "target_schema": { /* JSON Schema */ } }
+  }],
+  "injection_targets": [{ "target_schema": { /* JSON Schema */ } }]
 }
 ```
 
-`upgrade_signal` ∈ `http_101`, `connect`. Each seam is optional; omit the ones you don't claim. `magic_bytes_prefix` is standard-alphabet padded base64.
+`upgrade_signal` ∈ `http_101`, `connect`. Each seam is a list; omit or leave empty the ones you don't claim, and declare more than one entry to claim multiple entry points. `magic_bytes_prefix` is standard-alphabet padded base64.
 
 ### Mutation
 

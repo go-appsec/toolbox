@@ -74,11 +74,10 @@ func (ss *streamSet) serveClient(ctx context.Context, rec *Record, c *protocol.E
 
 	host, path := openInfo(c)
 	ss.runClient(ctx, rec, id, c.ClientReader, wire.StreamOpenParams{
-		StreamID:     id,
-		Host:         host,
-		Path:         path,
-		MatchedClaim: rec.Name,
-		PeerAddr:     c.ClientConn.RemoteAddr().String(),
+		StreamID: id,
+		Host:     host,
+		Path:     path,
+		PeerAddr: c.ClientConn.RemoteAddr().String(),
 	})
 }
 
@@ -92,7 +91,6 @@ func (ss *streamSet) serveUpgrade(ctx context.Context, rec *Record, conns protoc
 		StreamID:       id,
 		Host:           host,
 		Path:           path,
-		MatchedClaim:   rec.Name,
 		PeerAddr:       conns.ClientConn.RemoteAddr().String(),
 		RequestFlowID:  reqFlowID,
 		RequestHeaders: reqHeaders,

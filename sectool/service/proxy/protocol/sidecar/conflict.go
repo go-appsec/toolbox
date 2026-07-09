@@ -19,16 +19,10 @@ func (m *Manager) checkConflicts(p *wire.RegisterParams) *wire.Error {
 		return wire.NewError(wire.CodeDuplicateRegistration,
 			"adapter name conflicts with a built-in adapter: "+p.Name).
 			WithData(&wire.ErrorData{Adapter: p.Name, ConflictAdapter: p.Name})
-	}
-	if ec := p.Capabilities.EarlyClaim; ec != nil {
-		if err := m.checkEarlyClaim(p.Name, ec); err != nil {
-			return err
-		}
-	}
-	if uc := p.Capabilities.UpgradeClaim; uc != nil {
-		if err := m.checkUpgradeClaim(p.Name, uc); err != nil {
-			return err
-		}
+	} else if err := m.checkEarlyClaims(p.Name, p.Capabilities.EarlyClaims); err != nil {
+		return err
+	} else if err := m.checkUpgradeClaims(p.Name, p.Capabilities.UpgradeClaims); err != nil {
+		return err
 	}
 	return m.checkToolNames(p)
 }
@@ -66,43 +60,80 @@ func (m *Manager) checkToolNames(p *wire.RegisterParams) *wire.Error {
 	return nil
 }
 
-func (m *Manager) checkEarlyClaim(name string, ec *wire.EarlyClaim) *wire.Error {
-	if m.cfg.NativeProxyPort != 0 &&
-		ec.PortRange.Low <= m.cfg.NativeProxyPort && m.cfg.NativeProxyPort <= ec.PortRange.High {
-		return wire.NewError(wire.CodeCapabilityConflict,
-			fmt.Sprintf("early_claim port range %d-%d includes the native proxy port %d",
-				ec.PortRange.Low, ec.PortRange.High, m.cfg.NativeProxyPort)).
-			WithData(&wire.ErrorData{Adapter: name, ConflictAdapter: "native-proxy"})
-	}
-	for _, r := range m.records {
-		other := r.Capabilities.EarlyClaim
-		if other == nil || !rangesOverlap(ec.PortRange, other.PortRange) {
-			continue
-		}
-		if !earlyClaimsDistinct(ec, other) {
+// checkEarlyClaims validates a registration's early claims against the native
+// proxy port, each other (intra-registration self-overlap), and every already
+// registered adapter's early claims. Callers hold m.mu.
+func (m *Manager) checkEarlyClaims(name string, claims []wire.EarlyClaim) *wire.Error {
+	for i := range claims {
+		ec := &claims[i]
+		if m.cfg.NativeProxyPort != 0 &&
+			ec.PortRange.Low <= m.cfg.NativeProxyPort && m.cfg.NativeProxyPort <= ec.PortRange.High {
 			return wire.NewError(wire.CodeCapabilityConflict,
-				fmt.Sprintf("early_claim port range %d-%d overlaps adapter %q with no distinguishing matcher",
-					ec.PortRange.Low, ec.PortRange.High, r.Name)).
-				WithData(&wire.ErrorData{Adapter: name, ConflictAdapter: r.Name})
+				fmt.Sprintf("early_claim port range %d-%d includes the native proxy port %d",
+					ec.PortRange.Low, ec.PortRange.High, m.cfg.NativeProxyPort)).
+				WithData(&wire.ErrorData{Adapter: name, ConflictAdapter: "native-proxy"})
+		}
+		// intra-registration: this claim must be distinct from its siblings
+		for j := i + 1; j < len(claims); j++ {
+			if earlyClaimConflict(ec, &claims[j]) {
+				return wire.NewError(wire.CodeCapabilityConflict,
+					fmt.Sprintf("early_claim port range %d-%d overlaps another claim in the same registration with no distinguishing matcher",
+						ec.PortRange.Low, ec.PortRange.High)).
+					WithData(&wire.ErrorData{Adapter: name, ConflictAdapter: name})
+			}
+		}
+		for _, r := range m.records {
+			for k := range r.Capabilities.EarlyClaims {
+				if earlyClaimConflict(ec, &r.Capabilities.EarlyClaims[k]) {
+					return wire.NewError(wire.CodeCapabilityConflict,
+						fmt.Sprintf("early_claim port range %d-%d overlaps adapter %q with no distinguishing matcher",
+							ec.PortRange.Low, ec.PortRange.High, r.Name)).
+						WithData(&wire.ErrorData{Adapter: name, ConflictAdapter: r.Name})
+				}
+			}
 		}
 	}
 	return nil
 }
 
-func (m *Manager) checkUpgradeClaim(name string, uc *wire.UpgradeClaim) *wire.Error {
-	for _, r := range m.records {
-		other := r.Capabilities.UpgradeClaim
-		if other == nil || !upgradeOverlap(uc, other) {
-			continue
+// checkUpgradeClaims validates a registration's upgrade claims against each other
+// (intra-registration self-overlap) and every already registered adapter's
+// upgrade claims. Callers hold m.mu.
+func (m *Manager) checkUpgradeClaims(name string, claims []wire.UpgradeClaim) *wire.Error {
+	for i := range claims {
+		uc := &claims[i]
+		for j := i + 1; j < len(claims); j++ {
+			if upgradeClaimConflict(uc, &claims[j]) {
+				return wire.NewError(wire.CodeCapabilityConflict,
+					fmt.Sprintf("upgrade_claim (%s %s) overlaps another claim in the same registration with incomparable specificity",
+						uc.HostPattern, uc.PathPattern)).
+					WithData(&wire.ErrorData{Adapter: name, ConflictAdapter: name})
+			}
 		}
-		if !dominates(uc, other) && !dominates(other, uc) {
-			return wire.NewError(wire.CodeCapabilityConflict,
-				fmt.Sprintf("upgrade_claim (%s %s) overlaps adapter %q with incomparable specificity",
-					uc.HostPattern, uc.PathPattern, r.Name)).
-				WithData(&wire.ErrorData{Adapter: name, ConflictAdapter: r.Name})
+		for _, r := range m.records {
+			for k := range r.Capabilities.UpgradeClaims {
+				if upgradeClaimConflict(uc, &r.Capabilities.UpgradeClaims[k]) {
+					return wire.NewError(wire.CodeCapabilityConflict,
+						fmt.Sprintf("upgrade_claim (%s %s) overlaps adapter %q with incomparable specificity",
+							uc.HostPattern, uc.PathPattern, r.Name)).
+						WithData(&wire.ErrorData{Adapter: name, ConflictAdapter: r.Name})
+				}
+			}
 		}
 	}
 	return nil
+}
+
+// earlyClaimConflict reports whether two early claims overlap on port range with
+// no distinguishing matcher.
+func earlyClaimConflict(a, b *wire.EarlyClaim) bool {
+	return rangesOverlap(a.PortRange, b.PortRange) && !earlyClaimsDistinct(a, b)
+}
+
+// upgradeClaimConflict reports whether two upgrade claims overlap with neither
+// strictly more specific than the other.
+func upgradeClaimConflict(a, b *wire.UpgradeClaim) bool {
+	return upgradeOverlap(a, b) && !dominates(a, b) && !dominates(b, a)
 }
 
 func rangesOverlap(a, b wire.PortRange) bool {
@@ -161,6 +192,19 @@ func patternOverlap(a, b string) bool {
 		return a == b
 	}
 	return true // glob/regex involved: assume potential overlap
+}
+
+// mostSpecificUpgrade returns the claim with the highest combined host+path rank,
+// used to rank a multi-claim record against other adapters. The slice is non-empty.
+func mostSpecificUpgrade(claims []wire.UpgradeClaim) *wire.UpgradeClaim {
+	best := &claims[0]
+	bestRank := patternRank(best.HostPattern) + patternRank(best.PathPattern)
+	for i := 1; i < len(claims); i++ {
+		if r := patternRank(claims[i].HostPattern) + patternRank(claims[i].PathPattern); r > bestRank {
+			best, bestRank = &claims[i], r
+		}
+	}
+	return best
 }
 
 // dominates reports whether a is strictly more specific than b across both the

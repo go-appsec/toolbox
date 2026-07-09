@@ -11,11 +11,12 @@ type ProtocolVersion struct {
 	Minor int `json:"minor"`
 }
 
-// Capabilities are the parameterized seams a sidecar declares.
+// Capabilities are the parameterized seams a sidecar declares. Each kind is a
+// list, so one registration can claim multiple protocol entry points.
 type Capabilities struct {
-	EarlyClaim      *EarlyClaim      `json:"early_claim,omitempty"`
-	UpgradeClaim    *UpgradeClaim    `json:"upgrade_claim,omitempty"`
-	InjectionTarget *InjectionTarget `json:"injection_target,omitempty"`
+	EarlyClaims      []EarlyClaim      `json:"early_claims,omitempty"`
+	UpgradeClaims    []UpgradeClaim    `json:"upgrade_claims,omitempty"`
+	InjectionTargets []InjectionTarget `json:"injection_targets,omitempty"`
 }
 
 // PortRange is an inclusive TCP port span [Low, High].
@@ -240,11 +241,10 @@ type StreamResult struct {
 
 // StreamOpenParams announces that a claim fired and a new stream exists.
 type StreamOpenParams struct {
-	StreamID     string `json:"stream_id"`
-	Host         string `json:"host,omitempty"`
-	Path         string `json:"path,omitempty"`
-	MatchedClaim string `json:"matched_claim,omitempty"`
-	PeerAddr     string `json:"peer_addr,omitempty"`
+	StreamID string `json:"stream_id"`
+	Host     string `json:"host,omitempty"`
+	Path     string `json:"path,omitempty"`
+	PeerAddr string `json:"peer_addr,omitempty"`
 	// RequestFlowID is the captured triggering request's flow, set only for an
 	// upgrade_claim; absent for an early_claim.
 	RequestFlowID string `json:"request_flow_id,omitempty"`

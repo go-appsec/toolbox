@@ -124,7 +124,7 @@ func headerValue(hs []wire.Header, name string) string {
 
 func TestSidecarUpgradeClaimHTTP101E2E(t *testing.T) {
 	uc := &wire.UpgradeClaim{HostPattern: "ctrl.example.com", PathPattern: "/control", UpgradeSignal: "http_101", MethodSet: []string{"POST"}}
-	h := startUpgrade(t, "upgrade-sidecar", wire.Capabilities{UpgradeClaim: uc})
+	h := startUpgrade(t, "upgrade-sidecar", wire.Capabilities{UpgradeClaims: []wire.UpgradeClaim{*uc}})
 	ctx := t.Context()
 
 	conn, err := net.Dial("tcp", h.proxyAddr)
@@ -167,7 +167,7 @@ func TestSidecarUpgradeClaimHTTP101E2E(t *testing.T) {
 
 func TestSidecarUpgradeClaimConnectE2E(t *testing.T) {
 	uc := &wire.UpgradeClaim{HostPattern: "tunnel.test", UpgradeSignal: "connect"}
-	h := startUpgrade(t, "connect-upgrade", wire.Capabilities{UpgradeClaim: uc})
+	h := startUpgrade(t, "connect-upgrade", wire.Capabilities{UpgradeClaims: []wire.UpgradeClaim{*uc}})
 	ctx := t.Context()
 
 	conn, err := net.Dial("tcp", h.proxyAddr)

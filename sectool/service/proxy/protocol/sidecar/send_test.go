@@ -165,7 +165,7 @@ func TestHandleInvokeAdapter(t *testing.T) {
 			return declineUnknown(method, params)
 		})
 		dp := baseParams("dest")
-		dp.Capabilities.InjectionTarget = &wire.InjectionTarget{}
+		dp.Capabilities.InjectionTargets = []wire.InjectionTarget{{}}
 		_, err := register(t, pd, dp)
 		require.Nil(t, err)
 

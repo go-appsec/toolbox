@@ -132,7 +132,7 @@ func magic(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)
 
 func TestSidecarRawEarlyClaimE2E(t *testing.T) {
 	h := startIntercept(t, "echo-raw",
-		wire.Capabilities{EarlyClaim: &wire.EarlyClaim{MagicBytesPrefix: magic("ECHO")}}, nil)
+		wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{MagicBytesPrefix: magic("ECHO")}}}, nil)
 	ctx := t.Context()
 
 	conn, err := net.Dial("tcp", h.proxyAddr)
@@ -158,7 +158,7 @@ func TestSidecarRawEarlyClaimFallthrough(t *testing.T) {
 	// A connection whose opening bytes do not match the magic prefix falls through
 	// to the HTTP adapter unchanged.
 	h := startIntercept(t, "echo-raw-ft",
-		wire.Capabilities{EarlyClaim: &wire.EarlyClaim{MagicBytesPrefix: magic("ECHO")}}, nil)
+		wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{MagicBytesPrefix: magic("ECHO")}}}, nil)
 
 	conn, err := net.Dial("tcp", h.proxyAddr)
 	require.NoError(t, err)
@@ -173,10 +173,10 @@ func TestSidecarRawEarlyClaimFallthrough(t *testing.T) {
 }
 
 func TestSidecarTLSTerminateEarlyClaimE2E(t *testing.T) {
-	h := startIntercept(t, "echo-tls", wire.Capabilities{EarlyClaim: &wire.EarlyClaim{
+	h := startIntercept(t, "echo-tls", wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{
 		PortRange: wire.PortRange{Low: 443, High: 443},
 		TLS:       &wire.TLSClaim{Terminate: true, SNIMatch: "echo.test"},
-	}}, nil)
+	}}}, nil)
 
 	conn, err := net.Dial("tcp", h.proxyAddr)
 	require.NoError(t, err)
@@ -205,7 +205,7 @@ func TestSidecarTLSTerminateEarlyClaimE2E(t *testing.T) {
 func TestSidecarProbeEarlyClaimE2E(t *testing.T) {
 	// Marker must not start with 'P'/'C' so the accept peek stays narrow.
 	h := startIntercept(t, "echo-probe",
-		wire.Capabilities{EarlyClaim: &wire.EarlyClaim{Probe: true, ProbeMaxBytes: 64}}, []byte("XPROBE"))
+		wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{Probe: true, ProbeMaxBytes: 64}}}, []byte("XPROBE"))
 
 	t.Run("probe_claims", func(t *testing.T) {
 		conn, err := net.Dial("tcp", h.proxyAddr)
@@ -232,7 +232,7 @@ func TestSidecarProactiveStreamOutput(t *testing.T) {
 	// Proactive stream_write (keepalive-style output) and sidecar-initiated
 	// close_stream both reach the client socket outside an event Response.
 	h := startIntercept(t, "echo-proactive",
-		wire.Capabilities{EarlyClaim: &wire.EarlyClaim{MagicBytesPrefix: magic("ECHO")}}, nil)
+		wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{MagicBytesPrefix: magic("ECHO")}}}, nil)
 
 	conn, err := net.Dial("tcp", h.proxyAddr)
 	require.NoError(t, err)
@@ -261,7 +261,7 @@ func TestSidecarProactiveStreamOutput(t *testing.T) {
 
 func TestSidecarDeathTearsDownStream(t *testing.T) {
 	h := startIntercept(t, "echo-teardown",
-		wire.Capabilities{EarlyClaim: &wire.EarlyClaim{MagicBytesPrefix: magic("ECHO")}}, nil)
+		wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{MagicBytesPrefix: magic("ECHO")}}}, nil)
 
 	conn, err := net.Dial("tcp", h.proxyAddr)
 	require.NoError(t, err)

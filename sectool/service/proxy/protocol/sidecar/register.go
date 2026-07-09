@@ -98,10 +98,10 @@ func (m *Manager) handleRegister(peer *wire.Peer, p *wire.RegisterParams) (*Reco
 	if p.InstanceID != "" {
 		m.byInstance[p.InstanceID] = rec
 	}
-	if rec.Capabilities.EarlyClaim != nil {
+	if len(rec.Capabilities.EarlyClaims) > 0 {
 		m.registry.InsertEarly(rec.bridge)
 	}
-	if rec.Capabilities.UpgradeClaim != nil {
+	if len(rec.Capabilities.UpgradeClaims) > 0 {
 		m.reorderUpgradeClaims()
 	}
 
@@ -122,20 +122,22 @@ func (m *Manager) handleRegister(peer *wire.Peer, p *wire.RegisterParams) (*Reco
 }
 
 // reorderUpgradeClaims re-inserts every upgrade-claiming sidecar bridge so the
-// most-specific matchers are evaluated first (ahead of the built-in adapters).
-// Callers hold mu.
+// most-specific matchers are evaluated first (ahead of the built-in adapters). A
+// record with several upgrade claims is ranked by its most-specific one. Callers
+// hold mu.
 func (m *Manager) reorderUpgradeClaims() {
 	recs := make([]*Record, 0, len(m.records))
 	for _, r := range m.records {
-		if r.Capabilities.UpgradeClaim != nil {
+		if len(r.Capabilities.UpgradeClaims) > 0 {
 			recs = append(recs, r)
 		}
 	}
 	slices.SortStableFunc(recs, func(a, b *Record) int {
+		ac, bc := mostSpecificUpgrade(a.Capabilities.UpgradeClaims), mostSpecificUpgrade(b.Capabilities.UpgradeClaims)
 		switch {
-		case dominates(a.Capabilities.UpgradeClaim, b.Capabilities.UpgradeClaim):
+		case dominates(ac, bc):
 			return -1
-		case dominates(b.Capabilities.UpgradeClaim, a.Capabilities.UpgradeClaim):
+		case dominates(bc, ac):
 			return 1
 		default:
 			return 0

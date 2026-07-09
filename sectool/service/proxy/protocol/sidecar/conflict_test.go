@@ -30,11 +30,11 @@ func TestConflictEarlyClaim(t *testing.T) {
 	t.Run("overlap_no_matcher", func(t *testing.T) {
 		m := testManager(Config{})
 		a := baseParams("a")
-		a.Capabilities.EarlyClaim = &wire.EarlyClaim{PortRange: wire.PortRange{Low: 8000, High: 8100}}
+		a.Capabilities.EarlyClaims = []wire.EarlyClaim{{PortRange: wire.PortRange{Low: 8000, High: 8100}}}
 		mustRegister(t, m, a)
 
 		b := baseParams("b")
-		b.Capabilities.EarlyClaim = &wire.EarlyClaim{PortRange: wire.PortRange{Low: 8050, High: 8200}}
+		b.Capabilities.EarlyClaims = []wire.EarlyClaim{{PortRange: wire.PortRange{Low: 8050, High: 8200}}}
 		err := registerErr(t, m, b)
 		require.NotNil(t, err)
 		assert.Equal(t, wire.CodeCapabilityConflict, err.Code)
@@ -45,24 +45,24 @@ func TestConflictEarlyClaim(t *testing.T) {
 	t.Run("distinguished_by_prefix", func(t *testing.T) {
 		m := testManager(Config{})
 		a := baseParams("a")
-		a.Capabilities.EarlyClaim = &wire.EarlyClaim{
+		a.Capabilities.EarlyClaims = []wire.EarlyClaim{{
 			PortRange:        wire.PortRange{Low: 9000, High: 9000},
 			MagicBytesPrefix: base64.StdEncoding.EncodeToString([]byte("AB")),
-		}
+		}}
 		mustRegister(t, m, a)
 
 		b := baseParams("b")
-		b.Capabilities.EarlyClaim = &wire.EarlyClaim{
+		b.Capabilities.EarlyClaims = []wire.EarlyClaim{{
 			PortRange:        wire.PortRange{Low: 9000, High: 9000},
 			MagicBytesPrefix: base64.StdEncoding.EncodeToString([]byte("CD")),
-		}
+		}}
 		require.Nil(t, registerErr(t, m, b))
 	})
 
 	t.Run("includes_native_port", func(t *testing.T) {
 		m := testManager(Config{NativeProxyPort: 8080})
 		a := baseParams("a")
-		a.Capabilities.EarlyClaim = &wire.EarlyClaim{PortRange: wire.PortRange{Low: 8000, High: 8100}}
+		a.Capabilities.EarlyClaims = []wire.EarlyClaim{{PortRange: wire.PortRange{Low: 8000, High: 8100}}}
 		err := registerErr(t, m, a)
 		require.NotNil(t, err)
 		assert.Equal(t, wire.CodeCapabilityConflict, err.Code)
@@ -76,11 +76,11 @@ func TestConflictUpgradeClaim(t *testing.T) {
 	t.Run("incomparable_overlap", func(t *testing.T) {
 		m := testManager(Config{})
 		a := baseParams("a")
-		a.Capabilities.UpgradeClaim = &wire.UpgradeClaim{HostPattern: "*.example.com", PathPattern: "/ws"}
+		a.Capabilities.UpgradeClaims = []wire.UpgradeClaim{{HostPattern: "*.example.com", PathPattern: "/ws"}}
 		mustRegister(t, m, a)
 
 		b := baseParams("b")
-		b.Capabilities.UpgradeClaim = &wire.UpgradeClaim{HostPattern: "app.example.com", PathPattern: "/ws/*"}
+		b.Capabilities.UpgradeClaims = []wire.UpgradeClaim{{HostPattern: "app.example.com", PathPattern: "/ws/*"}}
 		err := registerErr(t, m, b)
 		require.NotNil(t, err)
 		assert.Equal(t, wire.CodeCapabilityConflict, err.Code)
@@ -89,12 +89,53 @@ func TestConflictUpgradeClaim(t *testing.T) {
 	t.Run("most_specific_wins", func(t *testing.T) {
 		m := testManager(Config{})
 		a := baseParams("a")
-		a.Capabilities.UpgradeClaim = &wire.UpgradeClaim{HostPattern: "*.example.com", PathPattern: "/ws/*"}
+		a.Capabilities.UpgradeClaims = []wire.UpgradeClaim{{HostPattern: "*.example.com", PathPattern: "/ws/*"}}
 		mustRegister(t, m, a)
 
 		b := baseParams("b")
-		b.Capabilities.UpgradeClaim = &wire.UpgradeClaim{HostPattern: "app.example.com", PathPattern: "/ws"}
+		b.Capabilities.UpgradeClaims = []wire.UpgradeClaim{{HostPattern: "app.example.com", PathPattern: "/ws"}}
 		require.Nil(t, registerErr(t, m, b))
+	})
+}
+
+func TestConflictSelfOverlap(t *testing.T) {
+	t.Parallel()
+
+	t.Run("distinct_upgrade_claims_ok", func(t *testing.T) {
+		m := testManager(Config{})
+		a := baseParams("a")
+		a.Capabilities.UpgradeClaims = []wire.UpgradeClaim{
+			{HostPattern: "ctrl.example.com", PathPattern: "/ts2021"},
+			{HostPattern: "ctrl.example.com", PathPattern: "/derp"},
+		}
+		require.Nil(t, registerErr(t, m, a))
+	})
+
+	t.Run("overlapping_upgrade_claims_rejected", func(t *testing.T) {
+		m := testManager(Config{})
+		a := baseParams("a")
+		a.Capabilities.UpgradeClaims = []wire.UpgradeClaim{
+			{HostPattern: "ctrl.example.com", PathPattern: "/ws"},
+			{HostPattern: "ctrl.example.com", PathPattern: "/ws"},
+		}
+		err := registerErr(t, m, a)
+		require.NotNil(t, err)
+		assert.Equal(t, wire.CodeCapabilityConflict, err.Code)
+		assert.Equal(t, "a", err.Data.Adapter)
+		assert.Equal(t, "a", err.Data.ConflictAdapter)
+	})
+
+	t.Run("overlapping_early_claims_rejected", func(t *testing.T) {
+		m := testManager(Config{})
+		a := baseParams("a")
+		a.Capabilities.EarlyClaims = []wire.EarlyClaim{
+			{PortRange: wire.PortRange{Low: 8000, High: 8100}},
+			{PortRange: wire.PortRange{Low: 8050, High: 8200}},
+		}
+		err := registerErr(t, m, a)
+		require.NotNil(t, err)
+		assert.Equal(t, wire.CodeCapabilityConflict, err.Code)
+		assert.Equal(t, "a", err.Data.ConflictAdapter)
 	})
 }
 

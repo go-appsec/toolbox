@@ -65,7 +65,7 @@ func (s *session) handleInvokeAdapter(ctx context.Context, p *wire.InvokeAdapter
 	if !ok {
 		return nil, wire.NewError(wire.CodeUnknownDestAdapter, "invoke_adapter: unknown adapter: "+p.Adapter).
 			WithData(&wire.ErrorData{Adapter: caller.Name})
-	} else if dest.Capabilities.InjectionTarget == nil {
+	} else if len(dest.Capabilities.InjectionTargets) == 0 {
 		return nil, wire.NewError(wire.CodeNoInjectionTarget, "invoke_adapter: adapter has no injection_target: "+p.Adapter).
 			WithData(&wire.ErrorData{Adapter: caller.Name})
 	}

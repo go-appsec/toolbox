@@ -31,26 +31,32 @@ func newBridge(rec *Record, flows FlowSink) *bridge {
 
 func (b *bridge) Name() string { return b.rec.Name }
 
-// ClaimEarly reports whether the early_claim matches the accepted stream.
+// ClaimEarly reports whether any early_claim matches the accepted stream.
 func (b *bridge) ClaimEarly(c *protocol.EarlyClaimCtx) bool {
-	ec := b.rec.Capabilities.EarlyClaim
-	if ec == nil || !b.rec.Healthy() {
+	if !b.rec.Healthy() {
 		return false
 	}
-	// raw accept: gate on local port (TLS re-entry already gated on SNI/host/port)
-	if !c.TLSTerminated && !portInRange(localPort(c.ClientConn), ec.PortRange) {
-		return false
-	}
-	if ec.MagicBytesPrefix != "" {
-		prefix, err := base64.StdEncoding.DecodeString(ec.MagicBytesPrefix)
-		if err != nil || len(prefix) == 0 || !matchPrefix(c, prefix) {
-			return false
+	for i := range b.rec.Capabilities.EarlyClaims {
+		ec := &b.rec.Capabilities.EarlyClaims[i]
+		// raw accept: gate on local port (TLS re-entry already gated on SNI/host/port)
+		if !c.TLSTerminated && !portInRange(localPort(c.ClientConn), ec.PortRange) {
+			continue
 		}
+		if ec.MagicBytesPrefix != "" {
+			prefix, err := base64.StdEncoding.DecodeString(ec.MagicBytesPrefix)
+			if err != nil || len(prefix) == 0 || !matchPrefix(c, prefix) {
+				continue
+			}
+		}
+		if ec.Probe {
+			if b.runProbe(c, ec) {
+				return true
+			}
+			continue
+		}
+		return true
 	}
-	if ec.Probe {
-		return b.runProbe(c)
-	}
-	return true
+	return false
 }
 
 // ServeEarly drives the claimed connection as a byte stream.
@@ -58,32 +64,40 @@ func (b *bridge) ServeEarly(ctx context.Context, c *protocol.EarlyClaimCtx) {
 	b.streams.serveClient(ctx, b.rec, c)
 }
 
-// ClaimTLS gates a TLS connection before termination on SNI and CONNECT target.
+// ClaimTLS reports whether any TLS-terminating early_claim gates this connection
+// before termination on SNI and CONNECT target.
 func (b *bridge) ClaimTLS(sni, host string, port int) bool {
-	ec := b.rec.Capabilities.EarlyClaim
-	if ec == nil || ec.TLS == nil || !ec.TLS.Terminate || !b.rec.Healthy() {
+	if !b.rec.Healthy() {
 		return false
 	}
-	if !portInRange(port, ec.PortRange) {
-		return false
+	for i := range b.rec.Capabilities.EarlyClaims {
+		ec := &b.rec.Capabilities.EarlyClaims[i]
+		if ec.TLS == nil || !ec.TLS.Terminate {
+			continue
+		} else if !portInRange(port, ec.PortRange) {
+			continue
+		} else if ec.TLS.SNIMatch != "" && ec.TLS.SNIMatch != sni {
+			continue
+		} else if ec.HostMatch != "" && ec.HostMatch != host {
+			continue
+		}
+		return true
 	}
-	if ec.TLS.SNIMatch != "" && ec.TLS.SNIMatch != sni {
-		return false
-	}
-	if ec.HostMatch != "" && ec.HostMatch != host {
-		return false
-	}
-	return true
+	return false
 }
 
-// ClaimUpgrade matches the sidecar's upgrade_claim against a parsed HTTP upgrade
-// request or an established CONNECT tunnel.
+// ClaimUpgrade matches any of the sidecar's upgrade_claims against a parsed HTTP
+// upgrade request or an established CONNECT tunnel.
 func (b *bridge) ClaimUpgrade(c *protocol.UpgradeClaimCtx) bool {
-	uc := b.rec.Capabilities.UpgradeClaim
-	if uc == nil || !b.rec.Healthy() {
+	if !b.rec.Healthy() {
 		return false
 	}
-	return matchUpgrade(uc, c)
+	for i := range b.rec.Capabilities.UpgradeClaims {
+		if matchUpgrade(&b.rec.Capabilities.UpgradeClaims[i], c) {
+			return true
+		}
+	}
+	return false
 }
 
 // ServeUpgrade captures the triggering request, synthesizes the upgrade response,
@@ -137,8 +151,7 @@ func (b *bridge) captureUpgrade(c *protocol.UpgradeClaimCtx, resp *types.RawHTTP
 func (b *bridge) shutdown() { b.streams.closeAll() }
 
 // runProbe asks the sidecar whether the buffered opening bytes are its protocol.
-func (b *bridge) runProbe(c *protocol.EarlyClaimCtx) bool {
-	ec := b.rec.Capabilities.EarlyClaim
+func (b *bridge) runProbe(c *protocol.EarlyClaimCtx, ec *wire.EarlyClaim) bool {
 	var host string
 	var port int
 	if c.Target != nil {

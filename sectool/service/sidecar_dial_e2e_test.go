@@ -210,7 +210,7 @@ func hasDialAudit(t *testing.T, h *forwardHarness, adapter string) bool {
 func TestSidecarDialUpstreamForwardE2E(t *testing.T) {
 	ehost, eport := startEchoServer(t, nil)
 	h := startForward(t, "fwd-plain",
-		wire.Capabilities{EarlyClaim: &wire.EarlyClaim{MagicBytesPrefix: magic("FWD")}}, nil,
+		wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{MagicBytesPrefix: magic("FWD")}}}, nil,
 		func(*forwardHandler, wire.StreamOpenParams) (wire.DialUpstreamParams, error) {
 			return wire.DialUpstreamParams{Host: ehost, Port: eport}, nil
 		})
@@ -232,7 +232,7 @@ func TestSidecarDialUpstreamOutOfScope(t *testing.T) {
 	ehost, eport := startEchoServer(t, nil)
 	// Scope policy rejects the upstream host; the sidecar cannot reach it.
 	h := startForward(t, "fwd-scope",
-		wire.Capabilities{EarlyClaim: &wire.EarlyClaim{MagicBytesPrefix: magic("FWD")}},
+		wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{MagicBytesPrefix: magic("FWD")}}},
 		func(host string) (bool, string) { return host != ehost, "host out of scope" },
 		func(*forwardHandler, wire.StreamOpenParams) (wire.DialUpstreamParams, error) {
 			return wire.DialUpstreamParams{Host: ehost, Port: eport}, nil
@@ -268,7 +268,7 @@ func TestSidecarDialUpstreamTLS(t *testing.T) {
 	cert := selfSignedCert(t)
 	ehost, eport := startEchoServer(t, &cert)
 	h := startForward(t, "fwd-tls",
-		wire.Capabilities{EarlyClaim: &wire.EarlyClaim{MagicBytesPrefix: magic("FWD")}}, nil,
+		wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{MagicBytesPrefix: magic("FWD")}}}, nil,
 		func(*forwardHandler, wire.StreamOpenParams) (wire.DialUpstreamParams, error) {
 			return wire.DialUpstreamParams{Host: ehost, Port: eport,
 				TLS: &wire.DialUpstreamTLS{Enabled: true, SNI: "echo.upstream", SkipVerify: true}}, nil
@@ -287,7 +287,7 @@ func TestSidecarDialUpstreamDefaultDest(t *testing.T) {
 	// dial_upstream with only parent_flow_id resolves the destination from the
 	// parent flow the sidecar recorded.
 	h := startForward(t, "fwd-default",
-		wire.Capabilities{EarlyClaim: &wire.EarlyClaim{MagicBytesPrefix: magic("FWD")}}, nil,
+		wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{MagicBytesPrefix: magic("FWD")}}}, nil,
 		func(fh *forwardHandler, _ wire.StreamOpenParams) (wire.DialUpstreamParams, error) {
 			fid, perr := fh.conn.PushFlow(context.Background(), wire.Flow{
 				ProtocolTag: "session/1",

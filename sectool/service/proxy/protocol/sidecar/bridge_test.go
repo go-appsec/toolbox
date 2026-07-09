@@ -32,13 +32,21 @@ func earlyCtx(localPort int, opening []byte) *protocol.EarlyClaimCtx {
 }
 
 func newTestBridge(ec *wire.EarlyClaim, healthy bool) *bridge {
-	rec := &Record{Name: "sc", Capabilities: wire.Capabilities{EarlyClaim: ec}}
+	return newMultiEarlyBridge([]wire.EarlyClaim{*ec}, healthy)
+}
+
+func newMultiEarlyBridge(ecs []wire.EarlyClaim, healthy bool) *bridge {
+	rec := &Record{Name: "sc", Capabilities: wire.Capabilities{EarlyClaims: ecs}}
 	rec.healthy.Store(healthy)
 	return newBridge(rec, nil)
 }
 
 func newUpgradeBridge(uc *wire.UpgradeClaim, healthy bool) *bridge {
-	rec := &Record{Name: "sc", Capabilities: wire.Capabilities{UpgradeClaim: uc}}
+	return newMultiUpgradeBridge([]wire.UpgradeClaim{*uc}, healthy)
+}
+
+func newMultiUpgradeBridge(ucs []wire.UpgradeClaim, healthy bool) *bridge {
+	rec := &Record{Name: "sc", Capabilities: wire.Capabilities{UpgradeClaims: ucs}}
 	rec.healthy.Store(healthy)
 	return newBridge(rec, nil)
 }
@@ -147,6 +155,31 @@ func TestBridgeClaimUpgrade(t *testing.T) {
 		uc := &wire.UpgradeClaim{PathPattern: "/control", UpgradeSignal: "http_101"}
 		b := newUpgradeBridge(uc, false)
 		assert.False(t, b.ClaimUpgrade(upgradeCtx("http_101", "POST", "h", "/control", "x")))
+	})
+}
+
+func TestBridgeMultiClaim(t *testing.T) {
+	t.Parallel()
+
+	t.Run("upgrade_either_claim_matches", func(t *testing.T) {
+		b := newMultiUpgradeBridge([]wire.UpgradeClaim{
+			{HostPattern: "ctrl.example.com", PathPattern: "/ts2021", UpgradeSignal: "http_101"},
+			{HostPattern: "ctrl.example.com", PathPattern: "/derp", UpgradeSignal: "http_101"},
+		}, true)
+		assert.True(t, b.ClaimUpgrade(upgradeCtx("http_101", "GET", "ctrl.example.com", "/ts2021", "x")))
+		assert.True(t, b.ClaimUpgrade(upgradeCtx("http_101", "GET", "ctrl.example.com", "/derp", "x")))
+		assert.False(t, b.ClaimUpgrade(upgradeCtx("http_101", "GET", "ctrl.example.com", "/other", "x")))
+	})
+
+	t.Run("early_either_claim_matches", func(t *testing.T) {
+		b := newMultiEarlyBridge([]wire.EarlyClaim{
+			{PortRange: wire.PortRange{Low: 1883, High: 1883}, MagicBytesPrefix: base64.StdEncoding.EncodeToString([]byte{0x10})},
+			{PortRange: wire.PortRange{Low: 5222, High: 5222}, MagicBytesPrefix: base64.StdEncoding.EncodeToString([]byte("<?xml"))},
+		}, true)
+		assert.True(t, b.ClaimEarly(earlyCtx(1883, []byte{0x10})))
+		assert.True(t, b.ClaimEarly(earlyCtx(5222, []byte("<?xml"))))
+		assert.False(t, b.ClaimEarly(earlyCtx(1883, []byte("<?xml"))))
+		assert.False(t, b.ClaimEarly(earlyCtx(9999, []byte{0x10})))
 	})
 }
 

@@ -8,8 +8,9 @@ import (
 
 // Registration declares the adapter's identity and capabilities for the register handshake.
 type Registration struct {
-	Name         string
-	Protocols    []string
+	Name      string
+	Protocols []string
+	// Capabilities may declare multiple claims of each kind.
 	Capabilities wire.Capabilities
 	MCPTools     []wire.MCPTool
 	InstanceID   string
