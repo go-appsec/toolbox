@@ -28,6 +28,21 @@ const (
 	h2Preface         = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
 )
 
+// h2ConnDesc summarizes a TLS connection for diagnostic logging: remote addr,
+// negotiated ALPN protocol, and SNI server name.
+func h2ConnDesc(c *tls.Conn) string {
+	st := c.ConnectionState()
+	alpn := st.NegotiatedProtocol
+	if alpn == "" {
+		alpn = "<none>"
+	}
+	sni := st.ServerName
+	if sni == "" {
+		sni = "<none>"
+	}
+	return "remote=" + c.RemoteAddr().String() + " alpn=" + alpn + " sni=" + sni
+}
+
 // h2WorkKind discriminates write-pump work items.
 type h2WorkKind int
 
@@ -241,14 +256,16 @@ func (h *http2Handler) Handle(ctx context.Context, clientConn, upstreamConn *tls
 
 	// Read and validate client preface
 	preface := make([]byte, len(h2Preface))
-	if _, err := io.ReadFull(clientConn, preface); err != nil {
+	if n, err := io.ReadFull(clientConn, preface); err != nil {
 		if !isConnClosedErr(err) {
-			log.Printf("h2: failed to read client preface: %v", err)
+			log.Printf("h2: failed to read client preface (%s): read %d/%d bytes %q: %v",
+				h2ConnDesc(clientConn), n, len(preface), preface[:n], err)
 		}
 		return
 	}
 	if string(preface) != h2Preface {
-		log.Printf("h2: invalid client preface")
+		log.Printf("h2: invalid client preface (%s): got %q want %q",
+			h2ConnDesc(clientConn), preface, h2Preface)
 		return
 	}
 
