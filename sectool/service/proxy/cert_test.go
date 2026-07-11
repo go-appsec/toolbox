@@ -589,8 +589,8 @@ func TestCACert(t *testing.T) {
 
 	assert.True(t, caCert.IsCA)
 	assert.NotEqual(t, x509.KeyUsage(0), caCert.KeyUsage&x509.KeyUsageCertSign)
-	assert.Equal(t, "sectool CA", caCert.Subject.CommonName)
-	assert.Contains(t, caCert.Subject.Organization, "sectool")
+	assert.Equal(t, "go-appsec sectool CA", caCert.Subject.CommonName)
+	assert.Contains(t, caCert.Subject.Organization, "go-appsec toolbox")
 
 	// Verify validity window
 	now := time.Now()

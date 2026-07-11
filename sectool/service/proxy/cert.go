@@ -223,8 +223,8 @@ func (m *CertManager) loadOrGenerateCA(configDir string) error {
 		template := &x509.Certificate{
 			SerialNumber: serialNumber,
 			Subject: pkix.Name{
-				Organization: []string{"sectool"},
-				CommonName:   "sectool CA",
+				Organization: []string{"go-appsec toolbox"},
+				CommonName:   "go-appsec sectool CA",
 			},
 			NotBefore:             now.Add(-time.Hour), // clock skew tolerance
 			NotAfter:              now.AddDate(10, 0, 0),
