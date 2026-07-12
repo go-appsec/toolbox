@@ -1,7 +1,9 @@
 package wire
 
 import (
+	"bytes"
 	"encoding/json"
+	"slices"
 	"time"
 )
 
@@ -185,6 +187,16 @@ type FlowMessage struct {
 	BodyCodec *BodyCodec `json:"body_codec,omitempty"`
 }
 
+// Clone returns a copy whose Headers, Body, and BodyRaw can be mutated without
+// touching the source. BodyCodec is immutable and shared.
+func (m *FlowMessage) Clone() *FlowMessage {
+	out := *m
+	out.Headers = slices.Clone(m.Headers)
+	out.Body = bytes.Clone(m.Body)
+	out.BodyRaw = bytes.Clone(m.BodyRaw)
+	return &out
+}
+
 // Flow is a captured exchange a sidecar publishes via push_flow.
 type Flow struct {
 	// FlowID is empty on first emission (sectool assigns) and set to re-target an
@@ -246,8 +258,7 @@ type StreamWrite struct {
 	Data     []byte `json:"data"`
 }
 
-// StreamResult replies to stream_open and stream_deliver with optional bytes to
-// write back to one or more sockets.
+// StreamResult replies to stream_open and stream_deliver with optional bytes to write back to one or more sockets.
 type StreamResult struct {
 	Writes []StreamWrite `json:"writes,omitempty"`
 }
@@ -275,8 +286,7 @@ type StreamWriteParams struct {
 }
 
 // StreamEndedParams signals a stream close in either direction: sectool's
-// stream_ended notification to the sidecar, and the sidecar's proactive
-// close_stream.
+// stream_ended notification to the sidecar, and the sidecar's proactive close_stream.
 type StreamEndedParams struct {
 	StreamID string `json:"stream_id"`
 	Reason   string `json:"reason,omitempty"`
@@ -292,8 +302,7 @@ type ClaimProbeParams struct {
 	Data     []byte `json:"data,omitempty"`
 }
 
-// ClaimProbeResult is the sidecar's claim decision. A false claim is normal
-// control flow, not an error.
+// ClaimProbeResult is the sidecar's claim decision. A false claim is normal control flow, not an error.
 type ClaimProbeResult struct {
 	Claim bool `json:"claim"`
 }
