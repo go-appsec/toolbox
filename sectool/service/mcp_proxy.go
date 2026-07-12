@@ -695,7 +695,7 @@ func (m *mcpServer) handleProxyRuleDelete(ctx context.Context, req mcp.CallToolR
 	}
 
 	log.Printf("proxy/rule_delete: deleted rule %s", ruleID)
-	return jsonResult(RuleDeleteResponse{})
+	return jsonResult(protocol.RuleDeleteResponse{})
 }
 
 // flowEntry holds parsed metadata for a proxy or replay history entry.

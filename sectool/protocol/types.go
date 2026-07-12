@@ -201,6 +201,9 @@ type OastSession struct {
 	CreatedAt      string `json:"created_at"`
 }
 
+// OastDeleteResponse is the response for oast_delete.
+type OastDeleteResponse struct{}
+
 // =============================================================================
 // Rule Types
 // =============================================================================
@@ -210,9 +213,8 @@ type RuleListResponse struct {
 	Rules []RuleEntry `json:"rules"`
 }
 
-// RuleEntry represents a find/replace rule. Adapter scopes the rule: empty applies
-// everywhere, "sectool" scopes it to the in-process proxy, any other value names a
-// sidecar adapter.
+// RuleEntry represents a find/replace rule. Adapter scopes the rule: empty applies everywhere,
+// "sectool" scopes it to the in-process proxy, any other value names a sidecar adapter.
 type RuleEntry struct {
 	RuleID  string `json:"rule_id"`
 	Type    string `json:"type"`
@@ -222,6 +224,9 @@ type RuleEntry struct {
 	Replace string `json:"replace,omitempty"`
 	Adapter string `json:"adapter,omitempty"`
 }
+
+// RuleDeleteResponse is the response for proxy_rule_delete.
+type RuleDeleteResponse struct{}
 
 // =============================================================================
 // Responder Types
@@ -370,6 +375,11 @@ type CrawlSession struct {
 	Label     string `json:"label,omitempty"`
 	State     string `json:"state"`
 	CreatedAt string `json:"created_at"`
+}
+
+// CrawlStopResponse is the response for crawl_stop.
+type CrawlStopResponse struct {
+	Stopped bool `json:"stopped"`
 }
 
 // =============================================================================

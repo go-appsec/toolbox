@@ -245,7 +245,7 @@ func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
 	})
 	require.False(t, stopResult.IsError,
 		"crawl_stop failed: %s", ExtractMCPText(t, stopResult))
-	var stopResp CrawlStopResponse
+	var stopResp protocol.CrawlStopResponse
 	require.NoError(t, json.Unmarshal([]byte(ExtractMCPText(t, stopResult)), &stopResp))
 	assert.True(t, stopResp.Stopped)
 }

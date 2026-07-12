@@ -38,10 +38,6 @@ func IsTimeoutError(err error) bool {
 	return false
 }
 
-// =============================================================================
-// Proxy Types
-// =============================================================================
-
 // ProxyListRequest contains filters for proxy list queries.
 type ProxyListRequest struct {
 	Host         string `json:"host,omitempty"`
@@ -68,23 +64,4 @@ func (r *ProxyListRequest) HasFilters() bool {
 		r.ExcludeHost != "" || r.ExcludePath != "" || r.Adapter != "" ||
 		r.ProtocolTag != "" || r.ParentFlowID != "" || r.Limit > 0 ||
 		r.Source != ""
-}
-
-// RuleDeleteResponse is the response for proxy_rule_delete.
-type RuleDeleteResponse struct{}
-
-// =============================================================================
-// OAST Types
-// =============================================================================
-
-// OastDeleteResponse is the response for oast_delete.
-type OastDeleteResponse struct{}
-
-// =============================================================================
-// Crawler Types
-// =============================================================================
-
-// CrawlStopResponse is the response for crawl_stop.
-type CrawlStopResponse struct {
-	Stopped bool `json:"stopped"`
 }

@@ -421,5 +421,5 @@ func (m *mcpServer) handleOastDelete(ctx context.Context, req mcp.CallToolReques
 	}
 
 	log.Printf("oast/delete: deleted session %s", oastID)
-	return jsonResult(OastDeleteResponse{})
+	return jsonResult(protocol.OastDeleteResponse{})
 }

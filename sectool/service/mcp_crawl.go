@@ -460,5 +460,5 @@ func (m *mcpServer) handleCrawlStop(ctx context.Context, req mcp.CallToolRequest
 	}
 
 	log.Printf("crawl/stop: stopped session %s", sessionID)
-	return jsonResult(CrawlStopResponse{Stopped: true})
+	return jsonResult(protocol.CrawlStopResponse{Stopped: true})
 }
