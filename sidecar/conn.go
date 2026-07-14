@@ -58,15 +58,22 @@ func Dial(ctx context.Context, addr string, reg Registration) (*Conn, error) {
 	return c, nil
 }
 
-// Serve installs the inbound handler and blocks until ctx is cancelled or the connection closes
-// (e.g. after sectool shutdown). Returns ctx.Err() on cancellation, nil on a clean remote close.
-func (c *Conn) Serve(ctx context.Context, h Handler) error {
+// SetHandler installs the inbound handler synchronously. Serve calls this before it blocks;
+// call it directly when the handler must be active before Serve starts. A nil handler installs
+// the no-op BaseHandler.
+func (c *Conn) SetHandler(h Handler) {
 	if h == nil {
 		h = BaseHandler{}
 	}
 	c.mu.Lock()
 	c.handler = h
 	c.mu.Unlock()
+}
+
+// Serve installs the inbound handler and blocks until ctx is cancelled or the connection closes
+// (e.g. after sectool shutdown). Returns ctx.Err() on cancellation, nil on a clean remote close.
+func (c *Conn) Serve(ctx context.Context, h Handler) error {
+	c.SetHandler(h)
 
 	select {
 	case <-ctx.Done():

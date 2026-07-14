@@ -81,7 +81,7 @@ func TestSidecarSendDispatch(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = conn.Close() })
 		srv := <-peerCh
-		go func() { _ = conn.Serve(t.Context(), sendFixture{}) }()
+		conn.SetHandler(sendFixture{})
 
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		t.Cleanup(cancel)
@@ -96,7 +96,7 @@ func TestSidecarSendDispatch(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = conn.Close() })
 		srv := <-peerCh
-		go func() { _ = conn.Serve(t.Context(), nil) }()
+		conn.SetHandler(nil)
 
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		t.Cleanup(cancel)

@@ -134,7 +134,7 @@ func TestConnInvokeTool(t *testing.T) {
 		srv := <-peerCh
 
 		h := &toolTestHandler{}
-		go func() { _ = conn.Serve(t.Context(), h) }()
+		conn.SetHandler(h)
 
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		t.Cleanup(cancel)
@@ -156,7 +156,7 @@ func TestConnInvokeTool(t *testing.T) {
 		srv := <-peerCh
 
 		// shutdownHandler embeds BaseHandler, whose OnInvokeTool default errors.
-		go func() { _ = conn.Serve(t.Context(), shutdownHandler{}) }()
+		conn.SetHandler(shutdownHandler{})
 
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		t.Cleanup(cancel)
