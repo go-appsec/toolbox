@@ -23,6 +23,10 @@ import (
 
 const (
 	caCertFile = "ca.pem" // CA certificate filename in config directory
+
+	// gracefulShutdownTimeout bounds how long shutdown lets in-flight
+	// connections drain before force-closing them
+	gracefulShutdownTimeout = 4 * time.Second
 )
 
 // Server is the sectool MCP server.
@@ -200,13 +204,16 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) shutdown() error {
+	ctx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
+	defer cancel()
+
 	var wg sync.WaitGroup
-	closeAsync := func(name string, fn func() error) {
+	closeAsync := func(name string, fn func(context.Context) error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
-			if err := fn(); err != nil {
+			if err := fn(ctx); err != nil {
 				log.Printf("warning: failed to close %s: %v", name, err)
 			}
 		}()
@@ -218,7 +225,19 @@ func (s *Server) shutdown() error {
 	closeAsync("ReplayHistoryStore", s.replayHistoryStore.Close)
 	closeAsync("NoteStore", s.noteStore.Close)
 
-	wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	// Backstop past the graceful deadline: returns even if a Close ignores ctx,
+	// leaving room for backends to complete their own force-close at the deadline
+	select {
+	case <-done:
+	case <-time.After(gracefulShutdownTimeout + time.Second):
+		log.Printf("warning: shutdown did not complete within %s; forcing exit", gracefulShutdownTimeout+time.Second)
+	}
 
 	_ = os.RemoveAll(s.storageTempDir)
 
@@ -430,7 +449,7 @@ func (s *Server) startBuiltinProxy() error {
 			DialTimeout:       timeouts.DialTimeout,
 			NativeHTTPSend:    s.OriginateNative,
 		}, s, s.replayHistoryStore); err != nil {
-			_ = backend.Close()
+			_ = backend.Close(context.Background())
 			return fmt.Errorf("enable sidecars: %w", err)
 		}
 	}

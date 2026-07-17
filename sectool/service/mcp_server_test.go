@@ -219,7 +219,7 @@ func newMockHttpBackend() *mockHttpBackend {
 	return &mockHttpBackend{}
 }
 
-func (b *mockHttpBackend) Close() error { return nil }
+func (b *mockHttpBackend) Close(_ context.Context) error { return nil }
 
 func (b *mockHttpBackend) Sidecars() SidecarRegistry { return nil }
 
@@ -612,7 +612,7 @@ func (b *mockOastBackend) DeleteSession(ctx context.Context, idOrDomain string) 
 	return nil
 }
 
-func (b *mockOastBackend) Close() error {
+func (b *mockOastBackend) Close(_ context.Context) error {
 	b.sessions = make(map[string]*OastSessionInfo)
 	b.byLabel = make(map[string]string)
 	b.events = make(map[string][]OastEventInfo)
@@ -805,7 +805,7 @@ func (b *mockCrawlerBackend) ListSessions(ctx context.Context, limit int) ([]Cra
 	return sessions, nil
 }
 
-func (b *mockCrawlerBackend) Close() error {
+func (b *mockCrawlerBackend) Close(_ context.Context) error {
 	b.sessions = make(map[string]*CrawlSessionInfo)
 	b.byLabel = make(map[string]string)
 	b.status = make(map[string]*CrawlStatus)

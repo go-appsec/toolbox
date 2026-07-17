@@ -57,15 +57,25 @@ func (l *Listener) Serve() error {
 	}
 }
 
-// Close stops accepting, shuts the registered sidecars down, and releases the
-// socket.
-func (l *Listener) Close() error {
+// Close stops accepting, shuts the registered sidecars down bounded by ctx, and
+// releases the socket.
+func (l *Listener) Close(ctx context.Context) error {
 	if l.closed.Swap(true) {
 		return nil
 	}
 	l.cancel()
 	err := l.ln.Close()
-	l.mgr.Shutdown(context.Background())
-	l.wg.Wait()
+	l.mgr.Shutdown(ctx)
+
+	done := make(chan struct{})
+	go func() {
+		l.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		// Deadline hit: stop waiting on lingering sidecar connections
+	}
 	return err
 }

@@ -72,13 +72,13 @@ func createBackend(t *testing.T, backendType httpBackendType) (service.HttpBacke
 		burpClient := connectBurpOrSkip(t)
 		backend, err := service.NewBurpBackend(burpClient, store.MemProvider)
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = backend.Close() })
+		t.Cleanup(func() { _ = backend.Close(context.Background()) })
 		return backend, config.DefaultBurpProxyAddr
 
 	case backendNative:
 		backend, err := service.NewNativeProxyBackend(0, t.TempDir(), 0, store.MemProvider, proxy.TimeoutConfig{})
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = backend.Close() })
+		t.Cleanup(func() { _ = backend.Close(context.Background()) })
 		go func() { _ = backend.Serve() }()
 		require.NoError(t, backend.WaitReady(t.Context()))
 		return backend, backend.Addr()
@@ -759,7 +759,7 @@ func TestIntegration_ReplayQueryModsVerified(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 	// Start proxy server in background
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -1029,7 +1029,7 @@ func TestIntegration_HTTPSProxy(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -1753,7 +1753,7 @@ func TestIntegration_HTTP2Proxy(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -1898,7 +1898,7 @@ func TestIntegration_HTTP2Rules(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -2085,7 +2085,7 @@ func TestIntegration_WebSocketProxy(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -2226,7 +2226,7 @@ func TestIntegration_ForceFlag(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -2337,7 +2337,7 @@ func TestIntegration_MalformedRequests(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -2565,7 +2565,7 @@ func TestIntegration_ContentLengthMismatch(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -2790,7 +2790,7 @@ func TestIntegration_ConnectionErrors(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -2843,7 +2843,7 @@ func TestIntegration_TimeoutHandling(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -3112,7 +3112,7 @@ func TestIntegration_WebSocketRules(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -3521,7 +3521,7 @@ func TestIntegration_SecureWebSocket(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -3636,7 +3636,7 @@ func TestIntegration_HTTP2Replay(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -3798,7 +3798,7 @@ func TestIntegration_WebSocketBinaryFrames(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -3919,7 +3919,7 @@ func TestIntegration_WebSocketPingPong(t *testing.T) {
 	configDir := t.TempDir()
 	backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))
@@ -4053,7 +4053,7 @@ func TestIntegration_CompressedRequestBodyRule(t *testing.T) {
 		configDir := t.TempDir()
 		backend, err := service.NewNativeProxyBackend(0, configDir, 0, store.MemProvider, proxy.TimeoutConfig{})
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = backend.Close() })
+		t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 		go func() { _ = backend.Serve() }()
 		require.NoError(t, backend.WaitReady(t.Context()))

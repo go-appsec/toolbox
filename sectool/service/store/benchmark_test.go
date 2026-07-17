@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -90,7 +91,7 @@ func BenchmarkReplayHistoryStore_AddGetRemove(b *testing.B) {
 			b.Cleanup(func() { _ = storage.Close() })
 
 			store := NewReplayHistoryStore(storage)
-			b.Cleanup(func() { _ = store.Close() })
+			b.Cleanup(func() { _ = store.Close(context.Background()) })
 			rawRequest := []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
 			respHeaders := []byte("HTTP/1.1 200 OK\r\n\r\n")
 
@@ -128,7 +129,7 @@ func BenchmarkReplayHistoryStore_List(b *testing.B) {
 			b.Cleanup(func() { _ = storage.Close() })
 
 			store := NewReplayHistoryStore(storage)
-			b.Cleanup(func() { _ = store.Close() })
+			b.Cleanup(func() { _ = store.Close(context.Background()) })
 
 			// Prepare records
 			respHeaders := []byte("HTTP/1.1 200 OK\r\n\r\n")

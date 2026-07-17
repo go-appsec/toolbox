@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"log"
 	"slices"
 	"strings"
@@ -289,7 +290,7 @@ func (s *NoteStore) Count() int {
 	return s.count
 }
 
-func (s *NoteStore) Close() error {
+func (s *NoteStore) Close(_ context.Context) error {
 	return s.storage.Close()
 }
 

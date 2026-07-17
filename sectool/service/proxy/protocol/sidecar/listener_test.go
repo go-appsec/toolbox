@@ -45,7 +45,7 @@ func TestListenerUnix(t *testing.T) {
 	require.Nil(t, p.Call(ctx, wire.MethodRegister, baseParams("demo"), &res))
 	assert.Eventually(t, func() bool { return m.Count() == 1 }, 2*time.Second, 10*time.Millisecond)
 
-	require.NoError(t, ln.Close())
+	require.NoError(t, ln.Close(context.Background()))
 	_, statErr := os.Stat(socket)
 	assert.True(t, os.IsNotExist(statErr))
 }

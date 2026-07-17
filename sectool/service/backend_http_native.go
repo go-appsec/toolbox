@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/ids"
@@ -113,15 +112,15 @@ func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, storage
 	}
 
 	if b.httpRules, err = b.loadRuleList(ruleKeyHTTP); err != nil {
-		_ = b.Close()
+		_ = b.Close(context.Background())
 		return nil, fmt.Errorf("load HTTP rules: %w", err)
 	} else if b.wsRules, err = b.loadRuleList(ruleKeyWS); err != nil {
-		_ = b.Close()
+		_ = b.Close(context.Background())
 		return nil, fmt.Errorf("load WebSocket rules: %w", err)
 	}
 
 	if b.responders, err = b.loadResponders(); err != nil {
-		_ = b.Close()
+		_ = b.Close(context.Background())
 		return nil, fmt.Errorf("load responders: %w", err)
 	}
 
@@ -220,22 +219,17 @@ func (b *NativeProxyBackend) saveRules(key string, rules []nativeStoredRule) err
 	return b.ruleStorage.Set(key, data)
 }
 
-func (b *NativeProxyBackend) Close() error {
+func (b *NativeProxyBackend) Close(ctx context.Context) error {
 	if b.closed.Swap(true) {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	errs := []error{
-		b.server.Shutdown(ctx),
-		b.ruleStorage.Close(),
-		b.responderStorage.Close(),
-	}
+	// Drain proxy before closing the listener so in-flight flows can reach their sidecar adapter
+	errs := []error{b.server.Shutdown(ctx)}
 	if b.sidecarListener != nil {
-		errs = append(errs, b.sidecarListener.Close())
+		errs = append(errs, b.sidecarListener.Close(ctx))
 	}
+	errs = append(errs, b.ruleStorage.Close(), b.responderStorage.Close())
 	return errors.Join(errs...)
 }
 

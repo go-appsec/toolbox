@@ -21,8 +21,6 @@ import (
 const (
 	// interactshPollInterval is how often the interactsh client polls the server.
 	interactshPollInterval = 4 * time.Second
-	// clientCloseTimeout is how long to wait when closing clients.
-	clientCloseTimeout = 10 * time.Second
 	// clientCleanupInterval is how often to check for idle clients with no active sessions.
 	clientCleanupInterval = 120 * time.Second
 )
@@ -545,7 +543,7 @@ func (b *InteractshBackend) deleteSession(sess *oastSession) error {
 	return nil
 }
 
-func (b *InteractshBackend) Close() error {
+func (b *InteractshBackend) Close(ctx context.Context) error {
 	b.initMu.Lock()
 	defer b.initMu.Unlock()
 
@@ -589,7 +587,7 @@ func (b *InteractshBackend) Close() error {
 	go func() { wg.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(clientCloseTimeout):
+	case <-ctx.Done():
 		log.Printf("oast: timeout closing clients")
 	}
 

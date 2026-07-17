@@ -171,10 +171,8 @@ func (m *mcpServer) Addr() string {
 	return ""
 }
 
-func (m *mcpServer) Close() error {
+func (m *mcpServer) Close(ctx context.Context) error {
 	var errs []error
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	// Close HTTP server - use short timeout then force close.
 	// Streaming connections (SSE, MCP) never become idle, so Shutdown blocks.

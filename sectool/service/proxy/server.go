@@ -262,18 +262,21 @@ func (s *ProxyServer) Shutdown(ctx context.Context) error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil // already closed
 	}
+	defer s.cancel()
 
-	// Stop accepting new connections
+	// Stop accepting new connections; Accept returns via s.closed
 	_ = s.listener.Close()
 
-	// Signal handlers to finish
-	s.cancel()
+	// A context without a deadline has no drain window, so cancel handlers now to guarantee Shutdown returns
+	if _, ok := ctx.Deadline(); !ok {
+		s.cancel()
+	}
 
 	if s.serveStarted.CompareAndSwap(false, true) {
 		s.wg.Done()
 	}
 
-	// Wait for in-flight connections with timeout
+	// Drain in-flight connections until ctx fires, then force-close
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
@@ -282,16 +285,17 @@ func (s *ProxyServer) Shutdown(ctx context.Context) error {
 
 	select {
 	case <-done:
-		// All connections finished
+		// All connections finished gracefully before the deadline
 	case <-ctx.Done():
-		// Timeout - force-close all active connections
+		// Deadline hit: cancel handlers, then force-close active conns
+		s.cancel()
 		s.activeConns.Range(func(key, _ any) bool {
 			if conn, ok := key.(net.Conn); ok {
 				_ = conn.Close()
 			}
 			return true
 		})
-		<-done // wait for goroutines to exit after connections closed
+		<-done // wait for goroutines to exit after cancel + close
 	}
 
 	s.history.Close()

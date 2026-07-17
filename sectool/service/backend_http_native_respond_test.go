@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,7 +18,7 @@ func TestNativeProxyBackend_AddResponder(t *testing.T) {
 
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	entry, err := backend.AddResponder(t.Context(), protocol.ResponderEntry{
 		Origin:     "https://example.com",
@@ -42,7 +43,7 @@ func TestNativeProxyBackend_AddResponder_DefaultStatus(t *testing.T) {
 
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	entry, err := backend.AddResponder(t.Context(), protocol.ResponderEntry{
 		Origin: "https://example.com",
@@ -57,7 +58,7 @@ func TestNativeProxyBackend_DeleteResponder(t *testing.T) {
 
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	entry, err := backend.AddResponder(t.Context(), protocol.ResponderEntry{
 		Origin: "https://example.com",
@@ -91,7 +92,7 @@ func TestNativeProxyBackend_ListResponders(t *testing.T) {
 
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	// Empty list
 	list, err := backend.ListResponders(t.Context())
@@ -121,7 +122,7 @@ func TestNativeProxyBackend_InterceptRequest(t *testing.T) {
 
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	_, err = backend.AddResponder(t.Context(), protocol.ResponderEntry{
 		Origin:     "https://example.com",
@@ -178,7 +179,7 @@ func TestNativeProxyBackend_InterceptRequest_AllMethods(t *testing.T) {
 
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	// Empty method matches all
 	_, err = backend.AddResponder(t.Context(), protocol.ResponderEntry{
@@ -211,12 +212,12 @@ func TestNativeProxyBackend_Responder_Persistence(t *testing.T) {
 		Label:      "persisted",
 	})
 	require.NoError(t, err)
-	_ = backend1.Close()
+	_ = backend1.Close(context.Background())
 
 	// New backend over the same responder storage should load persisted responders.
 	backend2, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, provider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend2.Close() })
+	t.Cleanup(func() { _ = backend2.Close(context.Background()) })
 
 	list, err := backend2.ListResponders(t.Context())
 	require.NoError(t, err)
@@ -235,7 +236,7 @@ func TestNativeProxyBackend_Responder_LabelUniqueness(t *testing.T) {
 
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	_, err = backend.AddResponder(t.Context(), protocol.ResponderEntry{
 		Origin: "https://example.com",

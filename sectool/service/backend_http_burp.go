@@ -57,7 +57,7 @@ func ConnectBurpBackend(ctx context.Context, url string, storage store.Provider,
 		return nil, err
 	}
 	if err := backend.Connect(ctx); err != nil {
-		_ = backend.Close()
+		_ = backend.Close(ctx)
 		return nil, err
 	}
 	return backend, nil
@@ -313,7 +313,7 @@ func (b *BurpBackend) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (b *BurpBackend) Close() error {
+func (b *BurpBackend) Close(_ context.Context) error {
 	return errors.Join(b.client.Close(), b.idxStorage.Close())
 }
 

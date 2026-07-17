@@ -2,6 +2,7 @@ package store
 
 import (
 	"cmp"
+	"context"
 	"log"
 	"slices"
 	"strings"
@@ -303,6 +304,6 @@ func (s *ReplayHistoryStore) Delete(flowIDs []string) int {
 	return deleted
 }
 
-func (s *ReplayHistoryStore) Close() error {
+func (s *ReplayHistoryStore) Close(_ context.Context) error {
 	return s.storage.Close()
 }

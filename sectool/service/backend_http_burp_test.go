@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -340,7 +341,7 @@ func newTestBurpBackend(t *testing.T) (*BurpBackend, *TestMCPServer) {
 	require.NoError(t, client.Connect(t.Context()))
 	backend, err := NewBurpBackend(client, store.MemProvider)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 	return backend, mockServer
 }
 

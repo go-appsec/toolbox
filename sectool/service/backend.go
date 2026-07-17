@@ -32,8 +32,8 @@ func isWSType(t string) bool {
 // HttpBackend defines the interface for proxy history and request sending.
 // This abstraction allows switching between the built-in proxy and Burp MCP.
 type HttpBackend interface {
-	// Close shuts down the HttpBackend.
-	Close() error
+	// Close shuts down the HttpBackend, bounded by ctx.
+	Close(ctx context.Context) error
 
 	// GetProxyHistory retrieves proxy HTTP history entries oldest-first.
 	// afterFlowID == "" starts from the beginning.
@@ -212,8 +212,8 @@ type OastBackend interface {
 	DeleteSession(ctx context.Context, idOrDomain string) error
 
 	// Close cleans up all sessions (called on service shutdown).
-	// Should attempt deregistration with a short timeout.
-	Close() error
+	// Should attempt deregistration bounded by ctx.
+	Close(ctx context.Context) error
 }
 
 // OastSessionInfo represents an active OAST session (internal domain type).
@@ -278,8 +278,8 @@ type CrawlerBackend interface {
 	// limit=0 means no limit.
 	ListSessions(ctx context.Context, limit int) ([]CrawlSessionInfo, error)
 
-	// Close cleans up all sessions (called on service shutdown).
-	Close() error
+	// Close cleans up all sessions (called on service shutdown), bounded by ctx.
+	Close(ctx context.Context) error
 }
 
 // CrawlOptions contains parameters for creating a crawl session.

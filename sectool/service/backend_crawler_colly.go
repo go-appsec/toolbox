@@ -902,7 +902,7 @@ func (b *CollyBackend) ListSessions(ctx context.Context, limit int) ([]CrawlSess
 	return sessions, nil
 }
 
-func (b *CollyBackend) Close() error {
+func (b *CollyBackend) Close(_ context.Context) error {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()

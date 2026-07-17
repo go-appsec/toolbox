@@ -22,7 +22,7 @@ func TestInteractshBackend_EnsureClientForRedirectTarget(t *testing.T) {
 	t.Parallel()
 
 	backend := NewInteractshBackend("", "")
-	t.Cleanup(func() { _ = backend.Close() })
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	t.Cleanup(cancel)
@@ -57,7 +57,7 @@ func TestInteractshBackend_EnsureClientForRedirectTarget(t *testing.T) {
 
 	t.Run("closed_backend_returns_error", func(t *testing.T) {
 		b := NewInteractshBackend("", "")
-		require.NoError(t, b.Close())
+		require.NoError(t, b.Close(context.Background()))
 
 		_, err := b.ensureClientForRedirectTarget(ctx, "")
 		require.Error(t, err)
@@ -73,7 +73,7 @@ func TestInteractshBackend_ProbeRedirectSupport(t *testing.T) {
 
 	t.Run("oast_pro_unsupported", func(t *testing.T) {
 		backend := NewInteractshBackend("https://oast.pro", "")
-		t.Cleanup(func() { _ = backend.Close() })
+		t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		t.Cleanup(cancel)
@@ -84,7 +84,7 @@ func TestInteractshBackend_ProbeRedirectSupport(t *testing.T) {
 
 	t.Run("oastsrv_supported", func(t *testing.T) {
 		backend := NewInteractshBackend("https://alpha.oastsrv.net", "")
-		t.Cleanup(func() { _ = backend.Close() })
+		t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		t.Cleanup(cancel)
@@ -110,7 +110,7 @@ func TestNativeProxyIntegrationTest(t *testing.T) {
 		backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024,
 			store.MemProvider, proxy.TimeoutConfig{})
 		require.NoError(t, err)
-		t.Cleanup(func() { _ = backend.Close() })
+		t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 		go func() { _ = backend.Serve() }()
 

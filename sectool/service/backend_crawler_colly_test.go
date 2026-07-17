@@ -324,7 +324,7 @@ func newTestCollySession(t *testing.T, flows []*CrawlFlow) (*CollyBackend, strin
 
 	cfg := config.DefaultConfig()
 	b := NewCollyBackend(cfg, nil, nil)
-	t.Cleanup(func() { _ = b.Close() })
+	t.Cleanup(func() { _ = b.Close(context.Background()) })
 
 	ctx, cancel := context.WithCancel(t.Context())
 	sessionID := "test-session"
@@ -385,7 +385,7 @@ func TestCollyBackendResolveSeedsScheme(t *testing.T) {
 			flowID := mockHTTP.AddProxyEntryScheme(tt.request, "HTTP/1.1 200 OK\r\n\r\n", tt.scheme, tt.port)
 
 			b := NewCollyBackend(config.DefaultConfig(), nil, mockHTTP)
-			t.Cleanup(func() { _ = b.Close() })
+			t.Cleanup(func() { _ = b.Close(context.Background()) })
 
 			_, seedURLs, _, err := b.resolveSeeds(t.Context(), []CrawlSeed{{FlowID: flowID}}, nil)
 			require.NoError(t, err)
@@ -583,7 +583,7 @@ func TestCollyBackend_CreateSession_follows_links(t *testing.T) {
 	cfg.Crawler.Parallelism = 4
 
 	b := NewCollyBackend(cfg, nil, nil)
-	t.Cleanup(func() { _ = b.Close() })
+	t.Cleanup(func() { _ = b.Close(context.Background()) })
 
 	ctx := t.Context()
 
@@ -652,7 +652,7 @@ func TestCollyBackend_capturesErrorStatusFlows(t *testing.T) {
 	cfg.Crawler.Parallelism = 4
 
 	b := NewCollyBackend(cfg, nil, nil)
-	t.Cleanup(func() { _ = b.Close() })
+	t.Cleanup(func() { _ = b.Close(context.Background()) })
 
 	ctx := t.Context()
 
@@ -710,7 +710,7 @@ func TestCollyBackend_addSeeds_completionRace(t *testing.T) {
 	cfg.Crawler.Parallelism = 4
 
 	b := NewCollyBackend(cfg, nil, nil)
-	t.Cleanup(func() { _ = b.Close() })
+	t.Cleanup(func() { _ = b.Close(context.Background()) })
 
 	ctx := t.Context()
 
