@@ -254,7 +254,7 @@ func (h *connectHandler) handleTLS(ctx context.Context, clientConn net.Conn, cli
 			_ = clientTLS.Close()
 			return
 		}
-		h.routeByProtocol(ctx, clientTLS, upstreamConn, negotiatedProto, target)
+		h.routeByClientProto(ctx, clientTLS, upstreamConn, negotiatedProto, targetAddr, sni, target)
 		return
 	}
 
@@ -265,6 +265,27 @@ func (h *connectHandler) handleTLS(ctx context.Context, clientConn net.Conn, cli
 	}
 
 	// Route based on negotiated protocol
+	h.routeByClientProto(ctx, clientTLS, upstreamConn, negotiatedProto, targetAddr, sni, target)
+}
+
+// routeByClientProto re-dials upstream to match the client's negotiated ALPN when it
+// diverges from the upstream negotiation, then routes the decrypted stream.
+func (h *connectHandler) routeByClientProto(ctx context.Context, clientTLS *tls.Conn, upstreamConn net.Conn, negotiatedProto, targetAddr, sni string, target *types.Target) {
+	clientProto := clientTLS.ConnectionState().NegotiatedProtocol
+	if negotiatedProto == alpnH2 && clientProto != alpnH2 {
+		// upstream/cache said h2 but the client offered no h2 (e.g. no ALPN); re-dial
+		// upstream without forcing h2 so both sides speak HTTP/1.1, bypassing the cache
+		newUp, err := h.dialUpstream(ctx, targetAddr, sni, nil)
+		if err != nil {
+			log.Printf("proxy: upstream re-dial for client proto %q failed: %v", clientProto, err)
+			_ = clientTLS.Close()
+			_ = upstreamConn.Close()
+			return
+		}
+		_ = upstreamConn.Close()
+		upstreamConn = newUp
+		negotiatedProto = clientProto // "" routes to the http1 fallthrough adapter
+	}
 	h.routeByProtocol(ctx, clientTLS, upstreamConn, negotiatedProto, target)
 }
 

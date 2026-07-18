@@ -232,7 +232,8 @@ Global config at `~/.sectool/config.json` (auto-created with defaults):
     "dial_timeout_secs": 20,
     "read_timeout_secs": 240,
     "write_timeout_secs": 60,
-    "exclude_extensions": "<RE2 alternation, see DefaultExcludeExtensions>"
+    "exclude_extensions": "<RE2 alternation, see DefaultExcludeExtensions>",
+    "full_buffer": false
   },
   "crawler": {
     "disallowed_paths": ["*logout*", "*signout*", "*sign-out*", "*delete*", "*remove*"],
@@ -255,6 +256,11 @@ Domain scoping rules:
 Proxy capture exclusion filters (RE2 patterns, `proxy` section):
 - `exclude_extensions` (`*string`): matches file extension from path (no dot), anchored. nil → default (see `DefaultExcludeExtensions`), `""` → disabled
 - Matching requests are still proxied but never stored in history
+
+Streaming responses (`proxy` section):
+- Response bodies stream to the client per unit (chunk/read/DATA frame) and the flow is stored at response-head time (visible with zero `completed_at`), growing as data arrives — SSE, long-poll, and chunked downloads. `flow_get` reports `in_progress: true` while streaming; poll again for more.
+- `full_buffer` (`bool`, default `false`): when a response has body match/replace rules, buffer the whole body before applying them instead of streaming per-chunk. Streaming applies body rules per chunk (a match spanning a chunk boundary is missed); enable `full_buffer` for whole-body rule correctness. Compressed or Content-Length-framed responses with body rules always buffer regardless of this flag.
+- Scope: response bodies over H1, H2, and the proxy path. Native `replay_send`/`request_send` responses are still read fully before storing.
 
 ### Export Bundle Layout
 

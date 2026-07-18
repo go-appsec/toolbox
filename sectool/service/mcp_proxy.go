@@ -489,6 +489,12 @@ func (m *mcpServer) handleFlowGet(ctx context.Context, req mcp.CallToolRequest) 
 		"response_size": len(respBody),
 	}
 
+	// Streaming flow still in progress: body grows across polls
+	if resolved.InProgress {
+		result["in_progress"] = true
+		result["hint"] = "response still streaming; poll flow_get again for more data"
+	}
+
 	// Source-specific metadata
 	if resolved.Duration > 0 {
 		result["duration"] = resolved.Duration.Round(time.Millisecond).String()

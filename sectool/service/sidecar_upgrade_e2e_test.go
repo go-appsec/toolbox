@@ -57,7 +57,7 @@ type upgradeHarness struct {
 func startUpgrade(t *testing.T, name string, caps wire.Capabilities) *upgradeHarness {
 	t.Helper()
 	socket := filepath.Join(t.TempDir(), "sidecar.sock")
-	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{})
+	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 
 	srv, err := NewServer(MCPServerFlags{

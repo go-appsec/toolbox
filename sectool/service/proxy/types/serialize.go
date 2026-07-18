@@ -82,8 +82,24 @@ func (r *RawHTTP1Request) SerializeRaw(buf *bytes.Buffer) []byte {
 // Emits headers and body exactly as parsed; no auto-cleanup.
 func (r *RawHTTP1Response) SerializeRaw(buf *bytes.Buffer) []byte {
 	buf.Reset()
+	r.writeStatusLine(buf)
+	writeRawHTTP1Body(buf, r.Headers, r.Body, r.Trailers, r.Chunks, r.Wire, r.HeaderBlockEnding)
+	return buf.Bytes()
+}
 
-	// Status line
+// SerializeHead returns the status line, headers, and header-block terminator in
+// wire form, without the body. Used to forward a streaming response's head
+// before its body units arrive; preserves original endings and headers verbatim
+// (unlike the lossy SerializeHeaders).
+func (r *RawHTTP1Response) SerializeHead(buf *bytes.Buffer) []byte {
+	buf.Reset()
+	r.writeStatusLine(buf)
+	writeRawHTTP1HeaderBlock(buf, r.Headers, r.HeaderBlockEnding)
+	return buf.Bytes()
+}
+
+// writeStatusLine writes the response status line and its terminator.
+func (r *RawHTTP1Response) writeStatusLine(buf *bytes.Buffer) {
 	buf.WriteString(r.Version)
 	buf.WriteByte(' ')
 	buf.WriteString(strconv.Itoa(r.StatusCode))
@@ -92,9 +108,6 @@ func (r *RawHTTP1Response) SerializeRaw(buf *bytes.Buffer) []byte {
 		buf.WriteString(r.StatusText)
 	}
 	buf.WriteString(r.StatusLineEnding.Bytes())
-
-	writeRawHTTP1Body(buf, r.Headers, r.Body, r.Trailers, r.Chunks, r.Wire, r.HeaderBlockEnding)
-	return buf.Bytes()
 }
 
 // writeRawHTTP1Body writes headers, header-block terminator, and body for an
@@ -102,17 +115,21 @@ func (r *RawHTTP1Response) SerializeRaw(buf *bytes.Buffer) []byte {
 // are emitted verbatim; chunked re-framing fires only when Wire.WasChunked
 // is set. Callers are responsible for setting Content-Length when appropriate.
 func writeRawHTTP1Body(buf *bytes.Buffer, headers Headers, body, trailers []byte, chunks []ChunkFrame, wire *WireFormat, blockEnding LineEnding) {
-	for _, h := range headers {
-		writeHeaderRaw(buf, h)
-	}
-
-	buf.WriteString(blockEnding.Bytes()) // Header terminator
+	writeRawHTTP1HeaderBlock(buf, headers, blockEnding)
 
 	if wire != nil && wire.WasChunked {
 		writeChunkedBody(buf, body, trailers, chunks, summaryLineEnd(wire))
 	} else {
 		buf.Write(body)
 	}
+}
+
+// writeRawHTTP1HeaderBlock writes headers verbatim followed by the header-block terminator.
+func writeRawHTTP1HeaderBlock(buf *bytes.Buffer, headers Headers, blockEnding LineEnding) {
+	for _, h := range headers {
+		writeHeaderRaw(buf, h)
+	}
+	buf.WriteString(blockEnding.Bytes())
 }
 
 // writeHeaderRaw writes a header preserving wire fidelity.
@@ -161,16 +178,27 @@ func writeChunkedBody(buf *bytes.Buffer, body, trailers []byte, chunks []ChunkFr
 		return
 	}
 
-	if len(body) > 0 {
-		buf.WriteString(strconv.FormatInt(int64(len(body)), 16))
-		buf.WriteString(lineEnd)
-		buf.Write(body)
-		buf.WriteString(lineEnd)
+	WriteChunk(buf, body, lineEnd)
+	WriteLastChunk(buf, trailers, lineEnd)
+}
+
+// WriteChunk writes one chunked-encoding frame: hex size, data, and terminators.
+// Empty data writes nothing, since a zero-length frame would end the body early.
+// Used to forward one streaming body unit whose length may differ from the origin.
+func WriteChunk(buf *bytes.Buffer, data []byte, lineEnd string) {
+	if len(data) == 0 {
+		return
 	}
-	// Final chunk
+	buf.WriteString(strconv.FormatInt(int64(len(data)), 16))
+	buf.WriteString(lineEnd)
+	buf.Write(data)
+	buf.WriteString(lineEnd)
+}
+
+// WriteLastChunk writes the terminal 0-size frame and any trailer bytes.
+func WriteLastChunk(buf *bytes.Buffer, trailers []byte, lineEnd string) {
 	buf.WriteByte('0')
 	buf.WriteString(lineEnd)
-	// Trailers if present
 	if len(trailers) > 0 {
 		buf.Write(trailers)
 	}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,6 +23,9 @@ var (
 // initialBodyAlloc caps the up-front buffer reserved before reading a body of
 // declared length; the buffer grows on demand as bytes arrive.
 const initialBodyAlloc = 8192
+
+// streamReadChunk is the per-read buffer size used while streaming a body.
+const streamReadChunk = 32 << 10
 
 // ParseRequest parses an HTTP/1.1 request from the reader.
 // Returns error only for truly unparseable input.
@@ -100,46 +104,26 @@ func chunksBareFlags(chunks []types.ChunkFrame) (bareLF, bareCR bool) {
 	return bareLF, bareCR
 }
 
+// bodyUnitFunc receives one streamed body unit: decoded holds the logical bytes
+// (chunk data or raw read), wire holds the bytes to forward verbatim (a
+// reconstructed chunk frame, or the same as decoded for unframed bodies). Both
+// slices are valid only for the duration of the call. A non-nil return aborts.
+type bodyUnitFunc func(decoded, wire []byte) error
+
 // parseResponse parses an HTTP/1.1 response from the reader.
 // The request method is needed to determine body handling for HEAD responses.
 func parseResponse(r io.Reader, requestMethod string) (*types.RawHTTP1Response, error) {
 	br := bufio.NewReader(r)
 
-	line, statusLineEnding, err := readLineWithEnding(br)
-	if err != nil {
-		if errors.Is(err, io.EOF) && len(line) == 0 {
-			return nil, ErrEmptyResponse
-		} else if len(line) == 0 {
-			return nil, err
-		}
-	}
-
-	version, code, text, err := parseStatusLine(line)
+	resp, bodyExpected, usedBareLF, usedBareCR, err := parseResponseHead(br, requestMethod)
 	if err != nil {
 		return nil, err
 	}
-
-	resp := &types.RawHTTP1Response{
-		Version:          version,
-		StatusCode:       code,
-		StatusText:       text,
-		StatusLineEnding: statusLineEnding,
-	}
-
-	var headersBareLF, headersBareCR bool
-	if resp.Headers, headersBareLF, headersBareCR, resp.HeaderBlockEnding, err = readHeadersWithWire(br); err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
-	}
-
-	// headersBare* already cover HeaderBlockEnding's terminator
-	usedBareLF := statusLineEnding == types.EndingBareLF || headersBareLF
-	usedBareCR := statusLineEnding == types.EndingBareCR || headersBareCR
 
 	var wasChunked bool
-	// HEAD and 1xx/204/304 responses have no body
-	if requestMethod != "HEAD" && code >= 200 && code != 204 && code != 304 {
+	if bodyExpected {
 		var trailersBareLF, trailersBareCR bool
-		if resp.Body, resp.Trailers, wasChunked, resp.Chunks, trailersBareLF, trailersBareCR, err = readResponseBodyWithWire(br, resp); err != nil && !errors.Is(err, io.EOF) {
+		if resp.Body, resp.Trailers, wasChunked, resp.Chunks, trailersBareLF, trailersBareCR, err = readResponseBodyWithWire(br, resp, nil); err != nil && !errors.Is(err, io.EOF) {
 			return nil, err
 		}
 		chunksBareLF, chunksBareCR := chunksBareFlags(resp.Chunks)
@@ -158,6 +142,45 @@ func parseResponse(r io.Reader, requestMethod string) (*types.RawHTTP1Response, 
 	return resp, nil
 }
 
+// parseResponseHead parses the status line and headers of an HTTP/1.1 response,
+// leaving the body unread on br. bodyExpected is false for HEAD, 1xx, 204, and
+// 304 (no message body). headBareLF/headBareCR report bare terminators seen in
+// the status line or header block. On success err is nil even if the header
+// block ended at EOF.
+func parseResponseHead(br *bufio.Reader, requestMethod string) (resp *types.RawHTTP1Response, bodyExpected, headBareLF, headBareCR bool, err error) {
+	line, statusLineEnding, lerr := readLineWithEnding(br)
+	if lerr != nil {
+		if errors.Is(lerr, io.EOF) && len(line) == 0 {
+			return nil, false, false, false, ErrEmptyResponse
+		} else if len(line) == 0 {
+			return nil, false, false, false, lerr
+		}
+	}
+
+	version, code, text, perr := parseStatusLine(line)
+	if perr != nil {
+		return nil, false, false, false, perr
+	}
+
+	resp = &types.RawHTTP1Response{
+		Version:          version,
+		StatusCode:       code,
+		StatusText:       text,
+		StatusLineEnding: statusLineEnding,
+	}
+
+	if resp.Headers, headBareLF, headBareCR, resp.HeaderBlockEnding, err = readHeadersWithWire(br); err != nil && !errors.Is(err, io.EOF) {
+		return nil, false, false, false, err
+	}
+
+	// status-line terminator folds into the head bare flags
+	headBareLF = headBareLF || statusLineEnding == types.EndingBareLF
+	headBareCR = headBareCR || statusLineEnding == types.EndingBareCR
+	// HEAD and 1xx/204/304 responses have no body
+	bodyExpected = requestMethod != "HEAD" && code >= 200 && code != 204 && code != 304
+	return resp, bodyExpected, headBareLF, headBareCR, nil
+}
+
 // readFinalResponse reads responses from br until a final (>=200) one, returning any
 // preceding interim 1xx responses and the final response. 101 is treated as final.
 // onInterim, when non-nil, is called for each interim response as it is read.
@@ -173,6 +196,33 @@ func readFinalResponse(br *bufio.Reader, requestMethod string, onInterim func(*t
 		if onInterim != nil {
 			if werr := onInterim(resp); werr != nil {
 				return interim, nil, werr
+			}
+		}
+		interim = append(interim, resp)
+	}
+}
+
+// readFinalResponseHead reads responses from br until a final (non-1xx, or 101)
+// one, returning any preceding interim 1xx responses and the final response's
+// head with its body left unread on br. bodyExpected reports whether the final
+// response has a body to stream; headBareLF/headBareCR report bare terminators
+// in the final head so the caller can assemble Wire after streaming the body.
+// onInterim, when non-nil, is called for each interim response.
+func readFinalResponseHead(br *bufio.Reader, requestMethod string, onInterim func(*types.RawHTTP1Response) error) (interim []*types.RawHTTP1Response, final *types.RawHTTP1Response, bodyExpected, headBareLF, headBareCR bool, err error) {
+	for {
+		resp, be, hlf, hcr, perr := parseResponseHead(br, requestMethod)
+		if perr != nil {
+			return interim, nil, false, false, false, perr
+		} else if resp.StatusCode < 100 || resp.StatusCode >= 200 || resp.StatusCode == 101 {
+			return interim, resp, be, hlf, hcr, nil
+		}
+		// interim 1xx has no body; preserve its bare-ending fidelity before forwarding
+		if hlf || hcr {
+			resp.Wire = &types.WireFormat{UsedBareLF: hlf, UsedBareCR: hcr}
+		}
+		if onInterim != nil {
+			if werr := onInterim(resp); werr != nil {
+				return interim, nil, false, false, false, werr
 			}
 		}
 		interim = append(interim, resp)
@@ -349,7 +399,7 @@ func readRequestBodyWithWire(br *bufio.Reader, req *types.RawHTTP1Request) (body
 	// Check for chunked encoding first (takes precedence over Content-Length)
 	te := req.GetHeader("Transfer-Encoding")
 	if strings.Contains(strings.ToLower(te), "chunked") {
-		body, trailers, chunks, trailersBareLF, trailersBareCR, err = readChunkedBody(br)
+		body, trailers, chunks, trailersBareLF, trailersBareCR, err = readChunkedBody(br, nil)
 		return body, trailers, true, chunks, trailersBareLF, trailersBareCR, err
 	}
 
@@ -371,39 +421,96 @@ func readRequestBodyWithWire(br *bufio.Reader, req *types.RawHTTP1Request) (body
 // readResponseBodyWithWire reads the response body and returns wasChunked, per-chunk
 // framing, and bare-LF/CR flags observed inside trailer lines. It sets
 // resp.CloseDelimited when the body is framed by connection close.
-func readResponseBodyWithWire(br *bufio.Reader, resp *types.RawHTTP1Response) (body, trailers []byte, wasChunked bool, chunks []types.ChunkFrame, trailersBareLF, trailersBareCR bool, err error) {
+func readResponseBodyWithWire(br *bufio.Reader, resp *types.RawHTTP1Response, onUnit bodyUnitFunc) (body, trailers []byte, wasChunked bool, chunks []types.ChunkFrame, trailersBareLF, trailersBareCR bool, err error) {
 	te := resp.GetHeader("Transfer-Encoding")
 	if strings.Contains(strings.ToLower(te), "chunked") {
-		body, trailers, chunks, trailersBareLF, trailersBareCR, err = readChunkedBody(br)
+		body, trailers, chunks, trailersBareLF, trailersBareCR, err = readChunkedBody(br, onUnit)
 		return body, trailers, true, chunks, trailersBareLF, trailersBareCR, err
 	}
 
 	clStr := resp.GetHeader("Content-Length")
 	if clStr != "" {
-		cl, err := strconv.ParseInt(clStr, 10, 64)
-		if err != nil || cl < 0 {
+		cl, perr := strconv.ParseInt(clStr, 10, 64)
+		if perr != nil || cl < 0 {
 			// Invalid CL, try reading to EOF
 			resp.CloseDelimited = true
-			body, err := io.ReadAll(br)
+			body, err = streamBody(br, -1, onUnit)
 			return body, nil, false, nil, false, false, err
 		} else if cl == 0 {
 			return nil, nil, false, nil, false, false, nil
 		}
-		buf := bytes.NewBuffer(make([]byte, 0, min(cl, int64(initialBodyAlloc))))
-		_, err = io.Copy(buf, io.LimitReader(br, cl))
-		return buf.Bytes(), nil, false, nil, false, false, err
+		body, err = streamBody(br, cl, onUnit)
+		return body, nil, false, nil, false, false, err
 	}
 
 	// No Content-Length or chunked: read until EOF (body delimited by connection close)
 	resp.CloseDelimited = true
-	body, err = io.ReadAll(br)
+	body, err = streamBody(br, -1, onUnit)
 	return body, nil, false, nil, false, false, err
+}
+
+// streamBody reads the body from br: exactly limit bytes, or to EOF when limit < 0.
+// When onUnit is nil it accumulates and returns the whole body; otherwise it
+// invokes onUnit per read (decoded == wire for an unframed body) and returns a
+// nil body, leaving accumulation to the caller. EOF ends the read cleanly; any
+// other read error is returned.
+func streamBody(br *bufio.Reader, limit int64, onUnit bodyUnitFunc) ([]byte, error) {
+	var out *bytes.Buffer
+	if onUnit == nil {
+		if limit > 0 {
+			// int64 cap is bounded by the initialBodyAlloc constant; no narrowing conversion
+			out = bytes.NewBuffer(make([]byte, 0, min(limit, int64(initialBodyAlloc))))
+		} else {
+			out = &bytes.Buffer{}
+		}
+	}
+
+	buf := make([]byte, streamReadChunk)
+	remaining := limit
+	for limit < 0 || remaining > 0 {
+		readLen := int64(streamReadChunk)
+		if limit >= 0 && remaining < readLen {
+			readLen = remaining
+		}
+		rn, rerr := br.Read(buf[:readLen])
+		if rn > 0 {
+			if out != nil {
+				out.Write(buf[:rn])
+			}
+			if onUnit != nil {
+				if cerr := onUnit(buf[:rn], buf[:rn]); cerr != nil {
+					return nil, cerr
+				}
+			}
+			remaining -= int64(rn)
+		}
+		if rerr != nil {
+			if errors.Is(rerr, io.EOF) {
+				break
+			}
+			if out != nil {
+				return out.Bytes(), rerr
+			}
+			return nil, rerr
+		}
+	}
+
+	if out != nil {
+		return out.Bytes(), nil
+	}
+	return nil, nil
 }
 
 // readChunkedBody reads chunked transfer encoding, returning the decoded body,
 // trailers, per-chunk framing, and bare-LF/CR flags observed in trailer lines.
-func readChunkedBody(br *bufio.Reader) (body, trailers []byte, chunks []types.ChunkFrame, trailersBareLF, trailersBareCR bool, err error) {
+// When onUnit is non-nil each data chunk is emitted (decoded data plus its
+// reconstructed wire frame) instead of accumulated, so the returned body and
+// data-chunk frames are empty; the terminal 0-chunk frame and trailers still return.
+func readChunkedBody(br *bufio.Reader, onUnit bodyUnitFunc) (body, trailers []byte, chunks []types.ChunkFrame, trailersBareLF, trailersBareCR bool, err error) {
 	var bodyBuf bytes.Buffer
+	// reused across chunks in streaming mode; onUnit consumes synchronously
+	var dataBuf []byte
+	var wireBuf bytes.Buffer
 
 	for {
 		sizeLine, sizeEnding, readErr := readLineWithEnding(br)
@@ -419,7 +526,7 @@ func readChunkedBody(br *bufio.Reader) (body, trailers []byte, chunks []types.Ch
 		sizeStr = strings.TrimSpace(sizeStr)
 
 		size, parseErr := strconv.ParseInt(sizeStr, 16, 64)
-		if parseErr != nil {
+		if parseErr != nil || size < 0 || size > math.MaxInt {
 			// Preserve the bad size line; do not drain further so any pipelined request remains
 			chunks = append(chunks, types.ChunkFrame{
 				SizeLine:   slices.Clone(sizeLine),
@@ -429,21 +536,39 @@ func readChunkedBody(br *bufio.Reader) (body, trailers []byte, chunks []types.Ch
 			return bodyBuf.Bytes(), nil, chunks, trailersBareLF, trailersBareCR, nil
 		}
 
-		// Preserve original size-line bytes (including chunk extensions)
-		sizeLineCopy := slices.Clone(sizeLine)
-
 		if size == 0 {
 			// Final chunk terminator; read trailers next
 			// DataEnding of the 0-chunk records the blank-line terminator that closes the trailer block
 			var trailerBlockEnd types.LineEnding
 			trailers, trailerBlockEnd, trailersBareLF, trailersBareCR, _ = readTrailers(br)
 			chunks = append(chunks, types.ChunkFrame{
-				SizeLine:   sizeLineCopy,
+				SizeLine:   slices.Clone(sizeLine),
 				SizeEnding: sizeEnding,
 				Size:       0,
 				DataEnding: trailerBlockEnd,
 			})
 			return bodyBuf.Bytes(), trailers, chunks, trailersBareLF, trailersBareCR, nil
+		}
+
+		if onUnit != nil {
+			// Streaming: read the data out, emit its wire frame, don't accumulate
+			if cap(dataBuf) < int(size) {
+				dataBuf = make([]byte, size)
+			}
+			dataBuf = dataBuf[:size]
+			if _, err = io.ReadFull(br, dataBuf); err != nil {
+				return nil, nil, chunks, trailersBareLF, trailersBareCR, err
+			}
+			_, dataEnding, _ := readLineWithEnding(br)
+			wireBuf.Reset()
+			wireBuf.Write(sizeLine)
+			wireBuf.WriteString(sizeEnding.Bytes())
+			wireBuf.Write(dataBuf)
+			wireBuf.WriteString(dataEnding.Bytes())
+			if cerr := onUnit(dataBuf, wireBuf.Bytes()); cerr != nil {
+				return nil, nil, chunks, trailersBareLF, trailersBareCR, cerr
+			}
+			continue
 		}
 
 		if _, err = io.CopyN(&bodyBuf, br, size); err != nil {
@@ -454,7 +579,7 @@ func readChunkedBody(br *bufio.Reader) (body, trailers []byte, chunks []types.Ch
 		_, dataEnding, _ := readLineWithEnding(br)
 
 		chunks = append(chunks, types.ChunkFrame{
-			SizeLine:   sizeLineCopy,
+			SizeLine:   slices.Clone(sizeLine),
 			SizeEnding: sizeEnding,
 			Size:       int(size),
 			DataEnding: dataEnding,

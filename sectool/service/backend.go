@@ -152,6 +152,8 @@ type ProxyEntry struct {
 	Annotations       map[string]any `json:"annotations,omitempty"`
 	InvokedBy         string         `json:"invoked_by,omitempty"`
 	SidecarInstanceID string         `json:"sidecar_instance_id,omitempty"`
+	// InProgress marks a streaming flow whose response has not completed; its body grows across polls.
+	InProgress bool `json:"in_progress,omitempty"`
 	// Placeholder marks an unparseable Burp entry that preserves offset contiguity; skipped for display.
 	Placeholder bool `json:"-"`
 }

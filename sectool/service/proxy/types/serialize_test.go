@@ -110,6 +110,90 @@ func TestRawHTTP1Response_SerializeRaw(t *testing.T) {
 	})
 }
 
+func TestRawHTTP1Response_SerializeHead(t *testing.T) {
+	t.Parallel()
+
+	t.Run("preserves_headers_verbatim", func(t *testing.T) {
+		// unlike SerializeHeaders, TE:chunked and the original Content-Length are kept, no body
+		r := &RawHTTP1Response{
+			Version:    "HTTP/1.1",
+			StatusCode: 200,
+			StatusText: "OK",
+			Headers: Headers{
+				{Name: "Transfer-Encoding", Value: "chunked"},
+				{Name: "Content-Type", Value: "text/event-stream"},
+			},
+			StatusLineEnding:  EndingCRLF,
+			HeaderBlockEnding: EndingCRLF,
+			Body:              []byte("ignored"),
+		}
+		var buf bytes.Buffer
+		assert.Equal(t, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/event-stream\r\n\r\n", string(r.SerializeHead(&buf)))
+	})
+
+	t.Run("matches_head_slice_of_serialize_raw", func(t *testing.T) {
+		r := &RawHTTP1Response{
+			Version:           "HTTP/1.1",
+			StatusCode:        200,
+			StatusText:        "OK",
+			Headers:           Headers{{Name: "Content-Length", Value: "3"}},
+			StatusLineEnding:  EndingCRLF,
+			HeaderBlockEnding: EndingCRLF,
+			Body:              []byte("abc"),
+		}
+		var headBuf, rawBuf bytes.Buffer
+		head := string(r.SerializeHead(&headBuf))
+		raw := string(r.SerializeRaw(&rawBuf))
+		assert.Equal(t, "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n", head)
+		assert.Equal(t, head+"abc", raw)
+	})
+
+	t.Run("preserves_bare_lf", func(t *testing.T) {
+		r := &RawHTTP1Response{
+			Version:           "HTTP/1.1",
+			StatusCode:        200,
+			StatusText:        "OK",
+			Headers:           Headers{{Name: "X-Test", Value: "1", LineEnding: EndingBareLF}},
+			StatusLineEnding:  EndingBareLF,
+			HeaderBlockEnding: EndingBareLF,
+		}
+		var buf bytes.Buffer
+		assert.Equal(t, "HTTP/1.1 200 OK\nX-Test: 1\n\n", string(r.SerializeHead(&buf)))
+	})
+}
+
+func TestWriteChunk(t *testing.T) {
+	t.Parallel()
+
+	t.Run("hex_size_and_terminators", func(t *testing.T) {
+		var buf bytes.Buffer
+		WriteChunk(&buf, []byte("0123456789ABCDEF"), "\r\n") // 16 bytes -> "10"
+		assert.Equal(t, "10\r\n0123456789ABCDEF\r\n", buf.String())
+	})
+
+	t.Run("empty_writes_nothing", func(t *testing.T) {
+		var buf bytes.Buffer
+		WriteChunk(&buf, nil, "\r\n")
+		assert.Empty(t, buf.String())
+	})
+}
+
+func TestWriteLastChunk(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no_trailers", func(t *testing.T) {
+		var buf bytes.Buffer
+		WriteLastChunk(&buf, nil, "\r\n")
+		assert.Equal(t, "0\r\n\r\n", buf.String())
+	})
+
+	t.Run("with_trailers", func(t *testing.T) {
+		var buf bytes.Buffer
+		WriteLastChunk(&buf, []byte("X-Trailer: v\r\n"), "\r\n")
+		assert.Equal(t, "0\r\nX-Trailer: v\r\n\r\n", buf.String())
+	})
+}
+
 func TestRawHTTP1Response_SerializeHeaders(t *testing.T) {
 	t.Parallel()
 

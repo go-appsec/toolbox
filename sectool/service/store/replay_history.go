@@ -101,7 +101,34 @@ func (s *ReplayHistoryStore) Store(entry *ReplayHistoryEntry) {
 	if entry.CreatedAt.IsZero() {
 		entry.CreatedAt = time.Now()
 	}
+	if s.persistLocked(entry) {
+		s.count++
+	}
+}
 
+// Complete attaches a response to an already-stored replay entry: the two-phase
+// form used for deferred and streaming replays. A non-zero completedAt records the
+// elapsed duration. Returns false when flowID is unknown.
+func (s *ReplayHistoryStore) Complete(flowID string, respHeaders, respBody []byte, status int, completedAt time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.getLocked(flowID)
+	if !ok {
+		return false
+	}
+	entry.RespHeaders = respHeaders
+	entry.RespBody = respBody
+	entry.RespStatus = status
+	if !completedAt.IsZero() {
+		entry.Duration = completedAt.Sub(entry.CreatedAt)
+	}
+	return s.persistLocked(entry)
+}
+
+// persistLocked writes an entry to storage, returning false on failure.
+// Caller must hold mu.
+func (s *ReplayHistoryStore) persistLocked(entry *ReplayHistoryEntry) bool {
 	meta := ReplayHistoryMeta{
 		FlowID:       entry.FlowID,
 		Method:       entry.Method,
@@ -128,19 +155,19 @@ func (s *ReplayHistoryStore) Store(entry *ReplayHistoryEntry) {
 
 	if metaData, err := Serialize(&meta); err != nil {
 		log.Printf("replay history store serialize meta error: %v", err)
-		return
+		return false
 	} else if payloadData, err := Serialize(&payload); err != nil {
 		log.Printf("replay history store serialize payload error: %v", err)
-		return
+		return false
 	} else if err := s.storage.Set(entry.FlowID, metaData); err != nil {
 		log.Printf("replay history store save meta error: %v", err)
-		return
+		return false
 	} else if err := s.storage.Set(entry.FlowID+replayPayloadSuffix, payloadData); err != nil {
 		log.Printf("replay history store save payload error: %v", err)
 		_ = s.storage.Delete(entry.FlowID) // rollback meta key
-		return
+		return false
 	}
-	s.count++
+	return true
 }
 
 // Get retrieves a replay entry by flow_id.

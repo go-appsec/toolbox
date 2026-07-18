@@ -58,7 +58,7 @@ func TestSidecarToolsE2E(t *testing.T) {
 	const toolName = "custom_echo"
 
 	socket := filepath.Join(t.TempDir(), "sidecar.sock")
-	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{})
+	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 
 	srv, err := NewServer(MCPServerFlags{
@@ -153,7 +153,7 @@ func TestSidecarToolsE2E(t *testing.T) {
 }
 
 func TestSidecarToolsAbsentWithoutSidecar(t *testing.T) {
-	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{})
+	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 
 	srv, err := NewServer(MCPServerFlags{

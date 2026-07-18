@@ -64,7 +64,8 @@ type ProxyServer struct {
 // configDir is the directory for CA certificates (e.g., ~/.sectool).
 // maxBodyBytes limits request and response body sizes stored in history.
 // historyStorage is the storage backend for proxy history entries.
-func NewProxyServer(port int, configDir string, maxBodyBytes int, historyStorage store.Storage, timeouts TimeoutConfig) (*ProxyServer, error) {
+// fullBuffer forces whole-body buffering for response body rules instead of streaming.
+func NewProxyServer(port int, configDir string, maxBodyBytes int, historyStorage store.Storage, timeouts TimeoutConfig, fullBuffer bool) (*ProxyServer, error) {
 	certManager, err := newCertManager(configDir)
 	if err != nil {
 		return nil, fmt.Errorf("create cert manager: %w", err)
@@ -86,9 +87,11 @@ func NewProxyServer(port int, configDir string, maxBodyBytes int, historyStorage
 		history:      history,
 		maxBodyBytes: maxBodyBytes,
 		timeouts:     timeouts,
+		fullBuffer:   fullBuffer,
 	}
 
 	http2Handler := newHTTP2Handler(history, maxBodyBytes, timeouts)
+	http2Handler.fullBuffer = fullBuffer
 
 	connectHandler := newConnectHandler(certManager, http1Handler, http2Handler, history, maxBodyBytes, timeouts)
 

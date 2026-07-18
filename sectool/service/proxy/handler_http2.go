@@ -10,7 +10,6 @@ import (
 	"net"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +25,8 @@ const (
 	streamIdleTimeout = 5 * time.Minute
 	cleanupInterval   = 1 * time.Minute
 	h2Preface         = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+	// shutdownFlushGrace bounds the per-write flush of queued frames at teardown
+	shutdownFlushGrace = 2 * time.Second
 )
 
 // h2ConnDesc summarizes a TLS connection for diagnostic logging: remote addr,
@@ -77,6 +78,7 @@ type http2Handler struct {
 	responseInterceptor ResponseInterceptor
 	maxBodyBytes        int
 	timeouts            TimeoutConfig
+	fullBuffer          bool // buffer whole bodies for rules instead of per-frame streaming
 }
 
 // newHTTP2Handler creates a new HTTP/2 handler.
@@ -110,9 +112,10 @@ type h2Stream struct {
 	reqBody    bytes.Buffer // history capture (limited to maxBodyBytes)
 
 	// Response data
-	statusCode  int
-	respHeaders types.Headers
-	respBody    bytes.Buffer // history capture (limited to maxBodyBytes)
+	statusCode            int
+	respHeaders           types.Headers
+	respBody              bytes.Buffer // history capture (limited to maxBodyBytes)
+	respBodyHistTruncated bool         // response history buffer hit maxBodyBytes
 
 	// Full body buffers holding the complete body (up to maxBodyBytes) for rule application
 	reqBodyFull  bytes.Buffer
@@ -122,6 +125,11 @@ type h2Stream struct {
 	// fallback to streaming passthrough (body rules skipped, no truncation)
 	reqBodyOverflow  bool
 	respBodyOverflow bool
+
+	// Two-phase persistence: flow stored at response head, grown as DATA arrives
+	flowID    string
+	captured  bool
+	respFlush flushThrottle
 
 	// Timing
 	startTime    time.Time
@@ -237,12 +245,13 @@ func (h *http2Handler) Handle(ctx context.Context, clientConn, upstreamConn *tls
 	proxyCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Close connections when context is cancelled to unblock blocking reads.
-	// ReadFrame doesn't accept context, so closing is the only way to interrupt it.
+	// unblock context-unaware ReadFrame without tearing down the write side;
+	// sockets are closed after wg.Wait once writers have flushed
 	go func() {
 		<-proxyCtx.Done()
-		_ = clientConn.Close()
-		_ = upstreamConn.Close()
+		now := time.Now()
+		_ = clientConn.SetReadDeadline(now)
+		_ = upstreamConn.SetReadDeadline(now)
 	}()
 
 	proxy := &h2Proxy{
@@ -294,6 +303,15 @@ func (h *http2Handler) Handle(ctx context.Context, clientConn, upstreamConn *tls
 	go proxy.cleanupStaleStreams()
 
 	proxy.wg.Wait()
+
+	// writers have flushed; safe to close the sockets now
+	_ = clientConn.Close()
+	_ = upstreamConn.Close()
+
+	// Finalize any stream still open at connection teardown
+	for _, stream := range proxy.streams.all() {
+		proxy.storeStreamInHistory(stream, reasonConnClosed)
+	}
 }
 
 // exchangeSettings performs the initial SETTINGS exchange.
@@ -490,7 +508,7 @@ func (p *h2Proxy) readFrames(fromClient bool) {
 			return
 
 		case *http2.RSTStreamFrame:
-			p.handleRSTStreamFrame(&buf, f, dst)
+			p.handleRSTStreamFrame(&buf, f, dst, fromClient)
 
 		case *http2.PriorityFrame:
 			p.forwardPriorityFrame(&buf, f, dst)
@@ -641,16 +659,7 @@ func (p *h2Proxy) processHeaders(buf *bytes.Buffer, streamID uint32, block []byt
 
 			// Apply request header rules
 			if p.handler.ruleApplier != nil {
-				// Convert to RawHTTP1Request for rule application
-				pathPart, queryPart, _ := strings.Cut(stream.path, "?")
-				req := &types.RawHTTP1Request{
-					Method:  stream.method,
-					Path:    pathPart,
-					Query:   queryPart,
-					Headers: headers,
-				}
-				req = p.handler.ruleApplier.ApplyRequestRules(req)
-				headers = req.Headers
+				headers = p.handler.ruleApplier.ApplyRequestHeaderOnlyRules(headers)
 			}
 
 			// Strip content-length if body rules may modify payload length
@@ -673,12 +682,7 @@ func (p *h2Proxy) processHeaders(buf *bytes.Buffer, streamID uint32, block []byt
 
 			// Apply response header rules
 			if p.handler.ruleApplier != nil {
-				resp := &types.RawHTTP1Response{
-					StatusCode: stream.statusCode,
-					Headers:    headers,
-				}
-				resp = p.handler.ruleApplier.ApplyResponseRules(resp)
-				headers = resp.Headers
+				headers = p.handler.ruleApplier.ApplyResponseHeaderOnlyRules(headers)
 			}
 
 			// Strip content-length if body rules may modify payload length
@@ -710,6 +714,7 @@ func (p *h2Proxy) processHeaders(buf *bytes.Buffer, streamID uint32, block []byt
 					log.Printf("h2: body rule application failed: %v", err)
 					// Send RST_STREAM to destination to signal error
 					p.sendRSTStream(buf, dst, streamID, http2.ErrCodeInternal)
+					p.storeStreamInHistory(stream, reasonUpstreamError)
 					p.cleanupStream(streamID)
 					return
 				}
@@ -736,9 +741,15 @@ func (p *h2Proxy) processHeaders(buf *bytes.Buffer, streamID uint32, block []byt
 
 	p.writeHeadersFrame(buf, dst, streamID, encoded, endStream)
 
+	// Persist the response head so the flow is visible while its body streams.
+	// Skip when the stream already ended (no body); storeStreamInHistory stores it whole.
+	if !fromClient && !isTrailer && !isStreamClosed {
+		p.storeH2StreamHead(stream)
+	}
+
 	// Check if stream is complete (after unlock to avoid holding lock during history store)
 	if isStreamClosed {
-		p.storeStreamInHistory(stream)
+		p.storeStreamInHistory(stream, "")
 		p.cleanupStream(streamID)
 	}
 }
@@ -768,6 +779,9 @@ func (p *h2Proxy) handleDataFrame(buf *bytes.Buffer, f *http2.DataFrame, src, ds
 				framer := http2.NewFramer(buf, nil)
 				_ = framer.WriteRSTStream(streamID, http2.ErrCodeFlowControl)
 				src.enqueueWrite(p.ctx, buf.Bytes())
+				if s, ok := p.streams.get(streamID); ok {
+					p.storeStreamInHistory(s, reasonUpstreamError)
+				}
 				p.cleanupStream(streamID)
 			}
 		}
@@ -796,7 +810,7 @@ func (p *h2Proxy) handleDataFrame(buf *bytes.Buffer, f *http2.DataFrame, src, ds
 			p.sendWindowUpdates(buf, src, streamID, connUpd, streamUpd)
 		}
 		if endStream {
-			p.storeStreamInHistory(stream)
+			p.storeStreamInHistory(stream, "")
 			p.cleanupStream(streamID)
 		}
 		return
@@ -809,15 +823,24 @@ func (p *h2Proxy) handleDataFrame(buf *bytes.Buffer, f *http2.DataFrame, src, ds
 	stream.mu.Lock()
 	stream.lastActivity = time.Now()
 
-	// Copy to history buffer (limited to maxBodyBytes for storage)
-	p.copyToHistoryBufferLocked(stream, data, fromClient)
-
 	// Determine if this stream has already overflowed (switched to streaming)
 	var isOverflow bool
 	if fromClient {
 		isOverflow = stream.reqBodyOverflow
 	} else {
 		isOverflow = stream.respBodyOverflow
+	}
+
+	// Buffer the whole body only when rules need it: full_buffer, or a compressed
+	// body (no fragment is independently decodable). Otherwise stream, applying
+	// body rules per frame.
+	bufferMode := hasBodyRules && !isOverflow && (p.handler.fullBuffer || streamCompressedLocked(stream, fromClient))
+	streamRules := hasBodyRules && !isOverflow && !bufferMode
+
+	// History accumulates the raw frame now, except stream-rules mode where the
+	// mutated frame is appended after rules (below).
+	if !streamRules {
+		p.copyToHistoryBufferLocked(stream, data, fromClient)
 	}
 
 	// Capture data needed outside the lock for write operations
@@ -827,9 +850,9 @@ func (p *h2Proxy) handleDataFrame(buf *bytes.Buffer, f *http2.DataFrame, src, ds
 	// defers replenishment to the pump so in-flight data stays bounded.
 	var eagerConnUpd, eagerStreamUpd uint32
 
-	if hasBodyRules && !isOverflow {
-		// Buffer mode: accumulate full body for rule application. Replenish eagerly so
-		// the sender can deliver the whole body (bounded by maxBodyBytes) up front.
+	if bufferMode {
+		// Accumulate full body for rule application. Replenish eagerly so the sender
+		// can deliver the whole body (bounded by maxBodyBytes) up front.
 		eagerConnUpd, eagerStreamUpd = src.needsWindowUpdate(streamID)
 		overflow := p.copyToFullBufferLocked(stream, data, fromClient)
 
@@ -860,7 +883,7 @@ func (p *h2Proxy) handleDataFrame(buf *bytes.Buffer, f *http2.DataFrame, src, ds
 		}
 		// Don't forward DATA frames until we have the complete body (or overflow)
 	} else {
-		// Streaming mode: forward immediately (no body rules or overflow)
+		// Streaming: forward this frame (raw, or per-frame rules below)
 		writeData = data
 		writeEndStream = endStream
 	}
@@ -870,6 +893,8 @@ func (p *h2Proxy) handleDataFrame(buf *bytes.Buffer, f *http2.DataFrame, src, ds
 	if endStream {
 		isStreamClosed = stream.markEndStream(fromClient)
 	}
+	flowID := stream.flowID
+	captured := stream.captured
 	stream.mu.Unlock()
 
 	// Eager replenishment for buffering mode happens here (outside the stream lock)
@@ -884,12 +909,13 @@ func (p *h2Proxy) handleDataFrame(buf *bytes.Buffer, f *http2.DataFrame, src, ds
 	}
 
 	if applyRules {
-		// Apply body rules (may call ruleApplier which shouldn't hold stream lock)
+		// Apply body rules to the complete buffered body (may call ruleApplier which shouldn't hold stream lock)
 		body, err := p.applyBodyRules(stream, bodyForRules, fromClient)
 		if err != nil {
 			log.Printf("h2: body rule application failed: %v", err)
 			// Send RST_STREAM to destination to signal error
 			p.sendRSTStream(buf, dst, streamID, http2.ErrCodeInternal)
+			p.storeStreamInHistory(stream, reasonUpstreamError)
 			p.cleanupStream(streamID)
 			return
 		}
@@ -901,12 +927,31 @@ func (p *h2Proxy) handleDataFrame(buf *bytes.Buffer, f *http2.DataFrame, src, ds
 
 		// Send modified body
 		p.enqueueData(dst, streamID, body, true, false)
+	} else if streamRules {
+		// Per-frame body rules: mutate, store the mutated frame, forward
+		out, err := p.applyBodyRules(stream, data, fromClient)
+		if err != nil {
+			log.Printf("h2: body rule application failed: %v", err)
+			p.sendRSTStream(buf, dst, streamID, http2.ErrCodeInternal)
+			p.storeStreamInHistory(stream, reasonUpstreamError)
+			p.cleanupStream(streamID)
+			return
+		}
+		stream.mu.Lock()
+		p.copyToHistoryBufferLocked(stream, out, fromClient)
+		stream.mu.Unlock()
+		p.enqueueData(dst, streamID, out, writeEndStream, true)
 	} else if writeData != nil {
 		p.enqueueData(dst, streamID, writeData, writeEndStream, true)
 	}
 
+	// Grow the stored response flow as its body streams in (streaming modes only)
+	if captured && !fromClient && !bufferMode && !isStreamClosed {
+		p.maybeCompleteH2Stream(stream, flowID)
+	}
+
 	if isStreamClosed {
-		p.storeStreamInHistory(stream)
+		p.storeStreamInHistory(stream, "")
 		p.cleanupStream(streamID)
 	}
 }
@@ -933,6 +978,7 @@ func (p *h2Proxy) copyToHistoryBufferLocked(stream *h2Stream, data []byte, fromC
 	}
 
 	if buf.Len() >= maxBytes {
+		stream.respBodyHistTruncated = stream.respBodyHistTruncated || !fromClient
 		return // already at limit
 	}
 
@@ -941,6 +987,7 @@ func (p *h2Proxy) copyToHistoryBufferLocked(stream *h2Stream, data []byte, fromC
 		buf.Write(data)
 	} else {
 		buf.Write(data[:remaining])
+		stream.respBodyHistTruncated = stream.respBodyHistTruncated || !fromClient
 	}
 }
 
@@ -1020,6 +1067,7 @@ func (p *h2Proxy) updateHistoryWithModifiedBodyLocked(stream *h2Stream, body []b
 			stream.respBody.Write(body)
 		} else {
 			stream.respBody.Write(body[:maxBytes])
+			stream.respBodyHistTruncated = true
 		}
 	}
 }
@@ -1135,8 +1183,14 @@ func (p *h2Proxy) handleGoAwayFrame(buf *bytes.Buffer, f *http2.GoAwayFrame, dst
 	dst.enqueueWrite(p.ctx, buf.Bytes())
 }
 
-// handleRSTStreamFrame forwards RST_STREAM and cleans up stream.
-func (p *h2Proxy) handleRSTStreamFrame(buf *bytes.Buffer, f *http2.RSTStreamFrame, dst *h2Conn) {
+// handleRSTStreamFrame forwards RST_STREAM and cleans up stream. fromClient picks
+// the truncation reason recorded on a captured stream.
+func (p *h2Proxy) handleRSTStreamFrame(buf *bytes.Buffer, f *http2.RSTStreamFrame, dst *h2Conn, fromClient bool) {
+	reason := reasonUpstreamError
+	if fromClient {
+		reason = reasonClientDisconnect
+	}
+
 	// Reset is bidirectional: drop any DATA still queued for either pump
 	p.client.markStreamAborted(f.StreamID)
 	p.upstream.markStreamAborted(f.StreamID)
@@ -1146,12 +1200,9 @@ func (p *h2Proxy) handleRSTStreamFrame(buf *bytes.Buffer, f *http2.RSTStreamFram
 	if stream, exists := p.streams.get(f.StreamID); exists {
 		stream.mu.Lock()
 		intercepted := stream.discardClientBody
-		hasExchange := stream.method != "" && stream.statusCode != 0
 		stream.mu.Unlock()
 		if intercepted {
-			if hasExchange {
-				p.storeStreamInHistory(stream)
-			}
+			p.storeStreamInHistory(stream, reason)
 			p.cleanupStream(f.StreamID)
 			return
 		}
@@ -1165,12 +1216,7 @@ func (p *h2Proxy) handleRSTStreamFrame(buf *bytes.Buffer, f *http2.RSTStreamFram
 	// Store partial exchange before cleanup so a client-cancel after
 	// receiving the response still appears in history.
 	if stream, exists := p.streams.get(f.StreamID); exists {
-		stream.mu.Lock()
-		hasExchange := stream.method != "" && stream.statusCode != 0
-		stream.mu.Unlock()
-		if hasExchange {
-			p.storeStreamInHistory(stream)
-		}
+		p.storeStreamInHistory(stream, reason)
 	}
 
 	p.cleanupStream(f.StreamID)
@@ -1259,6 +1305,7 @@ func (p *h2Proxy) writeFrames(h *h2Conn, conn net.Conn) {
 	for {
 		select {
 		case <-p.ctx.Done():
+			p.flushRemaining(h, conn)
 			return
 		case <-h.closeCh:
 			return
@@ -1270,9 +1317,32 @@ func (p *h2Proxy) writeFrames(h *h2Conn, conn net.Conn) {
 				_ = conn.SetWriteDeadline(time.Now().Add(p.handler.timeouts.WriteTimeout))
 			}
 			if _, err := conn.Write(data); err != nil {
-				log.Printf("h2: write error: %v", err)
+				if !isConnClosedErr(err) {
+					select {
+					case <-p.ctx.Done(): // intentional shutdown; suppress
+					default:
+						log.Printf("h2: write error: %v", err)
+					}
+				}
 				return
 			}
+		}
+	}
+}
+
+// flushRemaining best-effort writes frames still queued at shutdown so control
+// frames (e.g. GOAWAY) reach the peer before the socket closes.
+func (p *h2Proxy) flushRemaining(h *h2Conn, conn net.Conn) {
+	deadline := time.Now().Add(shutdownFlushGrace)
+	for {
+		select {
+		case data := <-h.writeCh:
+			_ = conn.SetWriteDeadline(deadline)
+			if _, err := conn.Write(data); err != nil {
+				return
+			}
+		default:
+			return
 		}
 	}
 }
@@ -1427,6 +1497,10 @@ func (p *h2Proxy) pumpDataFrame(buf *bytes.Buffer, dst, src *h2Conn, item h2Work
 				src.markStreamAborted(streamID)
 				p.sendRSTStream(buf, dst, streamID, http2.ErrCodeFlowControl)
 				p.sendRSTStream(buf, src, streamID, http2.ErrCodeFlowControl)
+				if s, ok := p.streams.get(streamID); ok {
+					p.storeStreamInHistory(s, reasonUpstreamError)
+				}
+				p.cleanupStream(streamID)
 				return
 			case <-flowCh:
 				continue
@@ -1494,10 +1568,67 @@ func (p *h2Proxy) sendRSTStream(buf *bytes.Buffer, dst *h2Conn, streamID uint32,
 	dst.enqueueWrite(p.ctx, buf.Bytes())
 }
 
-// storeStreamInHistory stores a completed stream in history.
-func (p *h2Proxy) storeStreamInHistory(stream *h2Stream) {
-	// Lock stream while reading all data for history
+// storeStreamInHistory finalizes a stream, marking it truncated when reason is
+// non-empty. Safe to call from multiple teardown paths: repeat calls complete the
+// same flow rather than duplicating it, with the last reason winning.
+func (p *h2Proxy) storeStreamInHistory(stream *h2Stream, reason string) {
 	stream.mu.Lock()
+	defer stream.mu.Unlock()
+
+	ann := truncationAnnotations(reason, stream.respBodyHistTruncated)
+	if stream.flowID != "" {
+		p.handler.history.Complete(stream.flowID, stream.responseMessageLocked(), time.Now(), ann)
+		return
+	}
+	// no head stored: persist a whole flow only for a real exchange
+	if stream.method == "" || stream.statusCode == 0 {
+		return
+	}
+	flow := p.buildH2FlowLocked(stream)
+	flow.CompletedAt = time.Now()
+	flow.Annotations = ann
+	if !p.handler.history.ShouldCapture(flow) {
+		return
+	}
+	stream.flowID = p.handler.history.Store(flow)
+	stream.captured = true
+}
+
+// storeH2StreamHead persists the request and response head as an in-progress flow,
+// setting stream.flowID and stream.captured. No-op once stored or when filtered out.
+func (p *h2Proxy) storeH2StreamHead(stream *h2Stream) {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if stream.flowID != "" {
+		return
+	}
+	flow := p.buildH2FlowLocked(stream)
+	if !p.handler.history.ShouldCapture(flow) {
+		return
+	}
+	stream.flowID = p.handler.history.Store(flow)
+	stream.captured = true
+	stream.respFlush = newFlushThrottle()
+}
+
+// maybeCompleteH2Stream grows the stored response flow when the throttle is due.
+func (p *h2Proxy) maybeCompleteH2Stream(stream *h2Stream, flowID string) {
+	stream.mu.Lock()
+	now := time.Now()
+	if !stream.respFlush.should(stream.respBody.Len(), now) {
+		stream.mu.Unlock()
+		return
+	}
+	stream.respFlush.mark(stream.respBody.Len(), now)
+	resp := stream.responseMessageLocked()
+	stream.mu.Unlock()
+
+	p.handler.history.Complete(flowID, resp, time.Time{}, nil)
+}
+
+// buildH2FlowLocked assembles the flow record (request + response head/body) for a
+// stream. Caller must hold stream.mu.
+func (p *h2Proxy) buildH2FlowLocked(stream *h2Stream) *types.Flow {
 	scheme := stream.scheme
 	if scheme == "" {
 		scheme = types.SchemeHTTPS // h2 is always tunneled over TLS via CONNECT
@@ -1515,7 +1646,7 @@ func (p *h2Proxy) storeStreamInHistory(stream *h2Stream) {
 	)
 	reqHeaders = append(reqHeaders, stream.reqHeaders...)
 
-	flow := &types.Flow{
+	return &types.Flow{
 		Adapter:     types.ProtocolH2,
 		ProtocolTag: types.ProtocolH2,
 		Scheme:      scheme,
@@ -1524,20 +1655,27 @@ func (p *h2Proxy) storeStreamInHistory(stream *h2Stream) {
 			Headers: reqHeaders,
 			Body:    append([]byte(nil), stream.reqBody.Bytes()...), // copy to avoid holding reference
 		},
-		Response: &types.Message{
-			StatusCode: stream.statusCode,
-			Headers:    stream.respHeaders,
-			Body:       append([]byte(nil), stream.respBody.Bytes()...), // copy to avoid holding reference
-		},
-		StartedAt:   stream.startTime,
-		CompletedAt: time.Now(),
+		Response:  stream.responseMessageLocked(),
+		StartedAt: stream.startTime,
 	}
-	stream.mu.Unlock()
+}
 
-	if !p.handler.history.ShouldCapture(flow) {
-		return
+// responseMessageLocked builds a snapshot of the response side. Caller must hold stream.mu.
+func (s *h2Stream) responseMessageLocked() *types.Message {
+	return &types.Message{
+		StatusCode: s.statusCode,
+		Headers:    slices.Clone(s.respHeaders),
+		Body:       append([]byte(nil), s.respBody.Bytes()...), // copy to avoid holding reference
 	}
-	p.handler.history.Store(flow)
+}
+
+// streamCompressedLocked reports whether the streamed message carries a
+// Content-Encoding that prevents per-frame body rule application. Caller holds mu.
+func streamCompressedLocked(stream *h2Stream, fromClient bool) bool {
+	if fromClient {
+		return stream.reqHeaders.Get("content-encoding") != ""
+	}
+	return stream.respHeaders.Get("content-encoding") != ""
 }
 
 // sendInterceptedH2Response sends a canned response to the client for an intercepted request.
@@ -1580,7 +1718,7 @@ func (p *h2Proxy) sendInterceptedH2Response(buf *bytes.Buffer, stream *h2Stream,
 		return
 	}
 
-	p.storeStreamInHistory(stream)
+	p.storeStreamInHistory(stream, "")
 	p.cleanupStream(streamID)
 }
 
@@ -1616,6 +1754,7 @@ func (p *h2Proxy) cleanupStaleStreams() {
 					_ = framer.WriteRSTStream(streamID, http2.ErrCodeCancel)
 					p.upstream.enqueueWrite(p.ctx, buf.Bytes())
 
+					p.storeStreamInHistory(stream, reasonStreamIdle)
 					p.cleanupStream(streamID)
 				}
 			}

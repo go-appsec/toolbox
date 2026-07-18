@@ -151,6 +151,20 @@ func (m *h2MockRuleApplier) ApplyResponseBodyOnlyRules(body []byte, headers type
 	return body
 }
 
+func (m *h2MockRuleApplier) ApplyRequestHeaderOnlyRules(headers types.Headers) types.Headers {
+	if m.reqHeaderMod != nil {
+		return m.reqHeaderMod(headers)
+	}
+	return headers
+}
+
+func (m *h2MockRuleApplier) ApplyResponseHeaderOnlyRules(headers types.Headers) types.Headers {
+	if m.respHeaderMod != nil {
+		return m.respHeaderMod(headers)
+	}
+	return headers
+}
+
 func TestApplyBodyRules(t *testing.T) {
 	t.Parallel()
 
@@ -268,43 +282,92 @@ func TestUpdateHistoryWithModifiedBody(t *testing.T) {
 func TestStoreStreamInHistory(t *testing.T) {
 	t.Parallel()
 
-	history := newHistoryStore(store.NewMemStorage())
-	handler := newHTTP2Handler(history, 1024, TimeoutConfig{})
-	stream := &h2Stream{
-		id:          1,
-		state:       streamClosed,
-		method:      "GET",
-		scheme:      "https",
-		authority:   "test.example.com",
-		path:        "/api/v1",
-		statusCode:  200,
-		startTime:   time.Now().Add(-100 * time.Millisecond),
-		reqHeaders:  []types.Header{{Name: "user-agent", Value: "test"}},
-		respHeaders: []types.Header{{Name: "content-type", Value: "application/json"}},
+	newStream := func() *h2Stream {
+		s := &h2Stream{
+			id:          1,
+			state:       streamClosed,
+			method:      "GET",
+			scheme:      "https",
+			authority:   "test.example.com",
+			path:        "/api/v1",
+			statusCode:  200,
+			startTime:   time.Now().Add(-100 * time.Millisecond),
+			reqHeaders:  []types.Header{{Name: "user-agent", Value: "test"}},
+			respHeaders: []types.Header{{Name: "content-type", Value: "application/json"}},
+		}
+		s.reqBody.WriteString("request body")
+		s.respBody.WriteString(`{"ok": true}`)
+		return s
 	}
-	stream.reqBody.WriteString("request body")
-	stream.respBody.WriteString(`{"ok": true}`)
-	p := &h2Proxy{
-		handler: handler,
-		streams: newStreamTracker(),
+	newProxy := func() (*h2Proxy, *HistoryStore) {
+		history := newHistoryStore(store.NewMemStorage())
+		return &h2Proxy{handler: newHTTP2Handler(history, 1024, TimeoutConfig{}), streams: newStreamTracker()}, history
 	}
 
-	p.storeStreamInHistory(stream)
+	t.Run("whole_store_clean", func(t *testing.T) {
+		p, history := newProxy()
+		p.storeStreamInHistory(newStream(), "")
 
-	assert.Equal(t, 1, history.Count())
+		require.Equal(t, 1, history.Count())
+		entry := firstEntry(t, history)
+		assert.Equal(t, "http/2", entry.ProtocolTag)
+		assert.Equal(t, "1", entry.GetRequestHeader(types.HeaderStreamID))
+		assert.Equal(t, "GET", entry.GetMethod())
+		assert.Equal(t, "test.example.com", entry.GetHost())
+		assert.Equal(t, "/api/v1", entry.GetPath())
+		assert.Equal(t, "request body", string(entry.Request.Body))
+		assert.Equal(t, `{"ok": true}`, string(entry.Response.Body))
+		assert.False(t, entry.CompletedAt.IsZero())
+		assert.Nil(t, entry.Annotations)
+	})
 
-	entry := firstEntry(t, history)
-	assert.Equal(t, "http/2", entry.ProtocolTag)
-	assert.Equal(t, "1", entry.GetRequestHeader(types.HeaderStreamID))
-	require.NotNil(t, entry.Request)
-	assert.Equal(t, "GET", entry.GetMethod())
-	assert.Equal(t, "https", entry.GetRequestHeader(":scheme"))
-	assert.Equal(t, "test.example.com", entry.GetHost())
-	assert.Equal(t, "/api/v1", entry.GetPath())
-	assert.Equal(t, "request body", string(entry.Request.Body))
-	require.NotNil(t, entry.Response)
-	assert.Equal(t, 200, entry.GetStatusCode())
-	assert.Equal(t, `{"ok": true}`, string(entry.Response.Body))
+	t.Run("truncated_reason", func(t *testing.T) {
+		p, history := newProxy()
+		p.storeStreamInHistory(newStream(), reasonUpstreamError)
+
+		entry := firstEntry(t, history)
+		assert.Equal(t, true, entry.Annotations[annStreamTruncated])
+		assert.Equal(t, reasonUpstreamError, entry.Annotations[annStreamReason])
+	})
+
+	t.Run("body_truncated_on_clean_close", func(t *testing.T) {
+		p, history := newProxy()
+		stream := newStream()
+		stream.respBodyHistTruncated = true
+		p.storeStreamInHistory(stream, "")
+
+		entry := firstEntry(t, history)
+		assert.Equal(t, true, entry.Annotations[annBodyTruncated])
+		_, truncated := entry.Annotations[annStreamTruncated]
+		assert.False(t, truncated)
+	})
+
+	t.Run("skip_request_only", func(t *testing.T) {
+		p, history := newProxy()
+		stream := newStream()
+		stream.statusCode = 0
+		p.storeStreamInHistory(stream, reasonConnClosed)
+
+		assert.Equal(t, 0, history.Count())
+	})
+
+	t.Run("idempotent_head_then_finalize", func(t *testing.T) {
+		p, history := newProxy()
+		stream := newStream()
+		stream.state = streamOpen
+		p.storeH2StreamHead(stream)
+		require.NotEmpty(t, stream.flowID)
+		flowID := stream.flowID
+
+		p.storeStreamInHistory(stream, reasonConnClosed)
+		p.storeStreamInHistory(stream, reasonConnClosed) // repeat teardown path
+
+		assert.Equal(t, 1, history.Count())
+		flow, ok := history.Get(flowID)
+		require.True(t, ok)
+		assert.False(t, flow.CompletedAt.IsZero())
+		assert.Equal(t, reasonConnClosed, flow.Annotations[annStreamReason])
+	})
 }
 
 func TestH2ConnConsumeRecvWindow(t *testing.T) {
@@ -542,7 +605,7 @@ func TestHTTP2ProxyEndToEnd(t *testing.T) {
 	})
 	t.Cleanup(testServer.Close)
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 	go func() { _ = proxy.Serve() }()
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -616,7 +679,7 @@ func TestHTTP2ProxyInterceptWithRequestBody(t *testing.T) {
 	server.StartTLS()
 	t.Cleanup(server.Close)
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 	go func() { _ = proxy.Serve() }()
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -677,7 +740,7 @@ func TestHTTP2ProxyHeaderRules(t *testing.T) {
 	})
 	t.Cleanup(testServer.Close)
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 	go func() { _ = proxy.Serve() }()
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -738,7 +801,7 @@ func TestHTTP2ProxyBidirectionalLargeBody(t *testing.T) {
 	})
 	t.Cleanup(testServer.Close)
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 	go func() { _ = proxy.Serve() }()
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -804,6 +867,43 @@ func TestPumpDataFrame(t *testing.T) {
 			h2WorkItem{kind: wiData, streamID: 1, data: []byte("hello"), endStream: true})
 		assert.Empty(t, dst.writeCh)
 	})
+}
+
+func TestFlushRemaining(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	srv, cli := net.Pipe()
+	t.Cleanup(func() { _ = srv.Close(); _ = cli.Close() })
+
+	p := &h2Proxy{
+		ctx:     ctx,
+		cancel:  cancel,
+		handler: newHTTP2Handler(newHistoryStore(store.NewMemStorage()), 1024, TimeoutConfig{}),
+	}
+	h := newH2Conn(srv)
+
+	// queue frames, then cancel so writeFrames drains via flushRemaining
+	frames := [][]byte{[]byte("frame-one"), []byte("frame-two"), []byte("frame-three")}
+	for _, f := range frames {
+		require.True(t, h.enqueueWrite(ctx, f))
+	}
+	want := bytes.Join(frames, nil)
+	cancel()
+
+	p.wg.Add(1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.writeFrames(h, srv)
+	}()
+
+	got := make([]byte, len(want))
+	_, err := io.ReadFull(cli, got)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+
+	<-done
 }
 
 func newHTTP2TestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {

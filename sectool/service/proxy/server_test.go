@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"io"
@@ -20,6 +21,19 @@ import (
 	"github.com/go-appsec/toolbox/sectool/service/store"
 	"github.com/go-appsec/toolbox/sectool/service/testutil"
 )
+
+// readResponse reads one full HTTP/1.1 response from conn and returns its status
+// line plus body, tolerating head/body arriving in separate reads.
+func readResponse(t *testing.T, conn net.Conn) string {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.Status + string(body)
+}
 
 func TestServe(t *testing.T) {
 	// test cases are t.Parallel() instead due to speed
@@ -119,7 +133,7 @@ func TestServe(t *testing.T) {
 	t.Run("connect_request", func(t *testing.T) {
 		t.Parallel()
 
-		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -145,7 +159,7 @@ func TestServe(t *testing.T) {
 	t.Run("malformed_request_line", func(t *testing.T) {
 		t.Parallel()
 
-		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -200,7 +214,7 @@ func TestServe(t *testing.T) {
 func TestShutdown(t *testing.T) {
 	t.Parallel()
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 
 	go func() { _ = proxy.Serve() }()
@@ -229,7 +243,7 @@ func TestShutdown(t *testing.T) {
 func setupProxyClient(t *testing.T) (*ProxyServer, *http.Client) {
 	t.Helper()
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 	go func() { _ = proxy.Serve() }()
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -250,7 +264,7 @@ func TestProxyServerComponents(t *testing.T) {
 	t.Run("addr_before_serve", func(t *testing.T) {
 		t.Parallel()
 
-		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
 
@@ -263,7 +277,7 @@ func TestProxyServerComponents(t *testing.T) {
 	t.Run("history_accessible", func(t *testing.T) {
 		t.Parallel()
 
-		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
 
@@ -275,7 +289,7 @@ func TestProxyServerComponents(t *testing.T) {
 	t.Run("cert_manager_accessible", func(t *testing.T) {
 		t.Parallel()
 
-		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
 
@@ -294,7 +308,7 @@ func TestConcurrentConnections(t *testing.T) {
 	}))
 	t.Cleanup(testServer.Close)
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 	go func() { _ = proxy.Serve() }()
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -353,7 +367,7 @@ func TestConnectionGoroutineLeak(t *testing.T) {
 	}))
 	t.Cleanup(testServer.Close)
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 	go func() { _ = proxy.Serve() }()
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -437,7 +451,7 @@ func TestProxyServerRuleApplier(t *testing.T) {
 	}))
 	t.Cleanup(testServer.Close)
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 	go func() { _ = proxy.Serve() }()
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -486,6 +500,16 @@ func (t *trackingRuleApplier) ApplyResponseBodyOnlyRules(body []byte, headers ty
 	return body
 }
 
+func (t *trackingRuleApplier) ApplyRequestHeaderOnlyRules(headers types.Headers) types.Headers {
+	t.requestCalled.Store(true)
+	return headers
+}
+
+func (t *trackingRuleApplier) ApplyResponseHeaderOnlyRules(headers types.Headers) types.Headers {
+	t.responseCalled.Store(true)
+	return headers
+}
+
 func (t *trackingRuleApplier) ApplyWSRules(payload []byte, direction string) []byte {
 	return payload
 }
@@ -497,7 +521,7 @@ func (t *trackingRuleApplier) HasBodyRules(isRequest bool) bool {
 func TestServeContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -525,7 +549,7 @@ func TestServeContextCancellation(t *testing.T) {
 func TestShutdownForceClose(t *testing.T) {
 	t.Parallel()
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 
 	go func() { _ = proxy.Serve() }()
@@ -585,7 +609,7 @@ func TestHTTP11KeepAlive(t *testing.T) {
 		}))
 		t.Cleanup(testServer.Close)
 
-		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -612,14 +636,9 @@ func TestHTTP11KeepAlive(t *testing.T) {
 			_, err = conn.Write([]byte(request))
 			require.NoError(t, err, "request %d write failed", i)
 
-			// Read response
-			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-			buf := make([]byte, 4096)
-			n, err := conn.Read(buf)
-			require.NoError(t, err, "request %d read failed", i)
-
-			response := string(buf[:n])
-			assert.Contains(t, response, "HTTP/1.1 200", "request %d should succeed", i)
+			// Read response (streaming may split head and body across reads)
+			response := readResponse(t, conn)
+			assert.Contains(t, response, "200 OK", "request %d should succeed", i)
 			assert.Contains(t, response, "response "+path, "request %d body", i)
 		}
 
@@ -645,7 +664,7 @@ func TestHTTP11KeepAlive(t *testing.T) {
 		}))
 		t.Cleanup(testServer.Close)
 
-		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -714,7 +733,7 @@ func TestHTTP11KeepAlive(t *testing.T) {
 		}))
 		t.Cleanup(server2.Close)
 
-		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{})
+		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -738,11 +757,9 @@ func TestHTTP11KeepAlive(t *testing.T) {
 		_, err = conn.Write([]byte(request1))
 		require.NoError(t, err)
 
-		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		buf := make([]byte, 4096)
-		n, err := conn.Read(buf)
-		require.NoError(t, err)
-		assert.Contains(t, string(buf[:n]), "server1")
+		// Streaming forwards the head and body as separate writes, so drain until
+		// the full response body arrives rather than assuming a single Read.
+		assert.Contains(t, readResponse(t, conn), "server1")
 
 		// Request to server2 on same proxy connection
 		request2 := "GET " + server2.URL + "/path2 HTTP/1.1\r\n" +
@@ -754,10 +771,7 @@ func TestHTTP11KeepAlive(t *testing.T) {
 		_, err = conn.Write([]byte(request2))
 		require.NoError(t, err)
 
-		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-		n, err = conn.Read(buf)
-		require.NoError(t, err)
-		assert.Contains(t, string(buf[:n]), "server2")
+		assert.Contains(t, readResponse(t, conn), "server2")
 
 		// Both requests should be in history
 		testutil.WaitForCount(t, func() int { return proxy.History().Count() }, 2)

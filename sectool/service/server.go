@@ -434,7 +434,7 @@ func (s *Server) startBuiltinProxy() error {
 		WriteTimeout: time.Duration(s.cfg.Proxy.WriteTimeoutSecs) * time.Second,
 	}
 
-	backend, err := NewNativeProxyBackend(s.proxyPort, configDir, s.cfg.MaxBodyBytes, s.storageProvider, timeouts)
+	backend, err := NewNativeProxyBackend(s.proxyPort, configDir, s.cfg.MaxBodyBytes, s.storageProvider, timeouts, s.cfg.Proxy.FullBuffer)
 	if err != nil {
 		return fmt.Errorf("start built-in proxy: %w", err)
 	}

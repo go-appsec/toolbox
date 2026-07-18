@@ -512,6 +512,7 @@ type resolvedFlow struct {
 
 	InvokedBy         string // originating sidecar (proxy, replay); empty otherwise
 	SidecarInstanceID string // emitting sidecar instance (proxy); empty otherwise
+	InProgress        bool   // streaming flow whose response has not completed
 }
 
 // DisplayRequest returns the request as shown when retrieved.
@@ -553,6 +554,7 @@ func (m *mcpServer) resolveFlow(ctx context.Context, flowID string) (*resolvedFl
 			Annotations:       entry.Annotations,
 			InvokedBy:         entry.InvokedBy,
 			SidecarInstanceID: entry.SidecarInstanceID,
+			InProgress:        entry.InProgress,
 		}, nil
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, errorResultFromErr("failed to fetch flow: ", err)

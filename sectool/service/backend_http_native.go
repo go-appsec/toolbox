@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/go-analyze/bulk"
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/ids"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
@@ -79,7 +80,7 @@ var _ SidecarRegistry = (*sidecar.Manager)(nil)
 // NewNativeProxyBackend creates a new native proxy backend.
 // Does NOT start serving - call Serve() separately (typically in a goroutine).
 // Call EnableSidecars before Serve to host the out-of-process sidecar listener.
-func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, storage store.Provider, timeouts proxy.TimeoutConfig) (*NativeProxyBackend, error) {
+func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, storage store.Provider, timeouts proxy.TimeoutConfig, fullBuffer bool) (*NativeProxyBackend, error) {
 	historyStorage, err := storage("hist")
 	if err != nil {
 		return nil, fmt.Errorf("history storage: %w", err)
@@ -96,7 +97,7 @@ func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, storage
 		return nil, fmt.Errorf("responder storage: %w", err)
 	}
 
-	server, err := proxy.NewProxyServer(port, configDir, maxBodyBytes, historyStorage, timeouts)
+	server, err := proxy.NewProxyServer(port, configDir, maxBodyBytes, historyStorage, timeouts, fullBuffer)
 	if err != nil {
 		_ = historyStorage.Close()
 		_ = ruleStorage.Close()
@@ -314,6 +315,7 @@ func (b *NativeProxyBackend) GetProxyEntry(ctx context.Context, flowID string) (
 		Annotations:       entry.Annotations,
 		InvokedBy:         entry.InvokedBy,
 		SidecarInstanceID: entry.SidecarInstanceID,
+		InProgress:        entry.CompletedAt.IsZero(),
 	}, nil
 }
 
@@ -778,6 +780,41 @@ func (b *NativeProxyBackend) ApplyResponseBodyOnlyRules(body []byte, headers typ
 		return body // return original on recompression failure
 	}
 	return result.body
+}
+
+// ApplyRequestHeaderOnlyRules applies only request header rules to headers.
+// Used when a request head is processed before its body.
+func (b *NativeProxyBackend) ApplyRequestHeaderOnlyRules(headers types.Headers) types.Headers {
+	b.rulesMu.RLock()
+	defer b.rulesMu.RUnlock()
+
+	headerRules := b.coreRulesOfTypeLocked(wire.RuleTypeRequestHeader)
+	if len(headerRules) == 0 {
+		return headers
+	}
+	req := b.applyRequestHeaderRules(&types.RawHTTP1Request{Headers: headers}, headerRules)
+	return req.Headers
+}
+
+// ApplyResponseHeaderOnlyRules applies only response header rules to headers.
+// Used when a response head is forwarded before its body arrives.
+func (b *NativeProxyBackend) ApplyResponseHeaderOnlyRules(headers types.Headers) types.Headers {
+	b.rulesMu.RLock()
+	defer b.rulesMu.RUnlock()
+
+	headerRules := b.coreRulesOfTypeLocked(wire.RuleTypeResponseHeader)
+	if len(headerRules) == 0 {
+		return headers
+	}
+	resp := b.applyResponseHeaderRules(&types.RawHTTP1Response{Headers: headers}, headerRules)
+	return resp.Headers
+}
+
+// coreRulesOfTypeLocked returns core-adapter httpRules of the given type. Caller must hold rulesMu.
+func (b *NativeProxyBackend) coreRulesOfTypeLocked(ruleType string) []nativeStoredRule {
+	return bulk.SliceFilter(func(rule nativeStoredRule) bool {
+		return (rule.Adapter == "" || rule.Adapter == types.AdapterScopeCore) && rule.Type == ruleType
+	}, b.httpRules)
 }
 
 // applyRequestHeaderRules applies header rules to request.

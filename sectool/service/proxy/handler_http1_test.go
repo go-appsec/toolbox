@@ -16,6 +16,29 @@ import (
 	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
+func TestMustBufferResponse(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		headers types.Headers
+		want    bool
+	}{
+		{"compressed", types.Headers{{Name: "Content-Encoding", Value: "gzip"}, {Name: "Content-Length", Value: "10"}}, true},
+		{"content_length", types.Headers{{Name: "Content-Length", Value: "10"}}, true},
+		{"chunked", types.Headers{{Name: "Transfer-Encoding", Value: "chunked"}}, false},
+		{"chunked_over_length", types.Headers{{Name: "Transfer-Encoding", Value: "chunked"}, {Name: "Content-Length", Value: "10"}}, false},
+		{"close_delimited", types.Headers{{Name: "Content-Type", Value: "text/event-stream"}}, false},
+		{"invalid_content_length", types.Headers{{Name: "Content-Length", Value: "notanumber"}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &types.RawHTTP1Response{StatusCode: 200, Headers: tt.headers}
+			assert.Equal(t, tt.want, mustBufferResponse(resp))
+		})
+	}
+}
+
 func newTestHTTP1Handler(t *testing.T) *http1Handler {
 	t.Helper()
 

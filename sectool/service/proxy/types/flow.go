@@ -56,6 +56,11 @@ type Flow struct {
 
 // ExtractMeta builds HistoryMeta from a Flow using its accessor methods.
 func (f *Flow) ExtractMeta() HistoryMeta {
+	// zero CompletedAt marks an in-progress stream; report zero duration
+	var duration time.Duration
+	if !f.CompletedAt.IsZero() {
+		duration = f.CompletedAt.Sub(f.StartedAt)
+	}
 	return HistoryMeta{
 		FlowID:       f.FlowID,
 		Protocol:     f.ProtocolTag,
@@ -70,7 +75,7 @@ func (f *Flow) ExtractMeta() HistoryMeta {
 		ContentType:  f.GetResponseHeader("content-type"),
 		RespLen:      f.responseBodyLen(),
 		Timestamp:    f.StartedAt,
-		Duration:     f.CompletedAt.Sub(f.StartedAt),
+		Duration:     duration,
 		Annotations:  f.Annotations,
 
 		InvokedBy:         f.InvokedBy,

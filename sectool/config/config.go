@@ -80,6 +80,10 @@ type ProxyConfig struct {
 
 	// RE2 alternation of extensions to exclude from capture
 	ExcludeExtensions *string `json:"exclude_extensions"`
+
+	// Buffer whole response bodies before applying body rules, instead of
+	// streaming per-chunk. Only affects flows with response body rules.
+	FullBuffer bool `json:"full_buffer"`
 }
 
 // SidecarsConfig holds declarative settings for out-of-process protocol

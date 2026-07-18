@@ -137,6 +137,58 @@ func TestReplayHistoryStore(t *testing.T) {
 	})
 }
 
+func TestReplayHistoryComplete(t *testing.T) {
+	t.Parallel()
+
+	t.Run("updates_response_and_meta", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		created := time.Now().Add(-time.Second)
+		store.Store(&ReplayHistoryEntry{FlowID: "f1", Method: "GET", CreatedAt: created})
+		require.Equal(t, 1, store.Count())
+
+		completedAt := created.Add(250 * time.Millisecond)
+		require.True(t, store.Complete("f1", []byte("HTTP/1.1 200 OK\r\n\r\n"), []byte("data: one\n\n"), 200, completedAt))
+
+		got, ok := store.Get("f1")
+		require.True(t, ok)
+		assert.Equal(t, 200, got.RespStatus)
+		assert.Equal(t, "data: one\n\n", string(got.RespBody))
+		assert.Equal(t, 250*time.Millisecond, got.Duration)
+
+		// Cached meta stays in sync; Complete does not change count
+		assert.Equal(t, 1, store.Count())
+		metas := store.ListMeta()
+		require.Len(t, metas, 1)
+		assert.Equal(t, 200, metas[0].RespStatus)
+		assert.Equal(t, len("data: one\n\n"), metas[0].RespLen)
+		assert.Equal(t, 250*time.Millisecond, metas[0].Duration)
+	})
+
+	t.Run("unknown_flow", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+		assert.False(t, store.Complete("missing", nil, nil, 200, time.Now()))
+	})
+
+	t.Run("in_progress_leaves_duration_zero", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		store.Store(&ReplayHistoryEntry{FlowID: "f2", Method: "GET"})
+		require.True(t, store.Complete("f2", nil, []byte("partial"), 200, time.Time{}))
+
+		got, ok := store.Get("f2")
+		require.True(t, ok)
+		assert.Equal(t, "partial", string(got.RespBody))
+		assert.Zero(t, got.Duration)
+	})
+}
+
 func TestReplayHistoryListMeta(t *testing.T) {
 	t.Parallel()
 

@@ -497,6 +497,16 @@ type RuleApplier interface {
 	// Does not apply header rules.
 	ApplyResponseBodyOnlyRules(body []byte, headers Headers) []byte
 
+	// ApplyRequestHeaderOnlyRules applies only request header rules to headers.
+	// Used when a request head is processed before its body (H2, streaming).
+	// Returns the possibly-modified headers; does not apply body rules.
+	ApplyRequestHeaderOnlyRules(headers Headers) Headers
+
+	// ApplyResponseHeaderOnlyRules applies only response header rules to headers.
+	// Used when a response head is forwarded before its body (H2, streaming).
+	// Returns the possibly-modified headers; does not apply body rules.
+	ApplyResponseHeaderOnlyRules(headers Headers) Headers
+
 	// ApplyWSRules applies WebSocket rules to frame payload.
 	// direction is "ws:to-server" or "ws:to-client".
 	ApplyWSRules(payload []byte, direction string) []byte

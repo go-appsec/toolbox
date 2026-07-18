@@ -108,7 +108,7 @@ func TestNativeProxyIntegrationTest(t *testing.T) {
 		upstreamAddr := upstreamListener.Addr().String()
 
 		backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024,
-			store.MemProvider, proxy.TimeoutConfig{})
+			store.MemProvider, proxy.TimeoutConfig{}, false)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = backend.Close(context.Background()) })
 

@@ -33,8 +33,22 @@ func (s *replayRoutingSink) Store(flow *types.Flow) string {
 	return s.history.Store(flow)
 }
 
+// Complete attaches a response to an already-stored flow, routing replay-owned
+// flow ids (unknown to proxy history) to the replay store.
 func (s *replayRoutingSink) Complete(flowID string, resp *types.Message, completedAt time.Time, annotations map[string]any) bool {
-	return s.history.Complete(flowID, resp, completedAt, annotations)
+	if s.history.Complete(flowID, resp, completedAt, annotations) {
+		return true
+	}
+	var status int
+	var respHeaders, respBody []byte
+	if resp != nil {
+		status = resp.StatusCode
+		var buf bytes.Buffer
+		respHeaders, respBody = splitHeadersBody((&types.Flow{Response: resp}).FormatResponse(&buf))
+		respHeaders = slices.Clone(respHeaders)
+		respBody = slices.Clone(respBody)
+	}
+	return s.replay.Complete(flowID, respHeaders, respBody, status, completedAt)
 }
 
 func (s *replayRoutingSink) SetInvokedBy(flowID, invokedBy string) bool {
