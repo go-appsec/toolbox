@@ -69,7 +69,7 @@ func (h *webSocketHandler) Handle(
 	upstreamConn, err := dialer.DialContext(ctx, "tcp", upstreamAddr)
 	if err != nil {
 		log.Printf("proxy: websocket dial failed: %v", err)
-		h.sendError(clientConn, 502, "Bad Gateway: connection refused")
+		sendError(clientConn, 502, "Bad Gateway: connection refused")
 		return
 	}
 
@@ -101,7 +101,7 @@ func (h *webSocketHandler) HandleTLS(
 	upstreamConn, err := tlsDialer.DialContext(ctx, "tcp", upstreamAddr)
 	if err != nil {
 		log.Printf("proxy: websocket TLS dial failed: %v", err)
-		h.sendError(clientConn, 502, "Bad Gateway: connection refused")
+		sendError(clientConn, 502, "Bad Gateway: connection refused")
 		return
 	}
 
@@ -161,14 +161,14 @@ func (h *webSocketHandler) proxyWebSocketWithReader(
 	// Forward upgrade request to upstream
 	if _, err := upstreamConn.Write(req.SerializeRaw(&buf)); err != nil {
 		log.Printf("proxy: websocket upgrade send failed: %v", err)
-		h.sendError(clientConn, 502, "Bad Gateway: failed to send upgrade")
+		sendError(clientConn, 502, "Bad Gateway: failed to send upgrade")
 		return
 	}
 
 	resp, err := parseResponse(upstreamReader, req.Method)
 	if err != nil {
 		log.Printf("proxy: websocket upgrade response parse failed: %v", err)
-		h.sendError(clientConn, 502, "Bad Gateway: malformed response")
+		sendError(clientConn, 502, "Bad Gateway: malformed response")
 		return
 	}
 
@@ -224,23 +224,6 @@ func (h *webSocketHandler) stripExtensions(req *types.RawHTTP1Request) {
 // stripResponseExtensions removes Sec-WebSocket-Extensions from response.
 func (h *webSocketHandler) stripResponseExtensions(resp *types.RawHTTP1Response) {
 	resp.RemoveHeader("Sec-WebSocket-Extensions")
-}
-
-// sendError writes an HTTP error response.
-func (h *webSocketHandler) sendError(conn net.Conn, code int, message string) {
-	body := []byte(message + "\n")
-	resp := &types.RawHTTP1Response{
-		Version:    "HTTP/1.1",
-		StatusCode: code,
-		StatusText: message,
-		Headers: []types.Header{
-			{Name: "Content-Type", Value: "text/plain"},
-			{Name: "Content-Length", Value: strconv.Itoa(len(body))},
-			{Name: "Connection", Value: "close"},
-		},
-		Body: body,
-	}
-	_, _ = conn.Write(resp.SerializeRaw(bytes.NewBuffer(nil)))
 }
 
 // storeHandshake stores the WebSocket upgrade handshake in history.

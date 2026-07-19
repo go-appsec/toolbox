@@ -2,7 +2,11 @@ package proxy
 
 import (
 	"bytes"
+	"net"
+	"strconv"
 	"strings"
+
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 )
 
 // ExtractMethod extracts the HTTP method from raw request bytes.
@@ -27,6 +31,23 @@ func ExtractMethod(raw []byte) string {
 		return string(line)
 	}
 	return "GET"
+}
+
+// sendError writes a plain-text HTTP/1.1 error response to the client and closes.
+func sendError(conn net.Conn, code int, message string) {
+	body := []byte(message + "\n")
+	resp := &types.RawHTTP1Response{
+		Version:    "HTTP/1.1",
+		StatusCode: code,
+		StatusText: message,
+		Headers: []types.Header{
+			{Name: "Content-Type", Value: "text/plain"},
+			{Name: "Content-Length", Value: strconv.Itoa(len(body))},
+			{Name: "Connection", Value: "close"},
+		},
+		Body: body,
+	}
+	_, _ = conn.Write(resp.SerializeRaw(bytes.NewBuffer(nil)))
 }
 
 // PathWithoutQuery returns the path portion before any query string.

@@ -547,8 +547,6 @@ func TestSendError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := newTestHTTP1Handler(t)
-
 			// Use a pipe to capture the response
 			clientConn, serverConn := net.Pipe()
 			t.Cleanup(func() {
@@ -556,7 +554,7 @@ func TestSendError(t *testing.T) {
 				_ = serverConn.Close()
 			})
 
-			go h.sendError(serverConn, tt.code, tt.message)
+			go sendError(serverConn, tt.code, tt.message)
 
 			// Read the response
 			buf := make([]byte, 1024)
@@ -676,7 +674,7 @@ func TestHandleSinglePlainHTTPInterim(t *testing.T) {
 	t.Cleanup(func() { _ = clientConn.Close() })
 
 	go func() {
-		h.handleSinglePlainHTTP(t.Context(), proxyConn, bufio.NewReader(proxyConn))
+		h.handleExchange(t.Context(), proxyConn, bufio.NewReader(proxyConn), h1Exchange{logParseErrors: true})
 		_ = proxyConn.Close()
 	}()
 
@@ -696,4 +694,106 @@ func TestHandleSinglePlainHTTPInterim(t *testing.T) {
 	assert.Equal(t, 200, entry.Response.StatusCode)
 	require.Len(t, entry.InterimResponses, 1)
 	assert.Equal(t, 103, entry.InterimResponses[0].StatusCode)
+}
+
+// mockInterceptor serves resp when host and path match exactly (case-sensitive), so a
+// caller that fails to lowercase the host misses the responder.
+type mockInterceptor struct {
+	host string
+	path string
+	resp *InterceptedResponse
+}
+
+func (m *mockInterceptor) InterceptRequest(host string, _ int, path, _ string) *InterceptedResponse {
+	if host == m.host && path == m.path {
+		return m.resp
+	}
+	return nil
+}
+
+func TestHandleExchange(t *testing.T) {
+	t.Parallel()
+
+	const cannedBody = "intercepted"
+	newHandler := func(t *testing.T) *http1Handler {
+		t.Helper()
+		h := newTestHTTP1Handler(t)
+		h.responseInterceptor = &mockInterceptor{
+			host: "example.com",
+			path: "/canned",
+			resp: &InterceptedResponse{
+				StatusCode: 200,
+				Headers:    types.Headers{{Name: "Content-Type", Value: "text/plain"}},
+				Body:       []byte(cannedBody),
+			},
+		}
+		return h
+	}
+
+	// case-variant Host must still resolve the lowercase-registered responder on both
+	// the plain (target derived from request) and TLS (target preset) entry paths
+	paths := []struct {
+		name    string
+		newExch func(t *testing.T) h1Exchange
+	}{
+		{"plain", func(_ *testing.T) h1Exchange { return h1Exchange{logParseErrors: true} }},
+		{"tls", func(t *testing.T) h1Exchange {
+			t.Helper()
+			up, upEnd := net.Pipe()
+			t.Cleanup(func() { _ = up.Close(); _ = upEnd.Close() })
+			return h1Exchange{
+				target:   &types.Target{Hostname: "Example.COM", Port: 443, UsesHTTPS: true},
+				upstream: &upstreamPair{conn: up, reader: bufio.NewReader(up)},
+			}
+		}},
+	}
+	for _, p := range paths {
+		t.Run("case_variant_host_"+p.name, func(t *testing.T) {
+			h := newHandler(t)
+			clientConn, proxyConn := net.Pipe()
+			t.Cleanup(func() { _ = clientConn.Close() })
+
+			go func() {
+				h.handleExchange(t.Context(), proxyConn, bufio.NewReader(proxyConn), p.newExch(t))
+				_ = proxyConn.Close()
+			}()
+
+			_, err := clientConn.Write([]byte("GET /canned HTTP/1.1\r\nHost: Example.COM\r\n\r\n"))
+			require.NoError(t, err)
+
+			respData, err := io.ReadAll(clientConn)
+			require.NoError(t, err)
+			assert.Contains(t, string(respData), "200")
+			assert.Contains(t, string(respData), cannedBody)
+
+			// flow is stored before the client reacts to the response
+			require.Equal(t, 1, h.history.Count())
+			assert.Equal(t, 200, firstEntry(t, h.history).Response.StatusCode)
+		})
+	}
+
+	t.Run("intercepted_write_deadline", func(t *testing.T) {
+		h := newHandler(t)
+		h.timeouts = TimeoutConfig{WriteTimeout: 50 * time.Millisecond}
+
+		clientConn, proxyConn := net.Pipe()
+		t.Cleanup(func() { _ = clientConn.Close() })
+
+		done := make(chan struct{})
+		go func() {
+			h.handleExchange(t.Context(), proxyConn, bufio.NewReader(proxyConn), h1Exchange{logParseErrors: true})
+			close(done)
+		}()
+
+		_, err := clientConn.Write([]byte("GET /canned HTTP/1.1\r\nHost: example.com\r\n\r\n"))
+		require.NoError(t, err)
+
+		// client never reads; the write deadline must unblock the handler goroutine
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("handleExchange hung on intercepted write without a deadline")
+		}
+		assert.Equal(t, 1, h.history.Count())
+	})
 }

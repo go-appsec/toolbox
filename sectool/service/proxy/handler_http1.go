@@ -49,99 +49,129 @@ func (h *http1Handler) Handle(ctx context.Context, clientConn net.Conn, clientRe
 		default:
 		}
 
-		if !h.handleSinglePlainHTTP(connCtx, clientConn, clientReader) {
+		if !h.handleExchange(connCtx, clientConn, clientReader, h1Exchange{logParseErrors: true}) {
 			return
 		}
 	}
 }
 
-// handleSinglePlainHTTP processes one HTTP/1.1 proxy request.
-// Returns true to continue processing more requests (keep-alive), false to close.
-func (h *http1Handler) handleSinglePlainHTTP(ctx context.Context, clientConn net.Conn, clientReader *bufio.Reader) bool {
+// upstreamPair is an already-open upstream conn and its reader.
+type upstreamPair struct {
+	conn   net.Conn
+	reader *bufio.Reader
+}
+
+// h1Exchange parameterizes one HTTP/1.1 exchange across the plain proxy path and the
+// TLS-MITM tunnel path. target and upstream are preset on the TLS path; nil on the plain
+// path, where the target is derived from the request and the upstream is dialed.
+type h1Exchange struct {
+	logParseErrors bool          // plain logs parse failures; TLS suppresses browser idle noise
+	target         *types.Target // nil on plain path
+	upstream       *upstreamPair // nil on plain path
+}
+
+// handleExchange processes one HTTP/1.1 request/response pair. Returns true to keep the
+// client connection alive for another request, false to close.
+func (h *http1Handler) handleExchange(ctx context.Context, clientConn net.Conn, clientReader *bufio.Reader, x h1Exchange) bool {
 	startTime := time.Now()
 	var buf bytes.Buffer
 
 	req, err := ParseRequest(clientReader)
 	if err != nil {
 		if errors.Is(err, ErrInvalidRequest) {
-			log.Printf("proxy: failed to parse request: %v", err)
-			h.sendError(clientConn, 400, "Bad Request")
+			if x.logParseErrors {
+				log.Printf("proxy: failed to parse request: %v", err)
+			}
+			sendError(clientConn, 400, "Bad Request")
 		}
 		return false
 	}
 
-	target, err := h.extractTarget(req)
-	if err != nil {
-		log.Printf("proxy: failed to extract target: %v", err)
-		h.sendError(clientConn, 400, "Bad Request: "+err.Error())
-		return false
+	target := x.target
+	if target == nil {
+		if target, err = h.extractTarget(req); err != nil {
+			log.Printf("proxy: failed to extract target: %v", err)
+			sendError(clientConn, 400, "Bad Request: "+err.Error())
+			return false
+		}
+		h.rewriteToOriginForm(req, target)
 	}
-
-	h.rewriteToOriginForm(req, target)
 	req.Protocol = types.ProtocolHTTP11
 
-	// Response interception before rules and upstream dial
+	// response interception before rules and upstream send
 	if h.responseInterceptor != nil {
 		if intercepted := h.responseInterceptor.InterceptRequest(
-			target.Hostname, target.Port, PathWithoutQuery(req.Path), req.Method,
+			strings.ToLower(target.Hostname), target.Port, PathWithoutQuery(req.Path), req.Method,
 		); intercepted != nil {
 			resp := BuildInterceptedH1Response(intercepted)
-			_, _ = clientConn.Write(resp.SerializeRaw(&buf))
 			if h.maxBodyBytes > 0 && len(req.Body) > h.maxBodyBytes {
 				req.SetBody(req.Body[:h.maxBodyBytes])
 			}
-			h.storeEntry(target, req, resp, nil, startTime)
+			h.storeEntry(target, req, resp, nil, startTime) // store before forward
+			if h.timeouts.WriteTimeout > 0 {
+				_ = clientConn.SetWriteDeadline(time.Now().Add(h.timeouts.WriteTimeout))
+			}
+			_, _ = clientConn.Write(resp.SerializeRaw(&buf))
 			return strings.ToLower(resp.GetHeader("Connection")) != connectionClose
 		}
 	}
 
-	// Apply request rules before upgrade detection to affect the Upgrade header
+	// apply request rules before upgrade detection to affect the Upgrade header
 	if h.ruleApplier != nil {
 		req = h.ruleApplier.ApplyRequestRules(req)
 	}
 
 	uc := &protocol.UpgradeClaimCtx{Req: req, Target: target, Signal: "http_101"}
 	if a, ok := h.reg.ClaimUpgrade(uc); ok {
-		a.ServeUpgrade(ctx, uc, protocol.UpgradeConns{ClientConn: clientConn, ClientReader: clientReader})
+		conns := protocol.UpgradeConns{ClientConn: clientConn, ClientReader: clientReader}
+		if x.upstream != nil {
+			conns.UpstreamConn = x.upstream.conn
+			conns.UpstreamReader = x.upstream.reader
+		}
+		a.ServeUpgrade(ctx, uc, conns)
 		return false // adapter takes over
 	}
 
-	upstreamAddr := fmt.Sprintf("%s:%d", target.Hostname, target.Port)
-	dialer := net.Dialer{Timeout: h.timeouts.DialTimeout}
-	upstreamConn, err := dialer.DialContext(ctx, "tcp", upstreamAddr)
-	if err != nil {
-		log.Printf("proxy: failed to connect to %s: %v", upstreamAddr, err)
-		if isTimeoutError(err) {
-			h.sendError(clientConn, 504, "Gateway Timeout: connection timeout")
-		} else {
-			h.sendError(clientConn, 502, "Bad Gateway: connection refused")
+	// dial on the plain path; the TLS path reuses the pre-dialed tunnel upstream
+	up := x.upstream
+	if up == nil {
+		upstreamAddr := fmt.Sprintf("%s:%d", target.Hostname, target.Port)
+		dialer := net.Dialer{Timeout: h.timeouts.DialTimeout}
+		upstreamConn, derr := dialer.DialContext(ctx, "tcp", upstreamAddr)
+		if derr != nil {
+			log.Printf("proxy: failed to connect to %s: %v", upstreamAddr, derr)
+			if isTimeoutError(derr) {
+				sendError(clientConn, 504, "Gateway Timeout: connection timeout")
+			} else {
+				sendError(clientConn, 502, "Bad Gateway: connection refused")
+			}
+			h.storeEntry(target, req, nil, nil, startTime)
+			return false
 		}
-		h.storeEntry(target, req, nil, nil, startTime)
-		return false
+		defer func() { _ = upstreamConn.Close() }() // only close the conn we dialed
+		up = &upstreamPair{conn: upstreamConn, reader: bufio.NewReader(upstreamConn)}
 	}
-	defer func() { _ = upstreamConn.Close() }()
 
 	if h.timeouts.WriteTimeout > 0 {
-		_ = upstreamConn.SetWriteDeadline(time.Now().Add(h.timeouts.WriteTimeout))
+		_ = up.conn.SetWriteDeadline(time.Now().Add(h.timeouts.WriteTimeout))
 	}
 
-	if _, err := upstreamConn.Write(req.SerializeRaw(&buf)); err != nil {
-		log.Printf("proxy: failed to send request to %s: %v", upstreamAddr, err)
+	if _, err := up.conn.Write(req.SerializeRaw(&buf)); err != nil {
+		log.Printf("proxy: failed to send request to %s: %v", target.Hostname, err)
 		if isTimeoutError(err) {
-			h.sendError(clientConn, 504, "Gateway Timeout: write timeout")
+			sendError(clientConn, 504, "Gateway Timeout: write timeout")
 		} else {
-			h.sendError(clientConn, 502, "Bad Gateway: failed to send request")
+			sendError(clientConn, 502, "Bad Gateway: failed to send request")
 		}
 		h.storeEntry(target, req, nil, nil, startTime)
 		return false
 	}
 
 	if h.timeouts.ReadTimeout > 0 {
-		_ = upstreamConn.SetReadDeadline(time.Now().Add(h.timeouts.ReadTimeout))
+		_ = up.conn.SetReadDeadline(time.Now().Add(h.timeouts.ReadTimeout))
 	}
 
-	upstreamReader := bufio.NewReader(upstreamConn)
-	return h.streamResponse(clientConn, upstreamConn, upstreamReader, req, target, startTime)
+	return h.streamResponse(clientConn, up.conn, up.reader, req, target, startTime)
 }
 
 // extractTarget determines the upstream server from the request.
@@ -227,23 +257,6 @@ func isTimeoutError(err error) bool {
 	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
-// sendError writes an HTTP error response to the client.
-func (h *http1Handler) sendError(conn net.Conn, code int, message string) {
-	body := []byte(message + "\n")
-	resp := &types.RawHTTP1Response{
-		Version:    "HTTP/1.1",
-		StatusCode: code,
-		StatusText: message,
-		Headers: []types.Header{
-			{Name: "Content-Type", Value: "text/plain"},
-			{Name: "Content-Length", Value: strconv.Itoa(len(body))},
-			{Name: "Connection", Value: "close"},
-		},
-		Body: body,
-	}
-	_, _ = conn.Write(resp.SerializeRaw(bytes.NewBuffer(nil)))
-}
-
 // forwardInterim writes an interim 1xx response to the client as-is (no rules applied).
 func (h *http1Handler) forwardInterim(clientConn net.Conn, ir *types.RawHTTP1Response) error {
 	var buf bytes.Buffer
@@ -290,9 +303,9 @@ func (h *http1Handler) streamResponse(clientConn, upstreamConn net.Conn, upstrea
 		// Skip the synthetic error if interim responses already started the wire stream
 		if len(interim) == 0 {
 			if isTimeoutError(err) {
-				h.sendError(clientConn, 504, "Gateway Timeout: read timeout")
+				sendError(clientConn, 504, "Gateway Timeout: read timeout")
 			} else {
-				h.sendError(clientConn, 502, "Bad Gateway: malformed response")
+				sendError(clientConn, 502, "Bad Gateway: malformed response")
 			}
 		}
 		h.storeEntry(target, req, nil, interim, startTime)
@@ -589,82 +602,11 @@ func (h *http1Handler) HandleTLS(ctx context.Context, clientConn, upstreamConn n
 		default:
 		}
 
-		if !h.handleSingleTLS(connCtx, clientConn, upstreamConn, clientReader, upstreamReader, target) {
+		if !h.handleExchange(connCtx, clientConn, clientReader, h1Exchange{
+			target:   target,
+			upstream: &upstreamPair{conn: upstreamConn, reader: upstreamReader},
+		}) {
 			return
 		}
 	}
-}
-
-// handleSingleTLS handles a single HTTP/1.1 request/response exchange over TLS.
-// Returns true to continue processing more requests, false to close connection.
-func (h *http1Handler) handleSingleTLS(ctx context.Context, clientConn, upstreamConn net.Conn, clientReader, upstreamReader *bufio.Reader, target *types.Target) bool {
-	startTime := time.Now()
-	var buf bytes.Buffer
-
-	req, err := ParseRequest(clientReader)
-	if err != nil {
-		if errors.Is(err, ErrInvalidRequest) {
-			// Don't log - browsers routinely send non-HTTP data on TLS connections
-			// during connection lifecycle management (preconnect, idle cleanup)
-			h.sendError(clientConn, 400, "Bad Request")
-		}
-		return false
-	}
-
-	req.Protocol = types.ProtocolHTTP11
-
-	// Check for response interception before rules and upstream send
-	if h.responseInterceptor != nil {
-		if intercepted := h.responseInterceptor.InterceptRequest(
-			target.Hostname, target.Port, PathWithoutQuery(req.Path), req.Method,
-		); intercepted != nil {
-			resp := BuildInterceptedH1Response(intercepted)
-			if h.timeouts.WriteTimeout > 0 {
-				_ = clientConn.SetWriteDeadline(time.Now().Add(h.timeouts.WriteTimeout))
-			}
-			_, _ = clientConn.Write(resp.SerializeRaw(&buf))
-			if h.maxBodyBytes > 0 && len(req.Body) > h.maxBodyBytes {
-				req.SetBody(req.Body[:h.maxBodyBytes])
-			}
-			h.storeEntry(target, req, resp, nil, startTime)
-			return strings.ToLower(resp.GetHeader("Connection")) != connectionClose
-		}
-	}
-
-	// Apply request rules BEFORE WebSocket detection to affect Upgrade header
-	if h.ruleApplier != nil {
-		req = h.ruleApplier.ApplyRequestRules(req)
-	}
-
-	uc := &protocol.UpgradeClaimCtx{Req: req, Target: target, Signal: "http_101"}
-	if a, ok := h.reg.ClaimUpgrade(uc); ok {
-		a.ServeUpgrade(ctx, uc, protocol.UpgradeConns{
-			ClientConn:     clientConn,
-			ClientReader:   clientReader,
-			UpstreamConn:   upstreamConn,
-			UpstreamReader: upstreamReader,
-		})
-		return false // adapter takes over
-	}
-
-	if h.timeouts.WriteTimeout > 0 {
-		_ = upstreamConn.SetWriteDeadline(time.Now().Add(h.timeouts.WriteTimeout))
-	}
-
-	if _, err := upstreamConn.Write(req.SerializeRaw(&buf)); err != nil {
-		log.Printf("proxy: failed to send TLS request: %v", err)
-		if isTimeoutError(err) {
-			h.sendError(clientConn, 504, "Gateway Timeout: write timeout")
-		} else {
-			h.sendError(clientConn, 502, "Bad Gateway: failed to send request")
-		}
-		h.storeEntry(target, req, nil, nil, startTime)
-		return false
-	}
-
-	if h.timeouts.ReadTimeout > 0 {
-		_ = upstreamConn.SetReadDeadline(time.Now().Add(h.timeouts.ReadTimeout))
-	}
-
-	return h.streamResponse(clientConn, upstreamConn, upstreamReader, req, target, startTime)
 }
