@@ -9,9 +9,11 @@ import (
 	"io"
 	"log"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-appsec/toolbox/sectool/service/proxy/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
@@ -23,6 +25,9 @@ const (
 	alpnHTTP1 = "http/1.1"
 )
 
+// serverCapTTL bounds cache staleness so upstream capability changes are eventually seen
+const serverCapTTL = 30 * time.Minute
+
 // connectHandler handles CONNECT requests for HTTPS MITM interception.
 type connectHandler struct {
 	certManager  *CertManager
@@ -33,11 +38,15 @@ type connectHandler struct {
 	maxBodyBytes int
 
 	// Server capability cache: host:port -> negotiated protocol; avoids repeated probe latency
-	// TODO - Consider a 30-minute TTL on cache entries for long-running sessions
 	capsMu     sync.RWMutex
-	serverCaps map[string]string
+	serverCaps map[string]serverCap
 
 	timeouts TimeoutConfig
+}
+
+type serverCap struct {
+	proto string
+	seen  time.Time
 }
 
 // newConnectHandler creates a new CONNECT handler.
@@ -48,7 +57,7 @@ func newConnectHandler(certManager *CertManager, http1Handler *http1Handler, htt
 		http2Handler: http2Handler,
 		history:      history,
 		maxBodyBytes: maxBodyBytes,
-		serverCaps:   make(map[string]string),
+		serverCaps:   make(map[string]serverCap),
 		timeouts:     timeouts,
 	}
 }
@@ -205,10 +214,10 @@ func (h *connectHandler) handleTLS(ctx context.Context, clientConn net.Conn, cli
 				return nil, certErr
 			}
 
-			// Return config with only the negotiated protocol
-			var nextProtos []string
-			if negotiatedProto != "" {
-				nextProtos = []string{negotiatedProto}
+			nextProtos := alpnForClient(hello.SupportedProtos, negotiatedProto)
+			if nextProtos == nil && len(hello.SupportedProtos) > 0 {
+				log.Printf("proxy: %s upstream speaks %q, client offered %v; continuing without ALPN",
+					sni, negotiatedProto, hello.SupportedProtos)
 			}
 
 			return &tls.Config{
@@ -289,24 +298,49 @@ func (h *connectHandler) routeByClientProto(ctx context.Context, clientTLS *tls.
 	h.routeByProtocol(ctx, clientTLS, upstreamConn, negotiatedProto, target)
 }
 
-// probeOrConnect returns an open upstream connection with the appropriate protocol.
-// Uses cached protocol if available, otherwise probes the server.
-func (h *connectHandler) probeOrConnect(ctx context.Context, targetAddr, sni string, clientALPN []string) (net.Conn, string, error) {
-	// Check cache
+// cachedProto returns the cached upstream protocol for targetAddr, false when absent or expired.
+func (h *connectHandler) cachedProto(targetAddr string) (string, bool) {
 	h.capsMu.RLock()
-	cachedProto, cached := h.serverCaps[targetAddr]
-	h.capsMu.RUnlock()
+	defer h.capsMu.RUnlock()
 
-	if cached {
-		// Connect with cached protocol preference
-		conn, err := h.dialUpstream(ctx, targetAddr, sni, []string{cachedProto})
+	entry, ok := h.serverCaps[targetAddr]
+	if !ok || time.Since(entry.seen) > serverCapTTL {
+		return "", false
+	}
+	return entry.proto, true
+}
+
+// setCachedProto records the protocol negotiated with targetAddr.
+func (h *connectHandler) setCachedProto(targetAddr, proto string) {
+	h.capsMu.Lock()
+	defer h.capsMu.Unlock()
+
+	h.serverCaps[targetAddr] = serverCap{proto: proto, seen: time.Now()}
+}
+
+// clearCachedProto drops any cached protocol for targetAddr.
+func (h *connectHandler) clearCachedProto(targetAddr string) {
+	h.capsMu.Lock()
+	defer h.capsMu.Unlock()
+
+	delete(h.serverCaps, targetAddr)
+}
+
+// probeOrConnect returns an open upstream connection and the protocol negotiated with it.
+// Uses the cached protocol when the client offered it, otherwise probes with the client's list.
+func (h *connectHandler) probeOrConnect(ctx context.Context, targetAddr, sni string, clientALPN []string) (net.Conn, string, error) {
+	// a cached protocol the client did not offer is useless here, probe instead; leave the
+	// entry alone since other clients may still negotiate it
+	if cached, ok := h.cachedProto(targetAddr); ok && slices.Contains(clientALPN, cached) {
+		conn, err := h.dialUpstream(ctx, targetAddr, sni, []string{cached})
 		if err != nil {
-			// Cache might be stale, invalidate and retry with full probe
-			h.capsMu.Lock()
-			delete(h.serverCaps, targetAddr)
-			h.capsMu.Unlock()
+			h.clearCachedProto(targetAddr) // cache might be stale, retry with a full probe
 		} else {
-			return conn, cachedProto, nil
+			actual := negotiatedALPN(conn)
+			if actual != cached { // server stopped honoring the cached protocol
+				h.setCachedProto(targetAddr, actual)
+			}
+			return conn, actual, nil
 		}
 	}
 
@@ -320,23 +354,33 @@ func (h *connectHandler) probeUpstream(ctx context.Context, targetAddr, sni stri
 		return nil, "", err
 	}
 
-	// Determine negotiated protocol
-	var negotiatedProto string
-	if tlsConn, ok := conn.(*tls.Conn); ok {
-		negotiatedProto = tlsConn.ConnectionState().NegotiatedProtocol
+	// only an h2-offering probe reveals server capability; caching a client-forced http/1.1
+	// result would pin the host and downgrade later h2 traffic
+	negotiatedProto := negotiatedALPN(conn)
+	if slices.Contains(clientALPN, alpnH2) {
+		h.setCachedProto(targetAddr, negotiatedProto)
 	}
-
-	// Default to HTTP/1.1 if no ALPN negotiated
-	if negotiatedProto == "" {
-		negotiatedProto = alpnHTTP1
-	}
-
-	// Cache the result
-	h.capsMu.Lock()
-	h.serverCaps[targetAddr] = negotiatedProto
-	h.capsMu.Unlock()
 
 	return conn, negotiatedProto, nil
+}
+
+// negotiatedALPN returns the protocol negotiated on conn, defaulting to HTTP/1.1.
+func negotiatedALPN(conn net.Conn) string {
+	if tlsConn, ok := conn.(*tls.Conn); ok {
+		if proto := tlsConn.ConnectionState().NegotiatedProtocol; proto != "" {
+			return proto
+		}
+	}
+	return alpnHTTP1
+}
+
+// alpnForClient returns the ALPN list to present to the client: the upstream protocol when
+// the client offered it, otherwise nil for an un-negotiated handshake.
+func alpnForClient(clientALPN []string, upstreamProto string) []string {
+	if upstreamProto == "" || !slices.Contains(clientALPN, upstreamProto) {
+		return nil
+	}
+	return []string{upstreamProto}
 }
 
 // dialUpstream establishes a TLS connection to the upstream server.

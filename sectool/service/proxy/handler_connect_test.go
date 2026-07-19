@@ -408,6 +408,152 @@ func TestHandleClientProtoReconciliation(t *testing.T) {
 	assert.Contains(t, string(noAlpnBody), "proto=HTTP/1.1")
 }
 
+func TestProbeOrConnect(t *testing.T) {
+	t.Parallel()
+
+	// dualProtoProxy serves h2 and http/1.1 upstream through a fresh proxy, returning the
+	// upstream host:port, a CA pool trusting the proxy, and the proxy itself
+	dualProtoProxy := func(t *testing.T) (string, *x509.CertPool, *ProxyServer) {
+		t.Helper()
+
+		testServer := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("proto=" + r.Proto))
+		}))
+		testServer.TLS = &tls.Config{NextProtos: []string{alpnH2, alpnHTTP1}}
+		testServer.StartTLS()
+		t.Cleanup(testServer.Close)
+
+		proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
+		require.NoError(t, err)
+		go func() { _ = proxy.Serve() }()
+		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
+
+		caCertPool := x509.NewCertPool()
+		caCertPool.AddCert(proxy.CertManager().CACert())
+		return mustParseURL(t, testServer.URL).Host, caCertPool, proxy
+	}
+
+	// alpnClient builds a proxied client offering exactly the given ALPN protocols
+	alpnClient := func(proxy *ProxyServer, pool *x509.CertPool, alpn ...string) *http.Client {
+		return &http.Client{Transport: &http.Transport{
+			Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: proxy.Addr()}),
+			TLSClientConfig: &tls.Config{
+				RootCAs:            pool,
+				InsecureSkipVerify: true,
+				NextProtos:         alpn,
+			},
+			ForceAttemptHTTP2: slices.Contains(alpn, alpnH2),
+		}}
+	}
+
+	fetch := func(t *testing.T, client *http.Client, target string) string {
+		t.Helper()
+
+		req, err := http.NewRequestWithContext(t.Context(), "GET", "https://"+target+"/probe", nil)
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return string(body)
+	}
+
+	t.Run("h2_then_h1_only_client", func(t *testing.T) {
+		t.Parallel()
+
+		target, pool, proxy := dualProtoProxy(t)
+
+		require.Equal(t, "proto=HTTP/2.0", fetch(t, alpnClient(proxy, pool, alpnH2, alpnHTTP1), target))
+		assert.Equal(t, "proto=HTTP/1.1", fetch(t, alpnClient(proxy, pool, alpnHTTP1), target))
+	})
+
+	t.Run("h1_then_h2_only_client", func(t *testing.T) {
+		t.Parallel()
+
+		target, pool, proxy := dualProtoProxy(t)
+
+		require.Equal(t, "proto=HTTP/1.1", fetch(t, alpnClient(proxy, pool, alpnHTTP1), target))
+		assert.Equal(t, "proto=HTTP/2.0", fetch(t, alpnClient(proxy, pool, alpnH2), target))
+	})
+
+	t.Run("stale_entry_refreshed", func(t *testing.T) {
+		t.Parallel()
+
+		target, pool, proxy := dualProtoProxy(t)
+		h := proxy.connectHandler
+
+		h.capsMu.Lock()
+		h.serverCaps[target] = serverCap{proto: alpnHTTP1, seen: time.Now().Add(-2 * serverCapTTL)}
+		h.capsMu.Unlock()
+		_, ok := h.cachedProto(target)
+		require.False(t, ok)
+
+		// expired entry ignored, so the h2 client probes fresh and refreshes the cache
+		assert.Equal(t, "proto=HTTP/2.0", fetch(t, alpnClient(proxy, pool, alpnH2), target))
+		cached, ok := h.cachedProto(target)
+		require.True(t, ok)
+		assert.Equal(t, alpnH2, cached)
+	})
+
+	t.Run("no_alpn_client_not_cached", func(t *testing.T) {
+		t.Parallel()
+
+		target, pool, proxy := dualProtoProxy(t)
+		h := proxy.connectHandler
+
+		host, _, err := net.SplitHostPort(target)
+		require.NoError(t, err)
+		conn, proto, err := h.probeOrConnect(t.Context(), target, host, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.Close() })
+		assert.Equal(t, alpnHTTP1, proto)
+
+		_, ok := h.cachedProto(target)
+		assert.False(t, ok)
+
+		// h2 traffic is still able to negotiate h2
+		assert.Equal(t, "proto=HTTP/2.0", fetch(t, alpnClient(proxy, pool, alpnH2), target))
+	})
+}
+
+func TestAlpnForClient(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		clientALPN []string
+		upstream   string
+		want       []string
+	}{
+		{
+			name:       "client_offers_upstream",
+			clientALPN: []string{alpnH2, alpnHTTP1},
+			upstream:   alpnH2,
+			want:       []string{alpnH2},
+		},
+		{
+			name:       "client_lacks_upstream",
+			clientALPN: []string{alpnHTTP1},
+			upstream:   alpnH2,
+		},
+		{
+			name:     "empty_client_list",
+			upstream: alpnH2,
+		},
+		{
+			name:       "empty_upstream",
+			clientALPN: []string{alpnHTTP1},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, alpnForClient(tc.clientALPN, tc.upstream))
+		})
+	}
+}
+
 func TestUpstreamMirrorSpec(t *testing.T) {
 	t.Parallel()
 
