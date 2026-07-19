@@ -206,6 +206,34 @@ func TestManagerReconnectResume(t *testing.T) {
 	assert.False(t, m.hasResumeState(instance))
 }
 
+func TestManagerHandleConn(t *testing.T) {
+	t.Parallel()
+
+	t.Run("cancel_closes_unregistered", func(t *testing.T) {
+		m := testManager(Config{})
+		ctx, cancel := context.WithCancel(t.Context())
+		t.Cleanup(cancel)
+		srv, cli := net.Pipe()
+		done := make(chan struct{})
+		go func() {
+			m.HandleConn(ctx, srv)
+			close(done)
+		}()
+
+		p := wire.NewPeer(cli, nil)
+		go func() { _ = p.Run(t.Context()) }()
+		t.Cleanup(func() { _ = p.Close() })
+
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("HandleConn did not return")
+		}
+		assert.Eventually(t, p.Closed, 2*time.Second, 10*time.Millisecond)
+	})
+}
+
 func TestManagerShutdown(t *testing.T) {
 	t.Parallel()
 

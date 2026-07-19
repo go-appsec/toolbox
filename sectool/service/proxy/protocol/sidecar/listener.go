@@ -63,9 +63,9 @@ func (l *Listener) Close(ctx context.Context) error {
 	if l.closed.Swap(true) {
 		return nil
 	}
-	l.cancel()
 	err := l.ln.Close()
 	l.mgr.Shutdown(ctx)
+	l.cancel() // after Shutdown so the drain RPC completes
 
 	done := make(chan struct{})
 	go func() {

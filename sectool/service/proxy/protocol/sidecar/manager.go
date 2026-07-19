@@ -117,9 +117,15 @@ func (m *Manager) HandleConn(ctx context.Context, conn net.Conn) {
 	s := &session{m: m}
 	s.peer = wire.NewPeer(conn, s)
 
-	hbCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go m.heartbeatLoop(hbCtx, s)
+	go m.heartbeatLoop(ctx, s)
+	// peer.Run blocks in ReadFrame, close on cancel to unblock unregistered sessions
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = s.peer.Close()
+		case <-s.peer.Done():
+		}
+	}()
 
 	_ = s.peer.Run(ctx)
 	log.Printf("sidecar[%s]: connection closed", s.adapterName())
