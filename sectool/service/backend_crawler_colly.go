@@ -55,7 +55,6 @@ type CollyBackend struct {
 // crawlSession holds the state for a single crawl session.
 type crawlSession struct {
 	info      CrawlSessionInfo
-	opts      CrawlOptions
 	collector *colly.Collector
 	startedAt time.Time
 
@@ -248,6 +247,12 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 	if len(opts.DisallowedPaths) == 0 {
 		opts.DisallowedPaths = b.config.Crawler.DisallowedPaths
 	}
+	if opts.MaxDepth == 0 {
+		opts.MaxDepth = b.config.Crawler.MaxDepth
+	}
+	if opts.MaxRequests == 0 {
+		opts.MaxRequests = b.config.Crawler.MaxRequests
+	}
 
 	sessionCtx, cancel := context.WithCancel(context.Background())
 
@@ -264,7 +269,6 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 			CreatedAt: time.Now(),
 			State:     crawlStateRunning,
 		},
-		opts:              opts,
 		startedAt:         time.Now(),
 		flowsByID:         make(map[string]*CrawlFlow),
 		urlsSeen:          make(map[string]bool),
@@ -301,9 +305,8 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		c.DisallowedURLFilters = append(c.DisallowedURLFilters, buildDomainFilters(b.config.ExcludeDomains)...)
 	}
 
-	if opts.IgnoreRobotsTxt {
-		c.IgnoreRobotsTxt = true
-	}
+	// colly's NewCollector defaults this to true, always assign
+	c.IgnoreRobotsTxt = !b.config.Crawler.RespectRobots
 	c.UserAgent = config.UserAgent()
 
 	// Rate limiting
@@ -487,6 +490,10 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 	if opts.ExtractForms != nil {
 		extractForms = *opts.ExtractForms
 	}
+	submitForms := b.config.Crawler.SubmitForms
+	if opts.SubmitForms != nil {
+		submitForms = *opts.SubmitForms
+	}
 	if extractForms {
 		c.OnHTML("form", func(e *colly.HTMLElement) {
 			form := extractForm(e)
@@ -496,7 +503,7 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 			sess.mu.Unlock()
 
 			// Optionally submit form
-			if opts.SubmitForms {
+			if submitForms {
 				allowed := true
 				for _, re := range sess.disallowedRegexes {
 					if re.MatchString(form.Action) {
@@ -560,11 +567,7 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 	b.mu.Unlock()
 
 	// Start recon in background if enabled
-	var recon bool
-	if b.config.Crawler.Recon != nil {
-		recon = *b.config.Crawler.Recon
-	}
-	if recon && len(allowedDomains) > 0 {
+	if b.config.Crawler.Recon && len(allowedDomains) > 0 {
 		b.startRecon(sess, allowedDomains)
 	}
 
@@ -686,11 +689,7 @@ func (b *CollyBackend) AddSeeds(ctx context.Context, sessionID string, seeds []C
 	}
 
 	// Start recon for new domains if enabled
-	var recon bool
-	if b.config.Crawler.Recon != nil {
-		recon = *b.config.Crawler.Recon
-	}
-	if recon && len(newDomains) > 0 {
+	if b.config.Crawler.Recon && len(newDomains) > 0 {
 		b.startRecon(sess, newDomains)
 	}
 

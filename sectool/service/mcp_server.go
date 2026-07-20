@@ -458,6 +458,16 @@ func jsonResult(data interface{}) (*mcp.CallToolResult, error) {
 	return mcp.NewToolResultText(string(b)), nil
 }
 
+// getOptionalBoolArg returns the named bool argument, or nil when absent.
+func getOptionalBoolArg(req mcp.CallToolRequest, name string) *bool {
+	args := req.GetArguments()
+	if _, ok := args[name]; !ok {
+		return nil
+	}
+	v := req.GetBool(name, false)
+	return &v
+}
+
 func errorResult(message string) *mcp.CallToolResult {
 	return mcp.NewToolResultError(message)
 }

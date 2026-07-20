@@ -693,6 +693,194 @@ func TestCollyBackend_capturesErrorStatusFlows(t *testing.T) {
 	assert.Empty(t, crawlErrors)
 }
 
+// crawlChainServer serves / -> /a -> /b, each linking to the next.
+func crawlChainServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	page := func(link string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			if link == "" {
+				_, _ = fmt.Fprint(w, `<html><body>end</body></html>`)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `<html><body><a href="%s">next</a></body></html>`, link)
+		}
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/a", page("/b"))
+	mux.HandleFunc("/b", page(""))
+	mux.HandleFunc("/", page("/a"))
+
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// crawlFormServer serves a form posting to /submit, counting the POSTs received.
+func crawlFormServer(t *testing.T, posts *atomic.Int32) *httptest.Server {
+	t.Helper()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/submit", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts.Add(1)
+		}
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><body>done</body></html>`)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><body><form action="/submit" method="POST">
+			<input name="q" value="x">
+		</form></body></html>`)
+	})
+
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// crawlRobotsServer serves a robots.txt disallowing everything.
+func crawlRobotsServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = fmt.Fprint(w, "User-agent: *\nDisallow: /\n")
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprint(w, `<html><body>ok</body></html>`)
+	})
+
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// crawlTestConfig returns a default config without crawl rate limiting.
+func crawlTestConfig() *config.Config {
+	cfg := config.DefaultConfig()
+	cfg.Crawler.DelayMS = 0
+	cfg.Crawler.Parallelism = 4
+	return cfg
+}
+
+// runCrawl creates a session, waits for completion, and returns the flow paths.
+func runCrawl(t *testing.T, cfg *config.Config, opts CrawlOptions) []string {
+	t.Helper()
+
+	b := NewCollyBackend(cfg, nil, nil)
+	t.Cleanup(func() { _ = b.Close(context.Background()) })
+
+	ctx := t.Context()
+	info, err := b.CreateSession(ctx, opts)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, err := b.GetStatus(ctx, info.ID)
+		return err == nil && status.State == crawlStateCompleted
+	}, 20*time.Second, 10*time.Millisecond)
+
+	flows, err := b.ListFlows(ctx, info.ID, CrawlListOptions{})
+	require.NoError(t, err)
+
+	paths := make([]string, 0, len(flows))
+	for _, f := range flows {
+		paths = append(paths, f.Path)
+	}
+	return paths
+}
+
+func TestCollyBackend_CreateSession(t *testing.T) {
+	t.Parallel()
+
+	t.Run("max_depth_from_config", func(t *testing.T) {
+		ts := crawlChainServer(t)
+		cfg := crawlTestConfig()
+		cfg.Crawler.MaxDepth = 2
+
+		paths := runCrawl(t, cfg, CrawlOptions{Seeds: []CrawlSeed{{URL: ts.URL + "/"}}})
+		assert.ElementsMatch(t, []string{"/", "/a"}, paths)
+	})
+
+	t.Run("negative_depth_unlimited", func(t *testing.T) {
+		ts := crawlChainServer(t)
+		cfg := crawlTestConfig()
+		cfg.Crawler.MaxDepth = 2
+
+		paths := runCrawl(t, cfg, CrawlOptions{
+			Seeds:    []CrawlSeed{{URL: ts.URL + "/"}},
+			MaxDepth: -1,
+		})
+		assert.ElementsMatch(t, []string{"/", "/a", "/b"}, paths)
+	})
+
+	t.Run("max_requests_from_config", func(t *testing.T) {
+		ts := crawlChainServer(t)
+		cfg := crawlTestConfig()
+		cfg.Crawler.MaxRequests = 2
+
+		paths := runCrawl(t, cfg, CrawlOptions{Seeds: []CrawlSeed{{URL: ts.URL + "/"}}})
+		assert.Len(t, paths, 2)
+	})
+
+	t.Run("negative_requests_unlimited", func(t *testing.T) {
+		ts := crawlChainServer(t)
+		cfg := crawlTestConfig()
+		cfg.Crawler.MaxRequests = 2
+
+		paths := runCrawl(t, cfg, CrawlOptions{
+			Seeds:       []CrawlSeed{{URL: ts.URL + "/"}},
+			MaxRequests: -1,
+		})
+		assert.ElementsMatch(t, []string{"/", "/a", "/b"}, paths)
+	})
+
+	t.Run("submit_forms_from_config", func(t *testing.T) {
+		var posts atomic.Int32
+		ts := crawlFormServer(t, &posts)
+		cfg := crawlTestConfig()
+		cfg.Crawler.SubmitForms = true
+
+		runCrawl(t, cfg, CrawlOptions{Seeds: []CrawlSeed{{URL: ts.URL + "/"}}})
+		assert.Positive(t, posts.Load())
+	})
+
+	t.Run("submit_forms_option_override", func(t *testing.T) {
+		var posts atomic.Int32
+		ts := crawlFormServer(t, &posts)
+		cfg := crawlTestConfig()
+		cfg.Crawler.SubmitForms = true
+		var disabled bool
+
+		runCrawl(t, cfg, CrawlOptions{
+			Seeds:       []CrawlSeed{{URL: ts.URL + "/"}},
+			SubmitForms: &disabled,
+		})
+		assert.Zero(t, posts.Load())
+	})
+
+	t.Run("robots_ignored_by_default", func(t *testing.T) {
+		ts := crawlRobotsServer(t)
+
+		paths := runCrawl(t, crawlTestConfig(), CrawlOptions{Seeds: []CrawlSeed{{URL: ts.URL + "/"}}})
+		assert.ElementsMatch(t, []string{"/"}, paths)
+	})
+
+	t.Run("robots_respected_from_config", func(t *testing.T) {
+		ts := crawlRobotsServer(t)
+		cfg := crawlTestConfig()
+		cfg.Crawler.RespectRobots = true
+
+		paths := runCrawl(t, cfg, CrawlOptions{Seeds: []CrawlSeed{{URL: ts.URL + "/"}}})
+		assert.Empty(t, paths)
+	})
+}
+
 func TestCollyBackend_addSeeds_completionRace(t *testing.T) {
 	t.Parallel()
 

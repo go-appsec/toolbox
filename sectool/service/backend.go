@@ -291,14 +291,13 @@ type CrawlOptions struct {
 	ExplicitDomains []string          // User-specified via --domain
 	AllowedPaths    []string          // Glob patterns (default: all)
 	DisallowedPaths []string          // Glob patterns (default from config)
-	MaxDepth        int               // 0 = unlimited
-	MaxRequests     int               // 0 = unlimited
-	Delay           time.Duration     // Default: 200ms
+	MaxDepth        int               // 0 = config default, negative = unlimited
+	MaxRequests     int               // 0 = config default, negative = unlimited
+	Delay           time.Duration     // 0 = config default
 	RandomDelay     time.Duration     // Additional random jitter
-	Parallelism     int               // Default: 2
-	IgnoreRobotsTxt bool              // Default: false
-	SubmitForms     bool              // Default: false
-	ExtractForms    *bool             // Default: true (from config)
+	Parallelism     int               // 0 = config default
+	SubmitForms     *bool             // nil = config default
+	ExtractForms    *bool             // nil = config default
 	Headers         map[string]string // Custom headers
 }
 

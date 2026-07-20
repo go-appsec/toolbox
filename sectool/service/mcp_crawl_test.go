@@ -280,6 +280,46 @@ func TestMCP_CrawlSeedWithMock(t *testing.T) {
 	assert.Equal(t, queuedBefore+2, statusAfter.URLsQueued)
 }
 
+func TestMCP_CrawlCreateOptions(t *testing.T) {
+	t.Parallel()
+
+	_, mcpClient, _, _, mockCrawler := setupMockMCPServer(t, nil)
+
+	create := func(t *testing.T, args map[string]interface{}) CrawlOptions {
+		t.Helper()
+		args["seed_urls"] = "https://example.com"
+		result := CallMCPTool(t, mcpClient, "crawl_create", args)
+		require.False(t, result.IsError,
+			"crawl_create failed: %s", ExtractMCPText(t, result))
+		return mockCrawler.lastOpts
+	}
+
+	t.Run("limits_passed_through", func(t *testing.T) {
+		opts := create(t, map[string]interface{}{"max_depth": -1, "max_requests": 50})
+		assert.Equal(t, -1, opts.MaxDepth)
+		assert.Equal(t, 50, opts.MaxRequests)
+	})
+
+	t.Run("limits_unset_for_config", func(t *testing.T) {
+		opts := create(t, map[string]interface{}{})
+		assert.Zero(t, opts.MaxDepth)
+		assert.Zero(t, opts.MaxRequests)
+	})
+
+	t.Run("submit_forms_unset", func(t *testing.T) {
+		opts := create(t, map[string]interface{}{})
+		assert.Nil(t, opts.SubmitForms)
+	})
+
+	t.Run("submit_forms_explicit", func(t *testing.T) {
+		for _, want := range []bool{true, false} {
+			opts := create(t, map[string]interface{}{"submit_forms": want})
+			require.NotNil(t, opts.SubmitForms)
+			assert.Equal(t, want, *opts.SubmitForms)
+		}
+	})
+}
+
 func TestMCP_CrawlValidation(t *testing.T) {
 	t.Parallel()
 

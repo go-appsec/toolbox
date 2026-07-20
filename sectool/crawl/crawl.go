@@ -17,7 +17,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/protocol"
 )
 
-func create(mcpURL string, urls, flows, domains []string, label string, maxDepth, maxRequests int, delay time.Duration, parallelism int, submitForms, ignoreRobots bool) error {
+func create(mcpURL string, urls, flows, domains []string, label string, maxDepth, maxRequests int, delay time.Duration, parallelism int, submitForms bool) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -32,16 +32,15 @@ func create(mcpURL string, urls, flows, domains []string, label string, maxDepth
 	}
 
 	resp, err := client.CrawlCreate(ctx, mcpclient.CrawlCreateOpts{
-		Label:        label,
-		SeedURLs:     strings.Join(urls, ","),
-		SeedFlows:    strings.Join(flows, ","),
-		Domains:      strings.Join(domains, ","),
-		MaxDepth:     maxDepth,
-		MaxRequests:  maxRequests,
-		Delay:        delayStr,
-		Parallelism:  parallelism,
-		SubmitForms:  submitForms,
-		IgnoreRobots: ignoreRobots,
+		Label:       label,
+		SeedURLs:    strings.Join(urls, ","),
+		SeedFlows:   strings.Join(flows, ","),
+		Domains:     strings.Join(domains, ","),
+		MaxDepth:    maxDepth,
+		MaxRequests: maxRequests,
+		Delay:       delayStr,
+		Parallelism: parallelism,
+		SubmitForms: submitForms,
 	})
 	if err != nil {
 		return fmt.Errorf("crawl create failed: %w", err)

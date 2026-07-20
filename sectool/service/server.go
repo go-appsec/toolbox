@@ -377,7 +377,7 @@ func (s *Server) setupHttpBackend(ctx context.Context) error {
 	}
 
 	// Case 3: config burp_required is true
-	if s.cfg.BurpRequired != nil && *s.cfg.BurpRequired {
+	if s.cfg.BurpRequired {
 		if err := s.connectBurpMCP(ctx); err != nil {
 			return fmt.Errorf("config burp_required is true: %w", err)
 		}

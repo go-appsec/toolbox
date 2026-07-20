@@ -354,10 +354,10 @@ func (c *Client) CrawlCreate(ctx context.Context, opts CrawlCreateOpts) (*protoc
 	if len(opts.Headers) > 0 {
 		args["headers"] = opts.Headers
 	}
-	if opts.MaxDepth > 0 {
+	if opts.MaxDepth != 0 {
 		args["max_depth"] = opts.MaxDepth
 	}
-	if opts.MaxRequests > 0 {
+	if opts.MaxRequests != 0 {
 		args["max_requests"] = opts.MaxRequests
 	}
 	if opts.Delay != "" {
@@ -368,9 +368,6 @@ func (c *Client) CrawlCreate(ctx context.Context, opts CrawlCreateOpts) (*protoc
 	}
 	if opts.SubmitForms {
 		args["submit_forms"] = opts.SubmitForms
-	}
-	if opts.IgnoreRobots {
-		args["ignore_robots"] = opts.IgnoreRobots
 	}
 
 	var resp protocol.CrawlCreateResponse

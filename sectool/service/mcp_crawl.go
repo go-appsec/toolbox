@@ -24,7 +24,6 @@ Seeds can be:
 - Proxy flow IDs (seed_flows) - inherits headers from the captured request
 
 The crawler automatically:
-- Respects robots.txt (unless ignore_robots=true)
 - Extracts forms for security testing
 - Captures request/response pairs
 - Groups similar paths in summary`),
@@ -33,11 +32,10 @@ The crawler automatically:
 		mcp.WithString("seed_flows", mcp.Description("Comma-separated list of proxy flow_ids to use as seeds")),
 		mcp.WithString("domains", mcp.Description("Comma-separated list of additional domains to allow")),
 		mcp.WithObject("headers", mcp.Description("Custom headers as object: {\"Name\": \"Value\"}")),
-		mcp.WithNumber("max_depth", mcp.Description("Maximum crawl depth (0 = unlimited)")),
-		mcp.WithNumber("max_requests", mcp.Description("Maximum total requests (0 = unlimited)")),
-		mcp.WithString("delay", mcp.Description("Delay between requests (e.g., '200ms', '1s')")),
-		mcp.WithNumber("parallelism", mcp.Description("Number of concurrent requests (default: 2)")),
-		mcp.WithBoolean("ignore_robots", mcp.Description("Ignore robots.txt restrictions (default: false)")),
+		mcp.WithNumber("max_depth", mcp.Description("Maximum crawl depth (0 = configured default, negative = unlimited)")),
+		mcp.WithNumber("max_requests", mcp.Description("Maximum total requests (0 = configured default, negative = unlimited)")),
+		mcp.WithString("delay", mcp.Description("Delay between requests, e.g. '200ms', '1s' (unset = configured default)")),
+		mcp.WithNumber("parallelism", mcp.Description("Number of concurrent requests (0 = configured default)")),
 	)
 }
 
@@ -83,8 +81,9 @@ func (m *mcpServer) handleCrawlCreate(ctx context.Context, req mcp.CallToolReque
 		MaxRequests:     req.GetInt("max_requests", 0),
 		Delay:           delay,
 		Parallelism:     req.GetInt("parallelism", 0),
-		IgnoreRobotsTxt: req.GetBool("ignore_robots", false),
-		// SubmitForms and ExtractForms left unset to use config defaults
+		// undeclared param, CLI only; unset uses the config default
+		SubmitForms: getOptionalBoolArg(req, "submit_forms"),
+		// ExtractForms left unset to use config default
 	}
 
 	sess, err := m.service.crawlerBackend.CreateSession(ctx, opts)

@@ -243,6 +243,7 @@ Global config at `~/.sectool/config.json` (auto-created with defaults):
     "max_requests": 2000,
     "extract_forms": true,
     "submit_forms": false,
+    "respect_robots": false,
     "recon": false
   }
 }

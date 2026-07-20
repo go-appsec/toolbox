@@ -61,7 +61,7 @@ type Config struct {
 	Version             string         `json:"version"`
 	MCPPort             int            `json:"mcp_port"`
 	ProxyPort           int            `json:"proxy_port"`
-	BurpRequired        *bool          `json:"burp_required"`
+	BurpRequired        bool           `json:"burp_required"`
 	MaxBodyBytes        int            `json:"max_body_bytes"` // limits request/response body sizes
 	IncludeSubdomains   *bool          `json:"include_subdomains"`
 	AllowedDomains      []string       `json:"allowed_domains"`
@@ -104,20 +104,19 @@ type CrawlerConfig struct {
 	MaxDepth        int      `json:"max_depth"`
 	MaxRequests     int      `json:"max_requests"`
 	ExtractForms    *bool    `json:"extract_forms"`
-	SubmitForms     *bool    `json:"submit_forms"`
-	Recon           *bool    `json:"recon"`
+	SubmitForms     bool     `json:"submit_forms"`
+	RespectRobots   bool     `json:"respect_robots"`
+	Recon           bool     `json:"recon"`
 }
 
 // DefaultConfig returns a Config with default values.
 func DefaultConfig() *Config {
 	t := true
-	f := false
 	defaultExts := DefaultExcludeExtensions
 	return &Config{
 		Version:           Version,
 		MCPPort:           DefaultMCPPort,
 		ProxyPort:         DefaultProxyPort,
-		BurpRequired:      &f,
 		MaxBodyBytes:      10485760, // 10MB
 		IncludeSubdomains: &t,
 		AllowedDomains:    []string{},
@@ -148,8 +147,6 @@ func DefaultConfig() *Config {
 			MaxDepth:     20,
 			MaxRequests:  2000,
 			ExtractForms: &t,
-			SubmitForms:  &f,
-			Recon:        &f,
 		},
 	}
 }
@@ -172,9 +169,6 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if cfg.ProxyPort == 0 {
 		cfg.ProxyPort = DefaultProxyPort
-	}
-	if cfg.BurpRequired == nil {
-		cfg.BurpRequired = defaults.BurpRequired
 	}
 	if cfg.MaxBodyBytes == 0 {
 		cfg.MaxBodyBytes = defaults.MaxBodyBytes
@@ -223,12 +217,6 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if cfg.Crawler.ExtractForms == nil {
 		cfg.Crawler.ExtractForms = defaults.Crawler.ExtractForms
-	}
-	if cfg.Crawler.SubmitForms == nil {
-		cfg.Crawler.SubmitForms = defaults.Crawler.SubmitForms
-	}
-	if cfg.Crawler.Recon == nil {
-		cfg.Crawler.Recon = defaults.Crawler.Recon
 	}
 
 	return &cfg, nil

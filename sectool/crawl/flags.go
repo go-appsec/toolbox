@@ -71,12 +71,11 @@ crawl create [options]
     --flow <flow_id>       seed from proxy flow (can specify multiple times)
     --domain <domain>      additional allowed domain (can specify multiple times)
     --label <str>          optional unique label for easier reference
-    --max-depth <n>        maximum crawl depth (0 = use config default, 20)
-    --max-requests <n>     maximum total requests (0 = use config default, 2000)
+    --max-depth <n>        maximum crawl depth (0 = use config default, 20; negative = unlimited)
+    --max-requests <n>     maximum total requests (0 = use config default, 2000; negative = unlimited)
     --delay <dur>          delay between requests (default: 200ms)
     --parallelism <n>      concurrent requests (default: 2)
     --submit-forms         automatically submit discovered forms
-    --ignore-robots        ignore robots.txt restrictions
 
 ---
 
@@ -189,18 +188,17 @@ func parseCreate(args []string, mcpURL string) error {
 	var urls, flows, domains []string
 	var label string
 	var maxDepth, maxRequests, parallelism int
-	var submitForms, ignoreRobots bool
+	var submitForms bool
 
 	fs.StringArrayVar(&urls, "url", nil, "seed URL (can specify multiple times)")
 	fs.StringArrayVar(&flows, "flow", nil, "seed from proxy flow_id (can specify multiple times)")
 	fs.StringArrayVar(&domains, "domain", nil, "additional allowed domain (can specify multiple times)")
 	fs.StringVar(&label, "label", "", "optional unique label for easier reference")
-	fs.IntVar(&maxDepth, "max-depth", 0, "maximum crawl depth (0 = use config default, 20)")
-	fs.IntVar(&maxRequests, "max-requests", 0, "maximum total requests (0 = use config default, 2000)")
+	fs.IntVar(&maxDepth, "max-depth", 0, "maximum crawl depth (0 = use config default, 20; negative = unlimited)")
+	fs.IntVar(&maxRequests, "max-requests", 0, "maximum total requests (0 = use config default, 2000; negative = unlimited)")
 	fs.DurationVar(&delay, "delay", 0, "delay between requests")
 	fs.IntVar(&parallelism, "parallelism", 0, "concurrent requests")
 	fs.BoolVar(&submitForms, "submit-forms", false, "automatically submit discovered forms")
-	fs.BoolVar(&ignoreRobots, "ignore-robots", false, "ignore robots.txt restrictions")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool crawl create [options]
@@ -219,7 +217,7 @@ Options:
 		return errors.New("at least one --url or --flow is required")
 	}
 
-	return create(mcpURL, urls, flows, domains, label, maxDepth, maxRequests, delay, parallelism, submitForms, ignoreRobots)
+	return create(mcpURL, urls, flows, domains, label, maxDepth, maxRequests, delay, parallelism, submitForms)
 }
 
 func parseSeed(args []string, mcpURL string) error {

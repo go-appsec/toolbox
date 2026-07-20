@@ -662,6 +662,7 @@ type mockCrawlerBackend struct {
 	forms      map[string][]protocol.CrawlForm
 	errors     map[string][]protocol.CrawlError
 	getFlowErr error
+	lastOpts   CrawlOptions // options of the most recent CreateSession
 }
 
 func newMockCrawlerBackend() *mockCrawlerBackend {
@@ -676,6 +677,7 @@ func newMockCrawlerBackend() *mockCrawlerBackend {
 }
 
 func (b *mockCrawlerBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*CrawlSessionInfo, error) {
+	b.lastOpts = opts
 	if len(opts.Seeds) == 0 {
 		return nil, errors.New("no valid seeds")
 	}
