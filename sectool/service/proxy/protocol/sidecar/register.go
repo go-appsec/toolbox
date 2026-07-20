@@ -98,15 +98,6 @@ func (m *Manager) handleRegister(peer *wire.Peer, p *wire.RegisterParams) (*Reco
 	if p.InstanceID != "" {
 		m.byInstance[p.InstanceID] = rec
 	}
-	if len(rec.Capabilities.EarlyClaims) > 0 {
-		m.registry.InsertEarly(rec.bridge)
-	}
-	if len(rec.Capabilities.UpgradeClaims) > 0 {
-		m.reorderUpgradeClaims()
-	}
-
-	version, snapshot := m.rules.RuleSnapshot(rec.Name)
-	rec.appliedVersion.Store(version)
 
 	instanceTag := p.InstanceID
 	if instanceTag == "" {
@@ -116,9 +107,25 @@ func (m *Manager) handleRegister(peer *wire.Peer, p *wire.RegisterParams) (*Reco
 
 	return rec, &wire.RegisterResult{
 		ProtocolVersion: rec.ProtoVersion,
-		RulesSnapshot:   snapshot,
 		ServerTime:      now.Format(time.RFC3339Nano),
 	}, nil
+}
+
+// activateClaims opens the claim seam for a freshly registered record. Call once
+// the record is seeded, so no stream is routed to a sidecar without its rules.
+func (m *Manager) activateClaims(rec *Record) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.records[rec.Name] != rec {
+		return // replaced or disconnected while seeding
+	}
+	if len(rec.Capabilities.EarlyClaims) > 0 {
+		m.registry.InsertEarly(rec.bridge)
+	}
+	if len(rec.Capabilities.UpgradeClaims) > 0 {
+		m.reorderUpgradeClaims()
+	}
 }
 
 // reorderUpgradeClaims re-inserts every upgrade-claiming sidecar bridge so the

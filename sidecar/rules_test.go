@@ -89,7 +89,7 @@ func TestRuleCacheApplyBody(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &RuleCache{adapter: "alpha"}
-			require.NoError(t, c.replace(1, tc.rules))
+			require.NoError(t, c.replace(tc.rules))
 			out, fired := c.ApplyBody([]byte(tc.input), tc.ruleType)
 			assert.Equal(t, tc.want, string(out))
 			assert.Equal(t, tc.wantFired, fired)
@@ -101,7 +101,7 @@ func TestRuleCacheApplyHeaders(t *testing.T) {
 	t.Parallel()
 
 	c := &RuleCache{adapter: "alpha"}
-	require.NoError(t, c.replace(1, []wire.Rule{
+	require.NoError(t, c.replace([]wire.Rule{
 		{RuleID: "rewrite", Type: wire.RuleTypeRequestHeader, Find: "secret: a", Replace: "Secret: b"},
 		{RuleID: "append", Type: wire.RuleTypeRequestHeader, Replace: "X-Added: 1"},
 	}))
@@ -121,7 +121,7 @@ func TestRuleCacheApplyHeadersNonASCII(t *testing.T) {
 	t.Parallel()
 
 	c := &RuleCache{adapter: "alpha"}
-	require.NoError(t, c.replace(1, []wire.Rule{
+	require.NoError(t, c.replace([]wire.Rule{
 		{RuleID: "fold", Type: wire.RuleTypeRequestHeader, Find: "SECRET", Replace: "REDACTED"},
 	}))
 
@@ -135,12 +135,11 @@ func TestRuleCacheReplaceRejectsBadRegex(t *testing.T) {
 	t.Parallel()
 
 	c := &RuleCache{adapter: "alpha"}
-	require.NoError(t, c.replace(1, []wire.Rule{{RuleID: "ok", Type: wire.RuleTypeRequestBody, Find: "a", Replace: "b"}}))
+	require.NoError(t, c.replace([]wire.Rule{{RuleID: "ok", Type: wire.RuleTypeRequestBody, Find: "a", Replace: "b"}}))
 
-	err := c.replace(2, []wire.Rule{{RuleID: "bad", Type: wire.RuleTypeRequestBody, IsRegex: true, Find: "("}})
+	err := c.replace([]wire.Rule{{RuleID: "bad", Type: wire.RuleTypeRequestBody, IsRegex: true, Find: "("}})
 	require.Error(t, err)
-	// Prior snapshot is retained on failure.
-	assert.Equal(t, uint64(1), c.Version())
+	// prior snapshot is retained on failure
 	out, _ := c.ApplyBody([]byte("a"), wire.RuleTypeRequestBody)
 	assert.Equal(t, "b", string(out))
 }
@@ -158,13 +157,10 @@ func TestConnSyncRules(t *testing.T) {
 	t.Cleanup(cancel)
 	var res wire.SyncRulesResult
 	require.Nil(t, srv.Call(ctx, wire.MethodSyncRules, wire.SyncRulesParams{
-		SnapshotVersion: 5,
-		Rules:           []wire.Rule{{RuleID: "r1", Type: wire.RuleTypeRequestBody, Find: "foo", Replace: "bar"}},
+		Rules: []wire.Rule{{RuleID: "r1", Type: wire.RuleTypeRequestBody, Find: "foo", Replace: "bar"}},
 	}, &res))
 
 	assert.True(t, res.Ack)
-	assert.Equal(t, uint64(5), res.AppliedVersion)
-	assert.Equal(t, uint64(5), conn.Rules().Version())
 
 	out, fired := conn.Rules().ApplyBody([]byte("foo"), wire.RuleTypeRequestBody)
 	assert.Equal(t, "bar", string(out))

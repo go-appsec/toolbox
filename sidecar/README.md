@@ -19,8 +19,8 @@ The captured representation maps to an HTTP-shaped envelope (`method`, `path`, `
 
 #### Connection lifecycle
 
-1. **Connect & register.** Sidecar dials the socket and sends a `register` request (see [register](#register-sidecar--sectool)). Sectool replies with effective version, rules snapshot, or rejects with `-33001` on version mismatch.
-2. **Rule sync.** Rules arrive via the registration snapshot, then through `sync_rules` on every change (see [sync_rules](#sync_rules-sectool--sidecar)).
+1. **Connect & register.** Sidecar dials the socket and sends a `register` request (see [register](#register-sidecar--sectool)). Sectool replies with the effective version, or rejects with `-33001` on version mismatch.
+2. **Rule sync.** Rules arrive only through `sync_rules`, pushed at registration and on every change (see [sync_rules](#sync_rules-sectool--sidecar)).
 3. **Capture.** Sidecar emits flows via `push_flow`; two-phase completion, streams, and sessions all use the same method (see [Flow model](#flow-model)).
 4. **Data path.** For claimed connections, sectool drives `stream_open` then `stream_deliver`, awaiting each response before the next chunk; the sidecar returns `writes` and may nest `dial_upstream`, `core_invoke`, or `push_flow` (see [stream_deliver](#stream_deliver-sectool--sidecar)).
 5. **Heartbeat.** `ping` / `pong` keep the connection alive in both directions.
@@ -78,7 +78,7 @@ As owner, a sidecar mutates through two mechanisms:
 
 ### Rules
 
-Proxy rules are protocol-coupled, so a sidecar applies the rules relevant to its own flows; HTTP/WS traffic not delegated to a sidecar is handled by sectool. Sectool pushes the authoritative ordered rule list via `sync_rules`; the sidecar replaces its local cache atomically and applies find/replace on its hot path, exactly as the native proxy does. Sectool filters the list per sidecar, sending only rules with an empty `adapter` scope or matching the sidecar's name.
+Proxy rules are protocol-coupled, so a sidecar applies the rules relevant to its own flows; HTTP/WS traffic not delegated to a sidecar is handled by sectool. Sectool pushes the authoritative ordered rule list via `sync_rules`, one push at a time per sidecar and always carrying the current list; the sidecar replaces its local cache atomically and applies find/replace on its hot path, exactly as the native proxy does. Sectool filters the list per sidecar, sending only rules with an empty `adapter` scope or matching the sidecar's name.
 
 ---
 
@@ -513,7 +513,7 @@ Issued exactly once, first message on the connection.
 
 **params:** `name` (string, required), `protocol_version` (`{major, minor}`, required), `protocols` (`[string]`, required), `capabilities` (object, required), `mcp_tools` (`[MCPTool]`, optional), `instance_id` (string UUID, optional), `resume` (bool, optional).
 
-**result:** `protocol_version` (the effective `{major, minor}`), `rules_snapshot` (`[Rule]`, currently active rules for this adapter), `server_time` (RFC3339Nano string).
+**result:** `protocol_version` (the effective `{major, minor}`), `server_time` (RFC3339Nano string).
 
 Rejected with `-33001` when the major differs (any direction) or the sidecar's minor is newer than sectool's. Otherwise the session runs at the sidecar's (≤ sectool) minor, echoed in the result's `protocol_version`.
 
@@ -562,9 +562,11 @@ Internal tools are not invocable.
 
 #### sync_rules (sectool → sidecar)
 
-**params:** `snapshot_version` (uint64, monotonic), `rules` (`[Rule]`, the full ordered list to apply). The sidecar replaces its cache wholesale.
+**params:** `rules` (`[Rule]`, the full ordered list to apply). The sidecar replaces its cache wholesale; an empty list clears it.
 
-**result:** `ack` (bool), `applied_version` (uint64, equals `snapshot_version` on success). On an unsupported rule shape, return `-33102` naming the `rule_id`; the sidecar keeps its previous version.
+**result:** `ack` (bool). On an unsupported rule shape, return `-33102` naming the `rule_id`; the sidecar keeps its previous rules.
+
+Pushed once at registration (before the `register` result, even when the list is empty, so a reconnecting sidecar never keeps a stale cache) and again on every change. Sectool bounds the ack at 10s and continues without it; `invoke_tool` is bounded at 60s. A frame write that stalls for 20s closes the connection.
 
 #### sidecar_send (sectool → sidecar)
 

@@ -183,6 +183,15 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to start MCP server: %w", err)
 	}
 
+	// serve after the core tools exist so sidecars can't register a conflicting tool
+	if backend, ok := s.httpBackend.(*NativeProxyBackend); ok {
+		go func() {
+			if err := backend.Serve(); err != nil {
+				log.Printf("proxy: server error: %v", err)
+			}
+		}()
+	}
+
 	log.Printf("MCP server (version=%s) listening on http://%s/mcp", config.Version, s.mcpServer.Addr())
 	if !s.quietLogging {
 		s.printMCPConfig()
@@ -461,12 +470,6 @@ func (s *Server) startBuiltinProxy() error {
 	} else if captureFilter != nil {
 		backend.SetCaptureFilter(captureFilter)
 	}
-
-	go func() {
-		if err := backend.Serve(); err != nil {
-			log.Printf("proxy: server error: %v", err)
-		}
-	}()
 
 	s.httpBackend = backend
 	s.usingBuiltinProxy = true

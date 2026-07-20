@@ -2,41 +2,54 @@ package sidecar
 
 import (
 	"context"
+	"log"
 	"sync"
+	"time"
+
+	"github.com/go-analyze/bulk"
 
 	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
-// PushRules sends each connected sidecar its scoped rule snapshot and records the
-// acked version. It waits for every push to complete.
+// syncRulesTimeout bounds one sync_rules push, so an unresponsive sidecar can't
+// wedge later pushes behind it.
+const syncRulesTimeout = 10 * time.Second
+
+// PushRules sends every connected sidecar its current rule snapshot, waiting for
+// each to ack.
 func (m *Manager) PushRules(ctx context.Context) {
-	type job struct {
-		rec     *Record
-		version uint64
-		rules   []wire.Rule
-	}
-	m.mu.Lock() // lock order mu -> rule store, matching handleRegister
-	jobs := make([]job, 0, len(m.records))
-	for _, rec := range m.records {
-		version, rules := m.rules.RuleSnapshot(rec.Name)
-		jobs = append(jobs, job{rec, version, rules})
-	}
+	m.mu.Lock()
+	recs := bulk.MapValuesSlice(m.records)
 	m.mu.Unlock()
 
 	var wg sync.WaitGroup
-	for _, j := range jobs {
+	for _, rec := range recs {
 		wg.Add(1)
-		go func(j job) {
+		go func(rec *Record) {
 			defer wg.Done()
-			if !j.rec.alive() {
-				return
-			}
-			var res wire.SyncRulesResult
-			if err := j.rec.peer.Call(ctx, wire.MethodSyncRules,
-				wire.SyncRulesParams{SnapshotVersion: j.version, Rules: j.rules}, &res); err == nil {
-				j.rec.appliedVersion.Store(res.AppliedVersion)
-			}
-		}(j)
+			rec.pushRules(ctx, m.rules)
+		}(rec)
 	}
 	wg.Wait()
+}
+
+// pushRules sends the adapter's current rules and waits for the ack, serialized
+// against other pushes to this sidecar.
+func (r *Record) pushRules(ctx context.Context, src RuleSource) {
+	r.pushMu.Lock() // lock order pushMu -> rule store
+	defer r.pushMu.Unlock()
+
+	if !r.alive() {
+		return
+	}
+	// read under pushMu so the last push to acquire it carries the newest rules
+	rules := src.RuleSnapshot(r.Name)
+
+	ctx, cancel := context.WithTimeout(ctx, syncRulesTimeout)
+	defer cancel()
+	var res wire.SyncRulesResult
+	if rerr := r.peer.Call(ctx, wire.MethodSyncRules, wire.SyncRulesParams{Rules: rules}, &res); rerr != nil {
+		// fail open: a sidecar that can't apply rules still captures its traffic
+		log.Printf("sidecar[%s]: sync_rules rejected: %s", r.Name, rerr.Message)
+	}
 }

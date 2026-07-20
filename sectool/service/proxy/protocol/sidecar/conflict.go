@@ -28,14 +28,21 @@ func (m *Manager) checkConflicts(p *wire.RegisterParams) *wire.Error {
 }
 
 // checkToolNames rejects a registration whose mcp_tools names duplicate one
-// another, collide with a core tool, or collide with another sidecar's tool.
-// Callers hold m.mu.
+// another, collide with a core tool, or collide with another sidecar's tool. Also
+// rejects while the core tool set is unavailable, since nothing can be checked
+// against it. Callers hold m.mu.
 func (m *Manager) checkToolNames(p *wire.RegisterParams) *wire.Error {
 	if len(p.MCPTools) == 0 {
 		return nil
 	}
+	coreNames := m.coreInvoke.CoreToolNames()
+	if len(coreNames) == 0 {
+		return wire.NewError(wire.CodeRegistrationRejected,
+			"mcp_tools cannot be registered until the core tools are available").
+			WithData(&wire.ErrorData{Adapter: p.Name})
+	}
 	owner := map[string]string{} // tool name -> owning adapter
-	for _, n := range m.coreInvoke.CoreToolNames() {
+	for _, n := range coreNames {
 		owner[n] = types.AdapterScopeCore
 	}
 	for _, r := range m.records {

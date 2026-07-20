@@ -41,8 +41,6 @@ type NativeProxyBackend struct {
 	httpRules   []nativeStoredRule
 	wsRules     []nativeStoredRule
 	ruleStorage store.Storage
-	// snapshotVersion increments on every rule change; pushed to sidecars via sync_rules.
-	snapshotVersion uint64
 
 	// Responders: cached from responderStorage for hot path access
 	respondersMu     sync.RWMutex
@@ -132,11 +130,11 @@ func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, storage
 	return b, nil
 }
 
-// EnableSidecars constructs the sidecar IPC listener and registry. Call once
-// before Serve. cfg.NativeProxyPort should be the proxy's listen port; the
-// built-in adapter names are reserved automatically. coreInvoke backs the sidecar
-// core_invoke method; it resolves the read-side tools lazily so it can be supplied
-// before the MCP server exists.
+// EnableSidecars binds the sidecar IPC listener and registry. Call once before
+// Serve, which starts accepting. cfg.NativeProxyPort should be the proxy's listen
+// port; the built-in adapter names are reserved automatically. coreInvoke backs
+// the sidecar core_invoke method; it resolves the read-side tools lazily so it can
+// be supplied before the MCP server exists.
 func (b *NativeProxyBackend) EnableSidecars(cfg sidecar.Config, coreInvoke sidecar.CoreService, replayStore *store.ReplayHistoryStore) error {
 	cfg.ReservedNames = []string{types.ProtocolHTTP11, types.ProtocolH2, types.ProtocolTagWS, types.AdapterScopeCore}
 	// Route sidecar-performed replays into the replay store so they report source
@@ -165,7 +163,9 @@ func (b *NativeProxyBackend) SetCaptureFilter(f proxy.CaptureFilter) {
 	b.server.SetCaptureFilter(f)
 }
 
-// Serve starts the proxy server. Call in a goroutine.
+// Serve starts the proxy server and, when enabled, accepts sidecar connections.
+// Call in a goroutine, and only once the core MCP tools exist so sidecar
+// registrations are checked against the complete tool set.
 func (b *NativeProxyBackend) Serve() error {
 	if b.sidecarListener != nil {
 		go func() {
@@ -448,7 +448,7 @@ func (b *NativeProxyBackend) AddRule(ctx context.Context, input protocol.RuleEnt
 	return out, nil
 }
 
-// addRuleLocked validates, persists, and caches a rule, bumping the snapshot version.
+// addRuleLocked validates, persists, and caches a rule.
 // Returns before the sidecar push so the caller pushes outside rulesMu.
 func (b *NativeProxyBackend) addRuleLocked(input protocol.RuleEntry) (*protocol.RuleEntry, error) {
 	// Validate type (both HTTP and WebSocket types)
@@ -498,7 +498,6 @@ func (b *NativeProxyBackend) addRuleLocked(input protocol.RuleEntry) (*protocol.
 		return nil, fmt.Errorf("persist rule: %w", err)
 	}
 	*target = updated
-	b.snapshotVersion++
 
 	return &protocol.RuleEntry{
 		RuleID:  rule.ID,
@@ -519,8 +518,8 @@ func (b *NativeProxyBackend) DeleteRule(ctx context.Context, idOrLabel string) e
 	return nil
 }
 
-// deleteRuleLocked removes a rule by id or label, bumping the snapshot version.
-// Returns ErrNotFound when no rule matches, before any sidecar push.
+// deleteRuleLocked removes a rule by id or label. Returns ErrNotFound when no rule
+// matches, before any sidecar push.
 func (b *NativeProxyBackend) deleteRuleLocked(idOrLabel string) error {
 	b.rulesMu.Lock()
 	defer b.rulesMu.Unlock()
@@ -532,7 +531,6 @@ func (b *NativeProxyBackend) deleteRuleLocked(idOrLabel string) error {
 				return fmt.Errorf("persist rule: %w", err)
 			}
 			b.httpRules = updated
-			b.snapshotVersion++
 			return nil
 		}
 	}
@@ -543,7 +541,6 @@ func (b *NativeProxyBackend) deleteRuleLocked(idOrLabel string) error {
 				return fmt.Errorf("persist rule: %w", err)
 			}
 			b.wsRules = updated
-			b.snapshotVersion++
 			return nil
 		}
 	}
@@ -557,9 +554,9 @@ func (b *NativeProxyBackend) pushRules(ctx context.Context) {
 	}
 }
 
-// RuleSnapshot returns the current snapshot version and the rules scoped to the named
-// adapter (scope empty or equal to the name), in apply order (HTTP rules then WS).
-func (b *NativeProxyBackend) RuleSnapshot(adapter string) (uint64, []wire.Rule) {
+// RuleSnapshot returns the rules scoped to the named adapter (scope empty or equal
+// to the name), in apply order (HTTP rules then WS).
+func (b *NativeProxyBackend) RuleSnapshot(adapter string) []wire.Rule {
 	b.rulesMu.RLock()
 	defer b.rulesMu.RUnlock()
 
@@ -581,7 +578,7 @@ func (b *NativeProxyBackend) RuleSnapshot(adapter string) (uint64, []wire.Rule) 
 	}
 	appendScoped(b.httpRules)
 	appendScoped(b.wsRules)
-	return b.snapshotVersion, out
+	return out
 }
 
 // hasRequestRules returns true if any request header or body rules exist.

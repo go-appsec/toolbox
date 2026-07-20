@@ -108,7 +108,6 @@ type RegisterParams struct {
 // RegisterResult is sectool's response to register.
 type RegisterResult struct {
 	ProtocolVersion ProtocolVersion `json:"protocol_version"`
-	RulesSnapshot   []Rule          `json:"rules_snapshot"`
 	ServerTime      string          `json:"server_time"`
 }
 
@@ -135,16 +134,14 @@ type Rule struct {
 	Adapter string `json:"adapter,omitempty"`
 }
 
-// SyncRulesParams pushes the full ordered rule list a sidecar should apply.
+// SyncRulesParams carries the full ordered rule list that replaces the sidecar's cache.
 type SyncRulesParams struct {
-	SnapshotVersion uint64 `json:"snapshot_version"`
-	Rules           []Rule `json:"rules"`
+	Rules []Rule `json:"rules"`
 }
 
-// SyncRulesResult acks a sync_rules push with the version the sidecar applied.
+// SyncRulesResult acks a sync_rules push.
 type SyncRulesResult struct {
-	Ack            bool   `json:"ack"`
-	AppliedVersion uint64 `json:"applied_version"`
+	Ack bool `json:"ack"`
 }
 
 // ShutdownParams requests a graceful close.

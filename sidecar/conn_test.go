@@ -42,7 +42,6 @@ func registerOK(method string, _ json.RawMessage) (any, *wire.Error) {
 	if method == wire.MethodRegister {
 		return wire.RegisterResult{
 			ProtocolVersion: wire.ProtocolVersion{Major: wire.VersionMajor, Minor: wire.VersionMinor},
-			RulesSnapshot:   []wire.Rule{},
 			ServerTime:      "2026-06-28T00:00:00Z",
 		}, nil
 	}

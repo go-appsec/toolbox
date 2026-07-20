@@ -5,13 +5,20 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // ErrPeerClosed is returned when an operation is attempted on a closed peer.
 var ErrPeerClosed = errors.New("sidecar: peer closed")
+
+// writeTimeout bounds one frame write, so a peer that stops reading can't wedge
+// every other sender behind the write lock.
+const writeTimeout = 20 * time.Second
 
 // Handler processes inbound requests and notifications from the remote peer.
 // HandleRequest returns either a result (marshaled to the JSON-RPC response) or
@@ -44,7 +51,7 @@ func (h HandlerFuncs) HandleNotification(ctx context.Context, method string, par
 // Peer is a both-directions JSON-RPC 2.0 endpoint over one length-prefixed
 // stream. Either side may issue Requests (Call) and Notifications (Notify).
 type Peer struct {
-	rw      io.ReadWriteCloser
+	rw      net.Conn
 	h       Handler
 	writeMu sync.Mutex
 	nextID  atomic.Uint64
@@ -53,12 +60,12 @@ type Peer struct {
 	done    chan struct{}
 }
 
-// NewPeer wraps rw with the given inbound Handler. Call Run to start the reader.
-func NewPeer(rw io.ReadWriteCloser, h Handler) *Peer {
+// NewPeer wraps conn with the given inbound Handler. Call Run to start the reader.
+func NewPeer(conn net.Conn, h Handler) *Peer {
 	if h == nil {
 		h = HandlerFuncs{}
 	}
-	return &Peer{rw: rw, h: h, done: make(chan struct{})}
+	return &Peer{rw: conn, h: h, done: make(chan struct{})}
 }
 
 // SetHandler swaps the inbound handler. Safe to call before Run starts handling
@@ -135,7 +142,16 @@ func (p *Peer) writeMessage(msg *Message) error {
 	if p.closed.Load() {
 		return ErrPeerClosed
 	}
-	return WriteFrame(p.rw, payload)
+	_ = p.rw.SetWriteDeadline(time.Now().Add(writeTimeout))
+	defer func() { _ = p.rw.SetWriteDeadline(time.Time{}) }()
+	if err := WriteFrame(p.rw, payload); err != nil {
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			// peer stopped reading: close so every other sender and pending caller wakes
+			_ = p.closeWithErr()
+		}
+		return err
+	}
+	return nil
 }
 
 // Call issues a request and blocks until the response arrives, ctx is cancelled,

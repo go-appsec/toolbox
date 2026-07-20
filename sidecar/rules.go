@@ -19,14 +19,13 @@ type compiledRule struct {
 type RuleCache struct {
 	adapter string
 
-	mu      sync.RWMutex
-	version uint64
-	rules   []compiledRule
+	mu    sync.RWMutex
+	rules []compiledRule
 }
 
 // replace swaps the cache for a new snapshot, compiling regex rules. A rule whose
 // pattern fails to compile leaves the previous cache intact and returns an error.
-func (c *RuleCache) replace(version uint64, rules []wire.Rule) error {
+func (c *RuleCache) replace(rules []wire.Rule) error {
 	compiled := make([]compiledRule, 0, len(rules))
 	for _, r := range rules {
 		cr := compiledRule{rule: r}
@@ -40,17 +39,9 @@ func (c *RuleCache) replace(version uint64, rules []wire.Rule) error {
 		compiled = append(compiled, cr)
 	}
 	c.mu.Lock()
-	c.version, c.rules = version, compiled
+	c.rules = compiled
 	c.mu.Unlock()
 	return nil
-}
-
-// Version returns the snapshot version currently applied.
-func (c *RuleCache) Version() uint64 {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	return c.version
 }
 
 // ApplyBody applies body rules of the given type (request_body or response_body) and

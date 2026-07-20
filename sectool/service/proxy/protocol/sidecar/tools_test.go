@@ -56,7 +56,7 @@ func TestManagerRegisterToolCollision(t *testing.T) {
 	})
 
 	t.Run("collides_with_other_sidecar", func(t *testing.T) {
-		m := toolManager(nil)
+		m := toolManager([]string{"proxy_poll"})
 		p1 := dialManager(t, m, true)
 		_, err1 := register(t, p1, toolParams("first", "ts_inject"))
 		require.Nil(t, err1)
@@ -70,11 +70,28 @@ func TestManagerRegisterToolCollision(t *testing.T) {
 	})
 
 	t.Run("duplicate_in_registration", func(t *testing.T) {
-		m := toolManager(nil)
+		m := toolManager([]string{"proxy_poll"})
 		p := dialManager(t, m, true)
 		_, err := register(t, p, toolParams("demo", "dup", "dup"))
 		require.NotNil(t, err)
 		assert.Equal(t, wire.CodeToolNameConflict, err.Code)
+	})
+
+	t.Run("core_tools_unavailable", func(t *testing.T) {
+		m := toolManager(nil)
+		p := dialManager(t, m, true)
+		_, err := register(t, p, toolParams("demo", "demo_tool"))
+		require.NotNil(t, err)
+		assert.Equal(t, wire.CodeRegistrationRejected, err.Code)
+		assert.Equal(t, 0, m.Count())
+	})
+
+	t.Run("no_tools_without_core", func(t *testing.T) {
+		m := toolManager(nil)
+		p := dialManager(t, m, true)
+		_, err := register(t, p, toolParams("demo"))
+		require.Nil(t, err)
+		assert.Equal(t, 1, m.Count())
 	})
 
 	t.Run("distinct_tools_ok", func(t *testing.T) {
@@ -94,7 +111,7 @@ func TestManagerInvokeTool(t *testing.T) {
 	t.Parallel()
 
 	t.Run("delegates_to_owner", func(t *testing.T) {
-		m := toolManager(nil)
+		m := toolManager([]string{"proxy_poll"})
 		srv, cli := net.Pipe()
 		go m.HandleConn(t.Context(), srv)
 
@@ -131,7 +148,7 @@ func TestManagerInvokeTool(t *testing.T) {
 	})
 
 	t.Run("unknown_tool", func(t *testing.T) {
-		m := toolManager(nil)
+		m := toolManager([]string{"proxy_poll"})
 		_, ierr := m.InvokeTool(t.Context(), "nope", nil)
 		require.NotNil(t, ierr)
 		assert.Equal(t, wire.CodeUnknownDestAdapter, ierr.Code)
@@ -142,7 +159,7 @@ func TestManagerAdapterTools(t *testing.T) {
 	t.Parallel()
 
 	t.Run("healthy_snapshot", func(t *testing.T) {
-		m := toolManager(nil)
+		m := toolManager([]string{"proxy_poll"})
 		p1 := dialManager(t, m, true)
 		_, err := register(t, p1, toolParams("first", "a_tool"))
 		require.Nil(t, err)
@@ -162,7 +179,7 @@ func TestManagerAdapterTools(t *testing.T) {
 	t.Run("excludes_unhealthy", func(t *testing.T) {
 		m := NewManager(
 			Config{HeartbeatInterval: 15 * time.Millisecond, HeartbeatTimeout: 40 * time.Millisecond, ReservedNames: []string{"http/1.1", "http/2", "websocket"}},
-			&protocol.Registry{}, newFakeFlows(), fakeCoreTools{}, fakeRules{},
+			&protocol.Registry{}, newFakeFlows(), fakeCoreTools{names: []string{"proxy_poll"}}, fakeRules{},
 		)
 		p := dialManager(t, m, false) // silent: never answers ping -> goes unhealthy
 		_, err := register(t, p, toolParams("silent", "q_tool"))

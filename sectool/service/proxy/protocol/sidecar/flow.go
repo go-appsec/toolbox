@@ -30,8 +30,8 @@ type CoreService interface {
 
 // RuleSource returns the current rule snapshot for a named adapter.
 type RuleSource interface {
-	// RuleSnapshot returns the monotonic version and rules scoped to the adapter.
-	RuleSnapshot(adapter string) (version uint64, rules []wire.Rule)
+	// RuleSnapshot returns the rules scoped to the adapter, in apply order.
+	RuleSnapshot(adapter string) []wire.Rule
 }
 
 func (s *session) handlePushFlow(p *wire.Flow) (any, *wire.Error) {

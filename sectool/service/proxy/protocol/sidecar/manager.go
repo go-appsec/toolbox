@@ -257,6 +257,9 @@ func (s *session) HandleRequest(ctx context.Context, method string, params json.
 		s.mu.Lock()
 		s.rec = rec
 		s.mu.Unlock()
+		// seed rules before exposing claims or tools so nothing runs without them
+		rec.pushRules(ctx, s.m.rules)
+		s.m.activateClaims(rec)
 		s.m.notifyToolsChanged()
 		return res, nil
 	case wire.MethodPushFlow:

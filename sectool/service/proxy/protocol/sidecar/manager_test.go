@@ -17,7 +17,7 @@ import (
 // fakeRules is a no-op RuleSource returning an empty snapshot.
 type fakeRules struct{}
 
-func (fakeRules) RuleSnapshot(string) (uint64, []wire.Rule) { return 0, nil }
+func (fakeRules) RuleSnapshot(string) []wire.Rule { return nil }
 
 func testManager(cfg Config) *Manager {
 	if cfg.HeartbeatInterval == 0 {
@@ -80,7 +80,6 @@ func TestManagerRegister(t *testing.T) {
 		require.Nil(t, err)
 		assert.Equal(t, wire.VersionMajor, res.ProtocolVersion.Major)
 		assert.Equal(t, wire.VersionMinor, res.ProtocolVersion.Minor)
-		assert.Empty(t, res.RulesSnapshot)
 		_, perr := time.Parse(time.RFC3339Nano, res.ServerTime)
 		require.NoError(t, perr)
 

@@ -1519,8 +1519,7 @@ func TestNativeProxyBackend_RuleSnapshot(t *testing.T) {
 	add("r-sectool", types.AdapterScopeCore)
 
 	// alpha receives empty-scoped and its own rules; beta and sectool are excluded.
-	version, rules := backend.RuleSnapshot("alpha")
-	assert.Equal(t, uint64(4), version)
+	rules := backend.RuleSnapshot("alpha")
 	labels := make([]string, len(rules))
 	for i, r := range rules {
 		labels[i] = r.Label
@@ -1528,8 +1527,7 @@ func TestNativeProxyBackend_RuleSnapshot(t *testing.T) {
 	assert.ElementsMatch(t, []string{"r-empty", "r-alpha"}, labels)
 
 	require.NoError(t, backend.DeleteRule(t.Context(), "r-alpha"))
-	version, rules = backend.RuleSnapshot("alpha")
-	assert.Equal(t, uint64(5), version)
+	rules = backend.RuleSnapshot("alpha")
 	require.Len(t, rules, 1)
 	assert.Equal(t, "r-empty", rules[0].Label)
 }

@@ -21,8 +21,8 @@ type Record struct {
 	bridge  *bridge
 	resume  bool
 	healthy atomic.Bool
-	// appliedVersion is the rule snapshot version the sidecar last acked.
-	appliedVersion atomic.Uint64
+	// pushMu serializes rule pushes so this sidecar never sees them out of order.
+	pushMu sync.Mutex
 
 	mu       sync.Mutex
 	liveness Liveness

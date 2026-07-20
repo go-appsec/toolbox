@@ -54,7 +54,6 @@ func Dial(ctx context.Context, addr string, reg Registration) (*Conn, error) {
 		return nil, fmt.Errorf("sidecar: register: %w", rpcErr)
 	}
 
-	_ = c.rules.replace(0, result.RulesSnapshot)
 	return c, nil
 }
 
@@ -136,10 +135,10 @@ func (h connHandler) HandleRequest(_ context.Context, method string, params json
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, wire.NewError(wire.CodeRuleRejected, "sync_rules: invalid params")
 		}
-		if err := h.c.rules.replace(p.SnapshotVersion, p.Rules); err != nil {
+		if err := h.c.rules.replace(p.Rules); err != nil {
 			return nil, wire.NewError(wire.CodeRuleRejected, "sync_rules: "+err.Error())
 		}
-		return wire.SyncRulesResult{Ack: true, AppliedVersion: p.SnapshotVersion}, nil
+		return wire.SyncRulesResult{Ack: true}, nil
 	case wire.MethodSidecarSend:
 		var p wire.SidecarSendParams
 		_ = json.Unmarshal(params, &p)

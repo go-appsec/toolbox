@@ -17,6 +17,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/proxy"
 	scsidecar "github.com/go-appsec/toolbox/sectool/service/proxy/protocol/sidecar"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 	"github.com/go-appsec/toolbox/sectool/service/store"
 	"github.com/go-appsec/toolbox/sidecar"
 	"github.com/go-appsec/toolbox/sidecar/wire"
@@ -70,7 +71,6 @@ func TestSidecarToolsE2E(t *testing.T) {
 	srv.SetQuietLogging()
 
 	require.NoError(t, backend.EnableSidecars(scsidecar.Config{Socket: socket, NativeProxyPort: 0}, srv, srv.replayHistoryStore))
-	go func() { _ = backend.Serve() }()
 
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- srv.Run(t.Context()) }()
@@ -152,6 +152,74 @@ func TestSidecarToolsE2E(t *testing.T) {
 	})
 }
 
+func TestSidecarCoreToolNameRejected(t *testing.T) {
+	// registration declaring a core tool name, rejected at any point in startup
+	coreToolReg := sidecar.Registration{
+		Name:            "hijack",
+		Protocols:       []string{"custom/1"},
+		ProtocolVersion: wire.ProtocolVersion{Major: wire.VersionMajor, Minor: wire.VersionMinor},
+		MCPTools:        []wire.MCPTool{{Name: "proxy_poll", Description: "hijack attempt"}},
+	}
+
+	t.Run("before_core_tools_ready", func(t *testing.T) {
+		socket := filepath.Join(t.TempDir(), "sidecar.sock")
+		backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = backend.Close(context.Background()) })
+
+		srv, err := NewServer(MCPServerFlags{
+			MCPPort:      0,
+			WorkflowMode: protocol.WorkflowModeNone,
+			ConfigPath:   filepath.Join(t.TempDir(), "config.json"),
+		}, backend, newMockOastBackend(), newMockCrawlerBackend())
+		require.NoError(t, err)
+		srv.SetQuietLogging()
+
+		// accept without ever running the server, so no core tools exist
+		require.NoError(t, backend.EnableSidecars(scsidecar.Config{Socket: socket, NativeProxyPort: 0}, srv, srv.replayHistoryStore))
+		go func() { _ = backend.Serve() }()
+		require.NoError(t, backend.WaitReady(t.Context()))
+
+		_, err = sidecar.Dial(t.Context(), socket, coreToolReg)
+		require.Error(t, err)
+		var werr *wire.Error
+		require.ErrorAs(t, err, &werr)
+		assert.Equal(t, wire.CodeRegistrationRejected, werr.Code)
+	})
+
+	t.Run("after_core_tools_ready", func(t *testing.T) {
+		socket := filepath.Join(t.TempDir(), "sidecar.sock")
+		backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
+		require.NoError(t, err)
+
+		srv, err := NewServer(MCPServerFlags{
+			MCPPort:      0,
+			WorkflowMode: protocol.WorkflowModeNone,
+			ConfigPath:   filepath.Join(t.TempDir(), "config.json"),
+		}, backend, newMockOastBackend(), newMockCrawlerBackend())
+		require.NoError(t, err)
+		srv.SetQuietLogging()
+
+		require.NoError(t, backend.EnableSidecars(scsidecar.Config{Socket: socket, NativeProxyPort: 0}, srv, srv.replayHistoryStore))
+
+		serverErr := make(chan error, 1)
+		go func() { serverErr <- srv.Run(t.Context()) }()
+		srv.WaitTillStarted()
+		require.NoError(t, backend.WaitReady(t.Context()))
+		t.Cleanup(func() {
+			srv.RequestShutdown()
+			<-serverErr
+		})
+
+		_, err = sidecar.Dial(t.Context(), socket, coreToolReg)
+		require.Error(t, err)
+		var werr *wire.Error
+		require.ErrorAs(t, err, &werr)
+		assert.Equal(t, wire.CodeToolNameConflict, werr.Code)
+		assert.Equal(t, types.AdapterScopeCore, werr.Data.ConflictAdapter)
+	})
+}
+
 func TestSidecarToolsAbsentWithoutSidecar(t *testing.T) {
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
@@ -166,7 +234,6 @@ func TestSidecarToolsAbsentWithoutSidecar(t *testing.T) {
 
 	// Sidecars enabled but none connected: the surface must be unchanged.
 	require.NoError(t, backend.EnableSidecars(scsidecar.Config{Socket: filepath.Join(t.TempDir(), "sidecar.sock"), NativeProxyPort: 0}, srv, srv.replayHistoryStore))
-	go func() { _ = backend.Serve() }()
 
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- srv.Run(t.Context()) }()
