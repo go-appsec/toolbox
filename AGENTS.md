@@ -263,6 +263,11 @@ Streaming responses (`proxy` section):
 - `full_buffer` (`bool`, default `false`): when a response has body match/replace rules, buffer the whole body before applying them instead of streaming per-chunk. Streaming applies body rules per chunk (a match spanning a chunk boundary is missed); enable `full_buffer` for whole-body rule correctness. Compressed or Content-Length-framed responses with body rules always buffer regardless of this flag.
 - Scope: response bodies over H1, H2, and the proxy path. Native `replay_send`/`request_send` responses are still read fully before storing.
 
+Interim (1xx) responses, HTTP/1.1:
+- The proxy answers `Expect: 100-continue` itself, before reading the request body (H1 buffers the whole request, so waiting on the origin would deadlock the client). The `Expect` header still reaches the origin unchanged and a `417` is relayed normally, but the client's upload is no longer gated by it; use `request_send`/`replay_send` to probe origin `Expect` handling directly.
+- An origin `100` duplicating the locally-sent one is recorded but not relayed, so the client sees exactly one.
+- `flow_get` reports `interim_responses` as objects: `source` (`proxy` = synthesized by sectool, `origin` = from upstream), `wire`, and `relayed` (whether the client received it).
+
 ### Export Bundle Layout
 
 Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body placeholder), `body` (raw binary-safe), `request.meta.json` (method/URL/timestamps), `response.http`, `response.body`

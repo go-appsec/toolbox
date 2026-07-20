@@ -140,14 +140,15 @@ type ProxyEntry struct {
 	Timestamp time.Time `json:"-"` // capture-start for native; first observation for Burp
 	Request   string    `json:"request"`
 	Response  string    `json:"response"`
-	// InterimResponses holds wire-formatted 1xx responses that preceded Response.
-	InterimResponses []string `json:"interim_responses,omitempty"`
-	Notes            string   `json:"notes"`
-	Protocol         string   `json:"protocol"`                 // "http/1.1" or "http/2" (empty defaults to http/1.1)
-	Adapter          string   `json:"adapter,omitempty"`        // emitting adapter name
-	ParentFlowID     string   `json:"parent_flow_id,omitempty"` // parent flow when nested
-	Scheme           string   `json:"scheme,omitempty"`         // "http" or "https" (empty = infer from host)
-	Port             int      `json:"port,omitempty"`           // original port (0 = infer from scheme)
+	// InterimResponses holds 1xx responses that preceded Response, each with its
+	// source and whether the client received it.
+	InterimResponses []types.InterimView `json:"interim_responses,omitempty"`
+	Notes            string              `json:"notes"`
+	Protocol         string              `json:"protocol"`                 // "http/1.1" or "http/2" (empty defaults to http/1.1)
+	Adapter          string              `json:"adapter,omitempty"`        // emitting adapter name
+	ParentFlowID     string              `json:"parent_flow_id,omitempty"` // parent flow when nested
+	Scheme           string              `json:"scheme,omitempty"`         // "http" or "https" (empty = infer from host)
+	Port             int                 `json:"port,omitempty"`           // original port (0 = infer from scheme)
 	// Annotations carries sidecar-authored flow metadata.
 	Annotations       map[string]any `json:"annotations,omitempty"`
 	InvokedBy         string         `json:"invoked_by,omitempty"`

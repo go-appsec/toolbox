@@ -18,7 +18,10 @@ import (
 	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 )
 
-const connectionClose = "close"
+const (
+	connectionClose = "close"
+	versionHTTP11   = "HTTP/1.1"
+)
 
 type http1Handler struct {
 	history             *HistoryStore
@@ -76,13 +79,35 @@ func (h *http1Handler) handleExchange(ctx context.Context, clientConn net.Conn, 
 	startTime := time.Now()
 	var buf bytes.Buffer
 
-	req, err := ParseRequest(clientReader, false)
+	req, headBareLF, headBareCR, err := parseRequestHead(clientReader)
 	if err != nil {
 		if errors.Is(err, ErrInvalidRequest) {
 			if x.logParseErrors {
 				log.Printf("proxy: failed to parse request: %v", err)
 			}
 			sendError(clientConn, 400, "Bad Request")
+		}
+		return false
+	}
+
+	// answer the expectation before the client sends its body
+	var contResp *types.RawHTTP1Response
+	if expectsContinue(req) {
+		contResp = newContinueResponse(headBareLF)
+		if werr := h.forwardInterim(clientConn, contResp); werr != nil {
+			log.Printf("proxy: failed to send 100 Continue to client: %v", werr)
+			return false
+		}
+		if perr := h.awaitBodyStart(clientConn, clientReader); perr != nil {
+			if x.logParseErrors {
+				log.Printf("proxy: client sent no body after 100 Continue: %v", perr)
+			}
+			return false
+		}
+	}
+	if err = readRequestBodyInto(clientReader, req, false, headBareLF, headBareCR); err != nil {
+		if x.logParseErrors {
+			log.Printf("proxy: failed to read request body: %v", err)
 		}
 		return false
 	}
@@ -107,7 +132,7 @@ func (h *http1Handler) handleExchange(ctx context.Context, clientConn net.Conn, 
 			if h.maxBodyBytes > 0 && len(req.Body) > h.maxBodyBytes {
 				req.SetBody(req.Body[:h.maxBodyBytes])
 			}
-			h.storeEntry(target, req, resp, nil, startTime) // store before forward
+			h.storeEntry(target, req, resp, localInterim(contResp), startTime) // store before forward
 			if h.timeouts.WriteTimeout > 0 {
 				_ = clientConn.SetWriteDeadline(time.Now().Add(h.timeouts.WriteTimeout))
 			}
@@ -145,7 +170,7 @@ func (h *http1Handler) handleExchange(ctx context.Context, clientConn net.Conn, 
 			} else {
 				sendError(clientConn, 502, "Bad Gateway: connection refused")
 			}
-			h.storeEntry(target, req, nil, nil, startTime)
+			h.storeEntry(target, req, nil, localInterim(contResp), startTime)
 			return false
 		}
 		defer func() { _ = upstreamConn.Close() }() // only close the conn we dialed
@@ -163,7 +188,7 @@ func (h *http1Handler) handleExchange(ctx context.Context, clientConn net.Conn, 
 		} else {
 			sendError(clientConn, 502, "Bad Gateway: failed to send request")
 		}
-		h.storeEntry(target, req, nil, nil, startTime)
+		h.storeEntry(target, req, nil, localInterim(contResp), startTime)
 		return false
 	}
 
@@ -171,7 +196,65 @@ func (h *http1Handler) handleExchange(ctx context.Context, clientConn net.Conn, 
 		_ = up.conn.SetReadDeadline(time.Now().Add(h.timeouts.ReadTimeout))
 	}
 
-	return h.streamResponse(clientConn, up.conn, up.reader, req, target, startTime)
+	return h.streamResponse(clientConn, up.conn, up.reader, req, target, startTime, contResp)
+}
+
+// expectsContinue reports whether the client asked for an interim 100 Continue
+// before sending a framed request body.
+func expectsContinue(req *types.RawHTTP1Request) bool {
+	if req.Version != versionHTTP11 || !hasExpectContinue(req.GetHeader("Expect")) {
+		return false // RFC 9110: never send 100 to an HTTP/1.0 client
+	} else if strings.Contains(strings.ToLower(req.GetHeader("Transfer-Encoding")), "chunked") {
+		return true
+	}
+	cl, err := strconv.ParseInt(req.GetHeader("Content-Length"), 10, 64)
+	return err == nil && cl > 0
+}
+
+// hasExpectContinue reports whether an Expect header value carries the
+// 100-continue expectation among its comma-separated tokens.
+func hasExpectContinue(expect string) bool {
+	for token := range strings.SplitSeq(expect, ",") {
+		if strings.EqualFold(strings.TrimSpace(token), "100-continue") {
+			return true
+		}
+	}
+	return false
+}
+
+// newContinueResponse builds the interim 100 Continue sent to the client,
+// speaking bare LF when the client's request head did.
+func newContinueResponse(bareLF bool) *types.RawHTTP1Response {
+	resp := &types.RawHTTP1Response{Version: versionHTTP11, StatusCode: 100, StatusText: "Continue"}
+	if bareLF {
+		resp.StatusLineEnding = types.EndingBareLF
+		resp.HeaderBlockEnding = types.EndingBareLF
+	}
+	return resp
+}
+
+// awaitBodyStart blocks for the first request-body byte, bounded by ReadTimeout
+// (unbounded when 0), and returns the read error. Transfer duration stays
+// unbounded once bytes flow.
+func (h *http1Handler) awaitBodyStart(clientConn net.Conn, clientReader *bufio.Reader) error {
+	if h.timeouts.ReadTimeout > 0 {
+		_ = clientConn.SetReadDeadline(time.Now().Add(h.timeouts.ReadTimeout))
+		defer func() { _ = clientConn.SetReadDeadline(time.Time{}) }()
+	}
+	_, err := clientReader.Peek(1)
+	return err
+}
+
+// localInterim records the proxy-generated interim, or nil when resp is nil.
+func localInterim(resp *types.RawHTTP1Response) []*types.InterimResponse {
+	if resp == nil {
+		return nil
+	}
+	return []*types.InterimResponse{{
+		Message: types.ResponseToMessage(resp),
+		Source:  types.InterimSourceProxy,
+		Relayed: true,
+	}}
 }
 
 // extractTarget determines the upstream server from the request.
@@ -268,7 +351,7 @@ func (h *http1Handler) forwardInterim(clientConn net.Conn, ir *types.RawHTTP1Res
 }
 
 // storeEntry saves the request/response pair, plus any interim 1xx responses, to history.
-func (h *http1Handler) storeEntry(target *types.Target, req *types.RawHTTP1Request, resp *types.RawHTTP1Response, interim []*types.RawHTTP1Response, startTime time.Time) {
+func (h *http1Handler) storeEntry(target *types.Target, req *types.RawHTTP1Request, resp *types.RawHTTP1Response, interim []*types.InterimResponse, startTime time.Time) {
 	flow := &types.Flow{
 		Adapter:     types.ProtocolHTTP11,
 		ProtocolTag: types.ProtocolHTTP11,
@@ -281,9 +364,7 @@ func (h *http1Handler) storeEntry(target *types.Target, req *types.RawHTTP1Reque
 	if resp != nil {
 		flow.Response = types.ResponseToMessage(resp)
 	}
-	for _, ir := range interim {
-		flow.InterimResponses = append(flow.InterimResponses, types.ResponseToMessage(ir))
-	}
+	flow.InterimResponses = interim
 	if !h.history.ShouldCapture(flow) {
 		return
 	}
@@ -293,15 +374,31 @@ func (h *http1Handler) storeEntry(target *types.Target, req *types.RawHTTP1Reque
 // streamResponse reads the upstream response head, then forwards the body to the
 // client, buffering when body rules need the whole body and streaming per unit
 // otherwise. The flow is persisted at head time and grown as the body arrives.
+// contResp is the 100 Continue already sent to the client, or nil.
 // Returns whether the client connection may be kept alive.
-func (h *http1Handler) streamResponse(clientConn, upstreamConn net.Conn, upstreamReader *bufio.Reader, req *types.RawHTTP1Request, target *types.Target, startTime time.Time) bool {
-	interim, resp, bodyExpected, headBareLF, headBareCR, err := readFinalResponseHead(upstreamReader, req.Method, func(ir *types.RawHTTP1Response) error {
-		return h.forwardInterim(clientConn, ir)
+func (h *http1Handler) streamResponse(clientConn, upstreamConn net.Conn, upstreamReader *bufio.Reader, req *types.RawHTTP1Request, target *types.Target, startTime time.Time, contResp *types.RawHTTP1Response) bool {
+	var upInterim []*types.InterimResponse
+	var relayed bool // an upstream interim reached the client
+	_, resp, bodyExpected, headBareLF, headBareCR, err := readFinalResponseHead(upstreamReader, req.Method, func(ir *types.RawHTTP1Response) error {
+		var werr error
+		var sent bool
+		if contResp == nil || ir.StatusCode != 100 { // suppress a duplicate of the local 100
+			werr = h.forwardInterim(clientConn, ir)
+			sent = werr == nil
+			relayed = relayed || sent
+		}
+		upInterim = append(upInterim, &types.InterimResponse{
+			Message: types.ResponseToMessage(ir),
+			Source:  types.InterimSourceOrigin,
+			Relayed: sent,
+		})
+		return werr
 	})
+	interim := append(localInterim(contResp), upInterim...)
 	if err != nil {
 		log.Printf("proxy: failed to parse response from %s: %v", target.Hostname, err)
-		// Skip the synthetic error if interim responses already started the wire stream
-		if len(interim) == 0 {
+		// Skip the synthetic error if upstream interims already started the wire stream
+		if !relayed {
 			if isTimeoutError(err) {
 				sendError(clientConn, 504, "Gateway Timeout: read timeout")
 			} else {
@@ -328,8 +425,7 @@ func (h *http1Handler) streamResponse(clientConn, upstreamConn net.Conn, upstrea
 func mustBufferResponse(resp *types.RawHTTP1Response) bool {
 	if resp.GetHeader("Content-Encoding") != "" {
 		return true
-	}
-	if strings.Contains(strings.ToLower(resp.GetHeader("Transfer-Encoding")), "chunked") {
+	} else if strings.Contains(strings.ToLower(resp.GetHeader("Transfer-Encoding")), "chunked") {
 		return false
 	}
 	cl := resp.GetHeader("Content-Length")
@@ -342,7 +438,7 @@ func mustBufferResponse(resp *types.RawHTTP1Response) bool {
 
 // forwardBuffered reads the whole response body, applies response rules, and
 // forwards and stores it in one shot. Also handles bodyExpected=false (no body).
-func (h *http1Handler) forwardBuffered(clientConn net.Conn, upstreamReader *bufio.Reader, resp *types.RawHTTP1Response, interim []*types.RawHTTP1Response, req *types.RawHTTP1Request, target *types.Target, startTime time.Time, bodyExpected, usedBareLF, usedBareCR bool) bool {
+func (h *http1Handler) forwardBuffered(clientConn net.Conn, upstreamReader *bufio.Reader, resp *types.RawHTTP1Response, interim []*types.InterimResponse, req *types.RawHTTP1Request, target *types.Target, startTime time.Time, bodyExpected, usedBareLF, usedBareCR bool) bool {
 	var wasChunked bool
 	if bodyExpected {
 		var trailersBareLF, trailersBareCR bool
@@ -391,7 +487,7 @@ func (h *http1Handler) forwardBuffered(clientConn net.Conn, upstreamReader *bufi
 // forwardStreaming writes the response head, then streams each body unit to the
 // client while growing the stored flow. Body rules apply per unit (uncompressed
 // chunked/close-delimited only). Returns whether keep-alive may continue.
-func (h *http1Handler) forwardStreaming(clientConn, upstreamConn net.Conn, upstreamReader *bufio.Reader, resp *types.RawHTTP1Response, interim []*types.RawHTTP1Response, req *types.RawHTTP1Request, target *types.Target, startTime time.Time, hasBodyRules, headBareLF, headBareCR bool) bool {
+func (h *http1Handler) forwardStreaming(clientConn, upstreamConn net.Conn, upstreamReader *bufio.Reader, resp *types.RawHTTP1Response, interim []*types.InterimResponse, req *types.RawHTTP1Request, target *types.Target, startTime time.Time, hasBodyRules, headBareLF, headBareCR bool) bool {
 	if h.ruleApplier != nil {
 		resp.Headers = h.ruleApplier.ApplyResponseHeaderOnlyRules(resp.Headers)
 	}
@@ -505,7 +601,7 @@ func (h *http1Handler) forwardStreaming(clientConn, upstreamConn net.Conn, upstr
 
 // storeStreamHead persists the request and response head as an in-progress flow
 // (zero CompletedAt), returning its flow_id and whether it was captured.
-func (h *http1Handler) storeStreamHead(target *types.Target, req *types.RawHTTP1Request, resp *types.RawHTTP1Response, interim []*types.RawHTTP1Response, startTime time.Time) (string, bool) {
+func (h *http1Handler) storeStreamHead(target *types.Target, req *types.RawHTTP1Request, resp *types.RawHTTP1Response, interim []*types.InterimResponse, startTime time.Time) (string, bool) {
 	flow := &types.Flow{
 		Adapter:     types.ProtocolHTTP11,
 		ProtocolTag: types.ProtocolHTTP11,
@@ -514,9 +610,8 @@ func (h *http1Handler) storeStreamHead(target *types.Target, req *types.RawHTTP1
 		Request:     types.RequestToMessage(req),
 		Response:    types.ResponseToMessage(resp),
 		StartedAt:   startTime,
-	}
-	for _, ir := range interim {
-		flow.InterimResponses = append(flow.InterimResponses, types.ResponseToMessage(ir))
+
+		InterimResponses: interim,
 	}
 	if !h.history.ShouldCapture(flow) {
 		return "", false

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"net"
 	"strings"
@@ -54,6 +55,33 @@ func firstEntry(t *testing.T, h *HistoryStore) *types.Flow {
 	entries := h.Page(1, "")
 	require.Len(t, entries, 1)
 	return entries[0]
+}
+
+// startUpstream serves one connection: it reads a full request, publishes it on the
+// returned channel, then writes resp. Returns the listener address.
+func startUpstream(t *testing.T, resp string) (string, <-chan *types.RawHTTP1Request) {
+	t.Helper()
+
+	var lc net.ListenConfig
+	ln, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+
+	reqCh := make(chan *types.RawHTTP1Request, 1)
+	go func() {
+		conn, aerr := ln.Accept()
+		if aerr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		req, perr := ParseRequest(conn, false)
+		if perr != nil {
+			return
+		}
+		reqCh <- req
+		_, _ = conn.Write([]byte(resp))
+	}()
+	return ln.Addr().String(), reqCh
 }
 
 func TestExtractTarget(t *testing.T) {
@@ -693,7 +721,44 @@ func TestHandleSinglePlainHTTPInterim(t *testing.T) {
 	require.NotNil(t, entry.Response)
 	assert.Equal(t, 200, entry.Response.StatusCode)
 	require.Len(t, entry.InterimResponses, 1)
-	assert.Equal(t, 103, entry.InterimResponses[0].StatusCode)
+	assert.Equal(t, 103, entry.InterimResponses[0].Message.StatusCode)
+	assert.Equal(t, types.InterimSourceOrigin, entry.InterimResponses[0].Source)
+	assert.True(t, entry.InterimResponses[0].Relayed)
+}
+
+func TestExpectsContinue(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		version string
+		headers types.Headers
+		want    bool
+	}{
+		{"content_length_body", "HTTP/1.1", types.Headers{{Name: "Expect", Value: "100-continue"}, {Name: "Content-Length", Value: "5"}}, true},
+		{"chunked_body", "HTTP/1.1", types.Headers{{Name: "Expect", Value: "100-continue"}, {Name: "Transfer-Encoding", Value: "chunked"}}, true},
+		{"case_variant_header", "HTTP/1.1", types.Headers{{Name: "expect", Value: "100-Continue"}, {Name: "Content-Length", Value: "5"}}, true},
+		{"compound_expectation", "HTTP/1.1", types.Headers{{Name: "Expect", Value: "100-continue, extend"}, {Name: "Content-Length", Value: "5"}}, true},
+		{"trailing_expectation", "HTTP/1.1", types.Headers{{Name: "Expect", Value: "extend,100-continue"}, {Name: "Content-Length", Value: "5"}}, true},
+		{"no_body", "HTTP/1.1", types.Headers{{Name: "Expect", Value: "100-continue"}}, false},
+		{"zero_content_length", "HTTP/1.1", types.Headers{{Name: "Expect", Value: "100-continue"}, {Name: "Content-Length", Value: "0"}}, false},
+		{"http10_client", "HTTP/1.0", types.Headers{{Name: "Expect", Value: "100-continue"}, {Name: "Content-Length", Value: "5"}}, false},
+		{"other_expectation", "HTTP/1.1", types.Headers{{Name: "Expect", Value: "other"}, {Name: "Content-Length", Value: "5"}}, false},
+		{"no_expect_header", "HTTP/1.1", types.Headers{{Name: "Content-Length", Value: "5"}}, false},
+		// first Expect header wins, matching Headers.Get
+		{"duplicate_expect_first_match", "HTTP/1.1", types.Headers{{Name: "Expect", Value: "100-continue"}, {Name: "Expect", Value: "other"}, {Name: "Content-Length", Value: "5"}}, true},
+		{"duplicate_expect_first_other", "HTTP/1.1", types.Headers{{Name: "Expect", Value: "other"}, {Name: "Expect", Value: "100-continue"}, {Name: "Content-Length", Value: "5"}}, false},
+		// "Expect : 100-continue" parses as a name with trailing space
+		{"space_before_colon", "HTTP/1.1", types.Headers{{Name: "Expect ", Value: "100-continue"}, {Name: "Content-Length", Value: "5"}}, false},
+		// obs-fold continuation joins with a space
+		{"obs_fold_value", "HTTP/1.1", types.Headers{{Name: "Expect", Value: "100- continue"}, {Name: "Content-Length", Value: "5"}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &types.RawHTTP1Request{Method: "POST", Version: tt.version, Headers: tt.headers}
+			assert.Equal(t, tt.want, expectsContinue(req))
+		})
+	}
 }
 
 // mockInterceptor serves resp when host and path match exactly (case-sensitive), so a
@@ -771,6 +836,274 @@ func TestHandleExchange(t *testing.T) {
 			assert.Equal(t, 200, firstEntry(t, h.history).Response.StatusCode)
 		})
 	}
+
+	// runExpect drives one exchange against upstreamResp, holding the request body back
+	// until the client has read the interim response. Returns the interim line, the
+	// remaining client-visible bytes, and the handler.
+	runExpect := func(t *testing.T, upstreamResp string) (*http1Handler, string, string) {
+		t.Helper()
+
+		addr, reqCh := startUpstream(t, upstreamResp)
+		h := newTestHTTP1Handler(t)
+		clientConn, proxyConn := net.Pipe()
+		t.Cleanup(func() { _ = clientConn.Close() })
+
+		go func() {
+			h.handleExchange(t.Context(), proxyConn, bufio.NewReader(proxyConn), h1Exchange{logParseErrors: true})
+			_ = proxyConn.Close()
+		}()
+
+		_, err := clientConn.Write([]byte("POST /u HTTP/1.1\r\nHost: " + addr +
+			"\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n"))
+		require.NoError(t, err)
+
+		cr := bufio.NewReader(clientConn)
+		interimLine, err := cr.ReadString('\n')
+		require.NoError(t, err)
+		blank, err := cr.ReadString('\n')
+		require.NoError(t, err)
+		require.Equal(t, "\r\n", blank)
+
+		_, err = clientConn.Write([]byte("Hello"))
+		require.NoError(t, err)
+
+		rest, err := io.ReadAll(cr)
+		require.NoError(t, err)
+
+		select {
+		case req := <-reqCh:
+			assert.Equal(t, []byte("Hello"), req.Body)
+			assert.Equal(t, "100-continue", req.GetHeader("Expect")) // forwarded unchanged
+		case <-time.After(2 * time.Second):
+			t.Fatal("upstream never received the request")
+		}
+		return h, interimLine, string(rest)
+	}
+
+	t.Run("expect_continue_sent_before_body", func(t *testing.T) {
+		h, interim, rest := runExpect(t, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+
+		assert.Equal(t, "HTTP/1.1 100 Continue\r\n", interim)
+		assert.Contains(t, rest, "200 OK")
+		assert.Contains(t, rest, "ok")
+
+		require.Equal(t, 1, h.history.Count())
+		entry := firstEntry(t, h.history)
+		assert.Equal(t, []byte("Hello"), entry.Request.Body)
+		require.Len(t, entry.InterimResponses, 1)
+		assert.Equal(t, 100, entry.InterimResponses[0].Message.StatusCode)
+		assert.Equal(t, types.InterimSourceProxy, entry.InterimResponses[0].Source)
+		assert.True(t, entry.InterimResponses[0].Relayed)
+	})
+
+	t.Run("expect_continue_upstream_dup_suppressed", func(t *testing.T) {
+		h, interim, rest := runExpect(t, "HTTP/1.1 100 Continue\r\n\r\n"+
+			"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+
+		assert.Equal(t, "HTTP/1.1 100 Continue\r\n", interim)
+		assert.NotContains(t, rest, "100 Continue") // upstream copy recorded, not relayed
+		assert.Contains(t, rest, "200 OK")
+
+		entry := firstEntry(t, h.history)
+		require.Len(t, entry.InterimResponses, 2)
+		assert.Equal(t, types.InterimSourceProxy, entry.InterimResponses[0].Source)
+		assert.True(t, entry.InterimResponses[0].Relayed)
+		assert.Equal(t, 100, entry.InterimResponses[1].Message.StatusCode)
+		assert.Equal(t, types.InterimSourceOrigin, entry.InterimResponses[1].Source)
+		assert.False(t, entry.InterimResponses[1].Relayed) // recorded, withheld from the client
+	})
+
+	t.Run("expect_continue_upstream_417", func(t *testing.T) {
+		h, interim, rest := runExpect(t, "HTTP/1.1 417 Expectation Failed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+
+		assert.Equal(t, "HTTP/1.1 100 Continue\r\n", interim)
+		assert.Contains(t, rest, "417 Expectation Failed")
+		assert.Equal(t, 417, firstEntry(t, h.history).Response.StatusCode)
+	})
+
+	t.Run("expect_continue_body_read_deadline", func(t *testing.T) {
+		h := newTestHTTP1Handler(t)
+		h.timeouts = TimeoutConfig{ReadTimeout: 50 * time.Millisecond}
+
+		clientConn, proxyConn := net.Pipe()
+		t.Cleanup(func() { _ = clientConn.Close() })
+
+		done := make(chan struct{})
+		go func() {
+			h.handleExchange(t.Context(), proxyConn, bufio.NewReader(proxyConn), h1Exchange{logParseErrors: true})
+			close(done)
+		}()
+
+		_, err := clientConn.Write([]byte("POST /u HTTP/1.1\r\nHost: example.com" +
+			"\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n"))
+		require.NoError(t, err)
+
+		cr := bufio.NewReader(clientConn)
+		line, err := cr.ReadString('\n')
+		require.NoError(t, err)
+		require.Equal(t, "HTTP/1.1 100 Continue\r\n", line)
+
+		// body never sent; the read deadline must unblock the handler goroutine
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("handleExchange hung waiting for a body that never arrived")
+		}
+	})
+
+	t.Run("expect_continue_client_closes", func(t *testing.T) {
+		h := newTestHTTP1Handler(t)
+		clientConn, proxyConn := net.Pipe()
+
+		done := make(chan struct{})
+		go func() {
+			h.handleExchange(t.Context(), proxyConn, bufio.NewReader(proxyConn), h1Exchange{logParseErrors: true})
+			close(done)
+		}()
+
+		_, err := clientConn.Write([]byte("POST /u HTTP/1.1\r\nHost: example.com" +
+			"\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n"))
+		require.NoError(t, err)
+
+		cr := bufio.NewReader(clientConn)
+		line, err := cr.ReadString('\n')
+		require.NoError(t, err)
+		require.Equal(t, "HTTP/1.1 100 Continue\r\n", line)
+
+		// closing without the framed body ends the exchange, nothing captured
+		require.NoError(t, clientConn.Close())
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("handleExchange hung after the client closed")
+		}
+		assert.Equal(t, 0, h.history.Count())
+	})
+
+	t.Run("expect_continue_mirrors_bare_lf", func(t *testing.T) {
+		addr, _ := startUpstream(t, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+		h := newTestHTTP1Handler(t)
+		clientConn, proxyConn := net.Pipe()
+		t.Cleanup(func() { _ = clientConn.Close() })
+
+		go func() {
+			h.handleExchange(t.Context(), proxyConn, bufio.NewReader(proxyConn), h1Exchange{logParseErrors: true})
+			_ = proxyConn.Close()
+		}()
+
+		_, err := clientConn.Write([]byte("POST /u HTTP/1.1\nHost: " + addr +
+			"\nContent-Length: 5\nExpect: 100-continue\n\n"))
+		require.NoError(t, err)
+
+		buf := make([]byte, len("HTTP/1.1 100 Continue\n\n"))
+		_, err = io.ReadFull(clientConn, buf)
+		require.NoError(t, err)
+		assert.Equal(t, "HTTP/1.1 100 Continue\n\n", string(buf))
+
+		_, err = clientConn.Write([]byte("Hello"))
+		require.NoError(t, err)
+		_, err = io.ReadAll(clientConn)
+		require.NoError(t, err)
+
+		entry := firstEntry(t, h.history)
+		require.Len(t, entry.InterimResponses, 1)
+		assert.Equal(t, types.EndingBareLF, entry.InterimResponses[0].Message.FirstLineEnding)
+	})
+
+	t.Run("expect_continue_slow_upload", func(t *testing.T) {
+		const readTimeout = 50 * time.Millisecond
+		addr, reqCh := startUpstream(t, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+		h := newTestHTTP1Handler(t)
+		h.timeouts = TimeoutConfig{ReadTimeout: readTimeout}
+
+		clientConn, proxyConn := net.Pipe()
+		t.Cleanup(func() { _ = clientConn.Close() })
+
+		go func() {
+			h.handleExchange(t.Context(), proxyConn, bufio.NewReader(proxyConn), h1Exchange{logParseErrors: true})
+			_ = proxyConn.Close()
+		}()
+
+		_, err := clientConn.Write([]byte("POST /u HTTP/1.1\r\nHost: " + addr +
+			"\r\nTransfer-Encoding: chunked\r\nExpect: 100-continue\r\n\r\n"))
+		require.NoError(t, err)
+
+		cr := bufio.NewReader(clientConn)
+		line, err := cr.ReadString('\n')
+		require.NoError(t, err)
+		require.Equal(t, "HTTP/1.1 100 Continue\r\n", line)
+		_, err = cr.ReadString('\n')
+		require.NoError(t, err)
+
+		_, err = clientConn.Write([]byte("5\r\nHello\r\n"))
+		require.NoError(t, err)
+		// elapsed time is the assertion: a transfer outlasting ReadTimeout must survive
+		time.Sleep(3 * readTimeout)
+		_, err = clientConn.Write([]byte("0\r\n\r\n"))
+		require.NoError(t, err)
+
+		rest, err := io.ReadAll(cr)
+		require.NoError(t, err)
+		assert.Contains(t, string(rest), "200 OK")
+
+		select {
+		case req := <-reqCh:
+			assert.Equal(t, []byte("Hello"), req.Body)
+		case <-time.After(2 * time.Second):
+			t.Fatal("upstream never received the slow upload")
+		}
+	})
+
+	t.Run("malformed_expect_forwarded_verbatim", func(t *testing.T) {
+		addr, reqCh := startUpstream(t, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+		h := newTestHTTP1Handler(t)
+		clientConn, proxyConn := net.Pipe()
+		t.Cleanup(func() { _ = clientConn.Close() })
+
+		go func() {
+			h.handleExchange(t.Context(), proxyConn, bufio.NewReader(proxyConn), h1Exchange{logParseErrors: true})
+			_ = proxyConn.Close()
+		}()
+
+		// space before the colon: no local 100, upstream decides
+		_, err := clientConn.Write([]byte("POST /u HTTP/1.1\r\nHost: " + addr +
+			"\r\nContent-Length: 5\r\nExpect : 100-continue\r\n\r\nHello"))
+		require.NoError(t, err)
+
+		respData, err := io.ReadAll(clientConn)
+		require.NoError(t, err)
+		assert.NotContains(t, string(respData), "100 Continue")
+
+		select {
+		case req := <-reqCh:
+			var buf bytes.Buffer
+			assert.Contains(t, string(req.SerializeRaw(&buf)), "Expect : 100-continue")
+		case <-time.After(2 * time.Second):
+			t.Fatal("upstream never received the request")
+		}
+	})
+
+	t.Run("no_expect_header_no_continue", func(t *testing.T) {
+		addr, _ := startUpstream(t, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+		h := newTestHTTP1Handler(t)
+		clientConn, proxyConn := net.Pipe()
+		t.Cleanup(func() { _ = clientConn.Close() })
+
+		go func() {
+			h.handleExchange(t.Context(), proxyConn, bufio.NewReader(proxyConn), h1Exchange{logParseErrors: true})
+			_ = proxyConn.Close()
+		}()
+
+		_, err := clientConn.Write([]byte("POST /u HTTP/1.1\r\nHost: " + addr +
+			"\r\nContent-Length: 5\r\n\r\nHello"))
+		require.NoError(t, err)
+
+		respData, err := io.ReadAll(clientConn)
+		require.NoError(t, err)
+		assert.NotContains(t, string(respData), "100 Continue")
+		assert.Contains(t, string(respData), "200 OK")
+		assert.Empty(t, firstEntry(t, h.history).InterimResponses)
+	})
 
 	t.Run("intercepted_write_deadline", func(t *testing.T) {
 		h := newHandler(t)

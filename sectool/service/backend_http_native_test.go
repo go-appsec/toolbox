@@ -1,10 +1,12 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -105,6 +107,61 @@ func TestNativeProxyBackend_GetProxyHistory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "http", entry.Scheme)
 	assert.Equal(t, wantPort, entry.Port)
+}
+
+func TestNativeProxyBackend_ExpectContinueInterims(t *testing.T) {
+	t.Parallel()
+
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("OK"))
+	}))
+	t.Cleanup(testServer.Close)
+
+	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
+	require.NoError(t, err)
+	go func() { _ = backend.Serve() }()
+	t.Cleanup(func() { _ = backend.Close(context.Background()) })
+
+	var d net.Dialer
+	conn, err := d.DialContext(t.Context(), "tcp", backend.Addr())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	_, err = conn.Write([]byte("POST " + testServer.URL + "/upload HTTP/1.1\r\nHost: " + testServer.Listener.Addr().String() +
+		"\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n"))
+	require.NoError(t, err)
+
+	// body is withheld until the interim arrives
+	br := bufio.NewReader(conn)
+	line, err := br.ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "HTTP/1.1 100 Continue\r\n", line)
+	_, err = br.ReadString('\n')
+	require.NoError(t, err)
+
+	_, err = conn.Write([]byte("Hello"))
+	require.NoError(t, err)
+	// the origin sends its own 100; the client must see the final response next
+	line, err = br.ReadString('\n')
+	require.NoError(t, err)
+	require.Contains(t, line, "200")
+
+	testutil.WaitForCount(t, func() int { return backend.server.History().Count() }, 1)
+
+	entries, err := backend.GetProxyHistory(t.Context(), 10, "")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	entry, err := backend.GetProxyEntry(t.Context(), entries[0].FlowID)
+	require.NoError(t, err)
+	require.Len(t, entry.InterimResponses, 2)
+	assert.Equal(t, types.InterimSourceProxy, entry.InterimResponses[0].Source)
+	assert.True(t, entry.InterimResponses[0].Relayed)
+	assert.Equal(t, "HTTP/1.1 100 Continue\r\n\r\n", entry.InterimResponses[0].Wire)
+	assert.Equal(t, types.InterimSourceOrigin, entry.InterimResponses[1].Source)
+	assert.False(t, entry.InterimResponses[1].Relayed)
 }
 
 func TestNativeProxyBackend_GetProxyHistoryMeta(t *testing.T) {

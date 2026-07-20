@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
 )
 
 // displayModifiedRequests controls whether flow_get shows post-rule requests.
@@ -508,17 +509,17 @@ type resolvedFlow struct {
 	RawRequest       []byte
 	ModifiedRequest  []byte // post-rule request for display; nil if no rules applied
 	RawResponse      []byte
-	InterimResponses []string       // wire-formatted 1xx responses preceding RawResponse (proxy only)
-	Source           string         // "proxy", "replay", "crawl"
-	Adapter          string         // emitting adapter name (proxy flows; empty for built-in HTTP)
-	Scheme           string         // "http" or "https" (empty = infer from host)
-	Port             int            // original port (0 = infer from scheme)
-	Protocol         string         // "http/1.1", "http/2", or empty (defaults to http/1.1)
-	Duration         time.Duration  // replay, crawl (zero = not available)
-	FoundOn          string         // crawl only
-	Depth            int            // crawl only
-	Truncated        bool           // crawl only
-	Annotations      map[string]any // sidecar-authored metadata (proxy); nil otherwise
+	InterimResponses []types.InterimView // 1xx responses preceding RawResponse (proxy only)
+	Source           string              // "proxy", "replay", "crawl"
+	Adapter          string              // emitting adapter name (proxy flows; empty for built-in HTTP)
+	Scheme           string              // "http" or "https" (empty = infer from host)
+	Port             int                 // original port (0 = infer from scheme)
+	Protocol         string              // "http/1.1", "http/2", or empty (defaults to http/1.1)
+	Duration         time.Duration       // replay, crawl (zero = not available)
+	FoundOn          string              // crawl only
+	Depth            int                 // crawl only
+	Truncated        bool                // crawl only
+	Annotations      map[string]any      // sidecar-authored metadata (proxy); nil otherwise
 
 	InvokedBy         string // originating sidecar (proxy, replay); empty otherwise
 	SidecarInstanceID string // emitting sidecar instance (proxy); empty otherwise

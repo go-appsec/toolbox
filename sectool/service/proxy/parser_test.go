@@ -625,6 +625,52 @@ func TestParseRequest(t *testing.T) {
 	})
 }
 
+func TestParseRequestHead(t *testing.T) {
+	t.Parallel()
+
+	t.Run("body_left_unread", func(t *testing.T) {
+		br := bufio.NewReader(strings.NewReader("POST /p HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nHello"))
+		req, bareLF, bareCR, err := parseRequestHead(br)
+		require.NoError(t, err)
+		assert.Equal(t, "POST", req.Method)
+		assert.Equal(t, "example.com", req.GetHeader("Host"))
+		assert.False(t, bareLF)
+		assert.False(t, bareCR)
+		assert.Nil(t, req.Body)
+
+		rest, err := io.ReadAll(br)
+		require.NoError(t, err)
+		assert.Equal(t, "Hello", string(rest))
+
+		require.NoError(t, readRequestBodyInto(br, req, false, bareLF, bareCR))
+	})
+
+	t.Run("bare_lf_request_line", func(t *testing.T) {
+		br := bufio.NewReader(strings.NewReader("GET / HTTP/1.1\nHost: example.com\r\n\r\n"))
+		_, bareLF, bareCR, err := parseRequestHead(br)
+		require.NoError(t, err)
+		assert.True(t, bareLF)
+		assert.False(t, bareCR)
+	})
+
+	t.Run("empty_request", func(t *testing.T) {
+		_, _, _, err := parseRequestHead(bufio.NewReader(strings.NewReader("")))
+		assert.ErrorIs(t, err, ErrEmptyRequest)
+	})
+
+	t.Run("head_then_body_matches_parse", func(t *testing.T) {
+		const input = "POST /p HTTP/1.1\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nHello\r\n0\r\n\r\n"
+		want, err := ParseRequest(strings.NewReader(input), false)
+		require.NoError(t, err)
+
+		br := bufio.NewReader(strings.NewReader(input))
+		got, bareLF, bareCR, err := parseRequestHead(br)
+		require.NoError(t, err)
+		require.NoError(t, readRequestBodyInto(br, got, false, bareLF, bareCR))
+		assert.Equal(t, want, got)
+	})
+}
+
 func TestParseResponse(t *testing.T) {
 	t.Parallel()
 

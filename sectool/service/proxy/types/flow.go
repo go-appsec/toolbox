@@ -38,8 +38,8 @@ type Flow struct {
 	Request  *Message `json:"request,omitempty" msgpack:"rq,omitempty"`
 	Response *Message `json:"response,omitempty" msgpack:"rs,omitempty"`
 
-	// InterimResponses holds 1xx responses received before the final Response.
-	InterimResponses []*Message `json:"interim_responses,omitempty" msgpack:"ir,omitempty"`
+	// InterimResponses holds 1xx responses preceding the final Response.
+	InterimResponses []*InterimResponse `json:"interim_responses,omitempty" msgpack:"ir,omitempty"`
 
 	// Timing metadata.
 	StartedAt   time.Time `json:"started_at" msgpack:"ts"`
@@ -52,6 +52,27 @@ type Flow struct {
 	InvokedBy string `json:"invoked_by,omitempty" msgpack:"ib,omitempty"`
 	// SidecarInstanceID attributes a sidecar-emitted flow.
 	SidecarInstanceID string `json:"sidecar_instance_id,omitempty" msgpack:"si,omitempty"`
+}
+
+// Sources of a recorded 1xx response.
+const (
+	InterimSourceProxy  = "proxy"  // synthesized by sectool
+	InterimSourceOrigin = "origin" // received from upstream
+)
+
+// InterimResponse is a 1xx recorded on a Flow: the message, which side produced
+// it, and whether the client received it.
+type InterimResponse struct {
+	Message *Message `json:"message" msgpack:"m"`
+	Source  string   `json:"source" msgpack:"s"`
+	Relayed bool     `json:"relayed" msgpack:"r"`
+}
+
+// InterimView is one recorded 1xx response in agent-facing form.
+type InterimView struct {
+	Source  string `json:"source"`
+	Wire    string `json:"wire"`
+	Relayed bool   `json:"relayed"`
 }
 
 // ExtractMeta builds HistoryMeta from a Flow using its accessor methods.
@@ -132,14 +153,19 @@ func (f *Flow) FormatResponse(buf *bytes.Buffer) []byte {
 	return f.Response.toRawResponse().SerializeRaw(buf)
 }
 
-// FormatInterimResponses returns each 1xx response in wire form (HTTP/1.1 only).
-func (f *Flow) FormatInterimResponses(buf *bytes.Buffer) []string {
+// FormatInterimResponses returns each 1xx response in wire form with its source
+// and whether it reached the client (HTTP/1.1 only).
+func (f *Flow) FormatInterimResponses(buf *bytes.Buffer) []InterimView {
 	if len(f.InterimResponses) == 0 {
 		return nil
 	}
-	out := make([]string, 0, len(f.InterimResponses))
+	out := make([]InterimView, 0, len(f.InterimResponses))
 	for _, ir := range f.InterimResponses {
-		out = append(out, string(ir.toRawResponse().SerializeRaw(buf)))
+		out = append(out, InterimView{
+			Source:  ir.Source,
+			Wire:    string(ir.Message.toRawResponse().SerializeRaw(buf)),
+			Relayed: ir.Relayed,
+		})
 	}
 	return out
 }

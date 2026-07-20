@@ -34,23 +34,36 @@ const streamReadChunk = 32 << 10
 func ParseRequest(r io.Reader, unframedBody bool) (*types.RawHTTP1Request, error) {
 	br := bufio.NewReader(r)
 
-	line, requestLineEnding, err := readLineWithEnding(br)
+	req, headBareLF, headBareCR, err := parseRequestHead(br)
 	if err != nil {
-		if errors.Is(err, io.EOF) && len(line) == 0 {
-			return nil, ErrEmptyRequest
-		} else if !errors.Is(err, io.EOF) {
+		return nil, err
+	} else if err = readRequestBodyInto(br, req, unframedBody, headBareLF, headBareCR); err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+// parseRequestHead parses the request line and headers of an HTTP/1.1 request,
+// leaving the body unread on br. headBareLF/headBareCR report bare terminators
+// seen in the request line or header block; pass them to readRequestBodyInto.
+func parseRequestHead(br *bufio.Reader) (req *types.RawHTTP1Request, headBareLF, headBareCR bool, err error) {
+	line, requestLineEnding, lerr := readLineWithEnding(br)
+	if lerr != nil {
+		if errors.Is(lerr, io.EOF) && len(line) == 0 {
+			return nil, false, false, ErrEmptyRequest
+		} else if !errors.Is(lerr, io.EOF) {
 			// return as-is instead of trying to parse partial data as a request line
-			return nil, err
+			return nil, false, false, lerr
 		}
 		// EOF with partial data: continue parsing (line without trailing newline)
 	}
 
-	method, path, query, version, err := ParseRequestLine(line)
-	if err != nil {
-		return nil, err
+	method, path, query, version, perr := ParseRequestLine(line)
+	if perr != nil {
+		return nil, false, false, perr
 	}
 
-	req := &types.RawHTTP1Request{
+	req = &types.RawHTTP1Request{
 		Method:            method,
 		Path:              path,
 		Query:             query,
@@ -59,23 +72,32 @@ func ParseRequest(r io.Reader, unframedBody bool) (*types.RawHTTP1Request, error
 		RequestLineEnding: requestLineEnding,
 	}
 
-	var headersBareLF, headersBareCR bool
-	if req.Headers, headersBareLF, headersBareCR, req.HeaderBlockEnding, err = readHeadersWithWire(br); err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
+	if req.Headers, headBareLF, headBareCR, req.HeaderBlockEnding, err = readHeadersWithWire(br); err != nil && !errors.Is(err, io.EOF) {
+		return nil, false, false, err
 	}
 
-	// Determine body handling
+	// request-line terminator folds into the head bare flags
+	headBareLF = headBareLF || requestLineEnding == types.EndingBareLF
+	headBareCR = headBareCR || requestLineEnding == types.EndingBareCR
+	return req, headBareLF, headBareCR, nil
+}
+
+// readRequestBodyInto reads the framed body from br into req and sets req.Wire,
+// folding in the head bare-terminator flags from parseRequestHead. unframedBody
+// takes the remaining bytes as the body when no framing header is present.
+func readRequestBodyInto(br *bufio.Reader, req *types.RawHTTP1Request, unframedBody, headBareLF, headBareCR bool) error {
 	var wasChunked, trailersBareLF, trailersBareCR bool
+	var err error
 	if req.Body, req.Trailers, wasChunked, req.Chunks, trailersBareLF, trailersBareCR, err = readRequestBodyWithWire(br, req, unframedBody); err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
+		return err
 	}
 
-	// Track wire format, headersBare* already cover HeaderBlockEnding's terminator
+	// Track wire format, headBare* already cover the request line and HeaderBlockEnding terminators
 	// Chunked framing terminators are derived from req.Chunks
 	// Trailer-line terminators are reported separately since they are preserved verbatim in req.Trailers
 	chunksBareLF, chunksBareCR := chunksBareFlags(req.Chunks)
-	usedBareLF := requestLineEnding == types.EndingBareLF || headersBareLF || chunksBareLF || trailersBareLF
-	usedBareCR := requestLineEnding == types.EndingBareCR || headersBareCR || chunksBareCR || trailersBareCR
+	usedBareLF := headBareLF || chunksBareLF || trailersBareLF
+	usedBareCR := headBareCR || chunksBareCR || trailersBareCR
 	if usedBareLF || usedBareCR || wasChunked {
 		req.Wire = &types.WireFormat{
 			WasChunked: wasChunked,
@@ -83,8 +105,7 @@ func ParseRequest(r io.Reader, unframedBody bool) (*types.RawHTTP1Request, error
 			UsedBareCR: usedBareCR,
 		}
 	}
-
-	return req, nil
+	return nil
 }
 
 // chunksBareFlags returns whether any chunk framing line used bare LF or bare CR.
