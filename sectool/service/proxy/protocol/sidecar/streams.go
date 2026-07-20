@@ -3,10 +3,12 @@ package sidecar
 import (
 	"context"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/go-analyze/bulk"
 
@@ -51,19 +53,20 @@ func (ss *streamSet) conn(id string) net.Conn {
 	return ss.streams[id]
 }
 
-// applyWrites writes each entry to its named stream's socket, returning the first
-// write error. An unknown stream_id is skipped, not an error.
-func (ss *streamSet) applyWrites(writes []wire.StreamWrite) error {
+// applyWrites writes each entry to its named stream's socket. An unknown
+// stream_id is skipped; a failed write closes only that stream.
+func (ss *streamSet) applyWrites(rec *Record, writes []wire.StreamWrite) {
 	for _, w := range writes {
 		c := ss.conn(w.StreamID)
 		if c == nil {
 			continue
 		}
 		if _, err := c.Write(w.Data); err != nil {
-			return err
+			// terminal for a byte stream; the owning pump reports stream_ended
+			log.Printf("sidecar[%s]: stream write failed stream_id=%s: %v", rec.Name, w.StreamID, err)
+			_ = c.Close()
 		}
 	}
-	return nil
 }
 
 // serveClient runs one claimed client-facing connection as a stream. The caller
@@ -71,6 +74,8 @@ func (ss *streamSet) applyWrites(writes []wire.StreamWrite) error {
 func (ss *streamSet) serveClient(ctx context.Context, rec *Record, c *protocol.EarlyClaimCtx) {
 	id := ss.add(c.ClientConn)
 	defer ss.remove(id)
+	// drop any per-exchange deadline the proxy left armed before the handoff
+	_ = c.ClientConn.SetDeadline(time.Time{})
 
 	host, path := openInfo(c)
 	ss.runClient(ctx, rec, id, c.ClientReader, wire.StreamOpenParams{
@@ -86,6 +91,8 @@ func (ss *streamSet) serveClient(ctx context.Context, rec *Record, c *protocol.E
 func (ss *streamSet) serveUpgrade(ctx context.Context, rec *Record, conns protocol.UpgradeConns, reqFlowID string, reqHeaders []wire.Header, host, path string) {
 	id := ss.add(conns.ClientConn)
 	defer ss.remove(id)
+	// drop any per-exchange deadline the proxy left armed before the handoff
+	_ = conns.ClientConn.SetDeadline(time.Time{})
 
 	ss.runClient(ctx, rec, id, conns.ClientReader, wire.StreamOpenParams{
 		StreamID:       id,
@@ -106,16 +113,16 @@ func (ss *streamSet) runClient(ctx context.Context, rec *Record, id string, r io
 	}
 	// release the sidecar's per-stream state on any loop exit (RPC error or EOF)
 	defer ss.notifyEnded(rec, id)
-	if ss.applyWrites(res.Writes) != nil {
-		return
-	}
+	ss.applyWrites(rec, res.Writes)
 	ss.pump(ctx, rec, id, r)
 }
 
 // serveUpstream pumps a dialed upstream socket as a stream; the dial reply already
 // announced it, so there is no stream_open. The caller registered the socket via
-// add; this releases it on exit.
+// add; this releases and closes it on exit.
 func (ss *streamSet) serveUpstream(ctx context.Context, rec *Record, id string, conn net.Conn) {
+	// the pump owns the dialed socket once registered
+	defer func() { _ = conn.Close() }()
 	defer ss.remove(id)
 	defer ss.notifyEnded(rec, id)
 	ss.pump(ctx, rec, id, conn)
@@ -135,9 +142,7 @@ func (ss *streamSet) pump(ctx context.Context, rec *Record, id string, r io.Read
 			}, &dres); derr != nil {
 				return
 			}
-			if ss.applyWrites(dres.Writes) != nil {
-				return
-			}
+			ss.applyWrites(rec, dres.Writes)
 		}
 		if err != nil {
 			return
@@ -157,15 +162,20 @@ func (ss *streamSet) closeStream(id string) {
 	}
 }
 
-// streamWrite writes proactive bytes to an open stream. An unknown stream_id is a
-// transport error.
+// streamWrite writes proactive bytes to an open stream. An unknown stream_id or a
+// failed write is a transport error; a failed write also closes the stream.
 func (ss *streamSet) streamWrite(id string, data []byte) *wire.Error {
 	c := ss.conn(id)
 	if c == nil {
 		return wire.NewError(wire.CodeUnknownStream, "stream_write: unknown stream_id").
 			WithData(&wire.ErrorData{StreamID: id})
 	}
-	_, _ = c.Write(data)
+	if _, err := c.Write(data); err != nil {
+		// terminal for a byte stream; the owning pump reports stream_ended
+		_ = c.Close()
+		return wire.NewError(wire.CodeTransportInternal, "stream_write: "+err.Error()).
+			WithData(&wire.ErrorData{StreamID: id})
+	}
 	return nil
 }
 

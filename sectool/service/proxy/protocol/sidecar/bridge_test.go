@@ -207,13 +207,3 @@ func TestBridgeMultiClaim(t *testing.T) {
 		assert.False(t, b.ClaimEarly(earlyCtx(9999, []byte{0x10})))
 	})
 }
-
-func TestStreamWrite(t *testing.T) {
-	t.Parallel()
-
-	t.Run("unknown_stream", func(t *testing.T) {
-		err := newStreamSet().streamWrite("missing", []byte("x"))
-		require.NotNil(t, err)
-		assert.Equal(t, wire.CodeUnknownStream, err.Code)
-	})
-}

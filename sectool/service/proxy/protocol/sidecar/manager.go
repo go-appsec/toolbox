@@ -328,7 +328,7 @@ func (s *session) HandleNotification(_ context.Context, method string, params js
 			log.Printf("sidecar[%s]: drop malformed %s notification: %v", s.adapterName(), method, err)
 		} else if rec := s.record(); rec != nil {
 			if werr := rec.bridge.streams.streamWrite(p.StreamID, p.Data); werr != nil {
-				log.Printf("sidecar[%s]: %s", s.adapterName(), werr.Message)
+				log.Printf("sidecar[%s]: %s (stream_id=%s)", s.adapterName(), werr.Message, p.StreamID)
 			}
 		}
 	}
