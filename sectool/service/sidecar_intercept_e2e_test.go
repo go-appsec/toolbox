@@ -258,7 +258,7 @@ func TestSidecarProactiveStreamOutput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "PING", string(buf))
 
-	require.NoError(t, h.sc.CloseStream(id, "done"))
+	require.NoError(t, h.sc.CloseStream(id, "done", false))
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, err = conn.Read(make([]byte, 16))
 	require.ErrorIs(t, err, io.EOF)

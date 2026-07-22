@@ -58,8 +58,7 @@ func Dial(ctx context.Context, addr string, reg Registration) (*Conn, error) {
 }
 
 // SetHandler installs the inbound handler synchronously. Serve calls this before it blocks;
-// call it directly when the handler must be active before Serve starts. A nil handler installs
-// the no-op BaseHandler.
+// call it directly when the handler must be active before Serve starts. A nil handler installs the no-op BaseHandler.
 func (c *Conn) SetHandler(h Handler) {
 	if h == nil {
 		h = BaseHandler{}
@@ -113,7 +112,7 @@ func (h connHandler) HandleRequest(_ context.Context, method string, params json
 		if err != nil {
 			return nil, wire.NewError(wire.CodeTransportInternal, err.Error())
 		}
-		return wire.StreamResult{Writes: writes}, nil
+		return h.c.sendWrites(writes)
 	case wire.MethodStreamDeliver:
 		var p wire.StreamWriteParams
 		_ = json.Unmarshal(params, &p)
@@ -121,7 +120,7 @@ func (h connHandler) HandleRequest(_ context.Context, method string, params json
 		if err != nil {
 			return nil, wire.NewError(wire.CodeTransportInternal, err.Error())
 		}
-		return wire.StreamResult{Writes: writes}, nil
+		return h.c.sendWrites(writes)
 	case wire.MethodClaimProbe:
 		var p wire.ClaimProbeParams
 		_ = json.Unmarshal(params, &p)
@@ -165,10 +164,12 @@ func (h connHandler) HandleRequest(_ context.Context, method string, params json
 func (h connHandler) HandleNotification(_ context.Context, method string, params json.RawMessage) {
 	switch method {
 	case wire.MethodPing:
-		_ = h.c.peer.Notify(wire.MethodPong, nil)
+		// a frame write can stall on the write lock, so keep it off the notification path
+		go func() { _ = h.c.peer.Notify(wire.MethodPong, nil) }()
 	case wire.MethodStreamEnded:
 		var p wire.StreamEndedParams
 		_ = json.Unmarshal(params, &p)
-		h.c.currentHandler().OnStreamEnded(p)
+		// handler code may block or call back into sectool, so it never runs inline
+		go h.c.currentHandler().OnStreamEnded(p)
 	}
 }

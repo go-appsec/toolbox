@@ -50,7 +50,8 @@ type Handler interface {
 	// OnStreamOpen and OnStreamDeliver receive the claimed stream's events and
 	// return bytes for sectool to write back (possibly to a different stream_id).
 	// Inbound chunks are raw transport bytes, not aligned to protocol frames; use
-	// Reassembler to accumulate complete frames. OnStreamEnded reports teardown.
+	// Reassembler to accumulate complete frames. OnStreamEnded reports teardown and
+	// runs concurrently, unordered against other stream events.
 	OnStreamOpen(wire.StreamOpenParams) ([]wire.StreamWrite, error)
 	OnStreamDeliver(wire.StreamWriteParams) ([]wire.StreamWrite, error)
 	OnStreamEnded(wire.StreamEndedParams)

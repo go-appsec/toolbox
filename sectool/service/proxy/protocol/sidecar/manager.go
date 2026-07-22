@@ -114,9 +114,10 @@ func (m *Manager) hasResumeState(instanceID string) bool {
 
 // HandleConn drives one accepted sidecar connection until it closes.
 func (m *Manager) HandleConn(ctx context.Context, conn net.Conn) {
-	s := &session{m: m}
+	s := &session{m: m, diag: make(chan func(), diagQueue)}
 	s.peer = wire.NewPeer(conn, s)
 
+	go s.writeDiag()
 	go m.heartbeatLoop(ctx, s)
 	// peer.Run blocks in ReadFrame, close on cancel to unblock unregistered sessions
 	go func() {
@@ -227,14 +228,46 @@ func (m *Manager) Shutdown(ctx context.Context) {
 	wg.Wait()
 }
 
+// diagQueue bounds the diagnostics waiting to be written.
+const diagQueue = 256
+
 // session is the per-connection JSON-RPC handler. It processes register, then
 // tracks the resulting record for heartbeats.
 type session struct {
 	m    *Manager
 	peer *wire.Peer
 
+	// diagnostics are written off the notification path, where a stalled stderr
+	// would otherwise hold up the sidecar's stream writes
+	diag chan func()
+
 	mu  sync.Mutex
 	rec *Record
+}
+
+// writeDiag runs queued diagnostics in order until the connection closes.
+func (s *session) writeDiag() {
+	for {
+		select {
+		case fn := <-s.diag:
+			fn()
+		case <-s.peer.Done():
+			return
+		}
+	}
+}
+
+// queueDiag hands a diagnostic to the writer, dropping it when the queue is full.
+func (s *session) queueDiag(fn func()) {
+	select {
+	case s.diag <- fn:
+	default:
+	}
+}
+
+// dropped reports a notification that could not be parsed.
+func (s *session) dropped(method string, err error) {
+	log.Printf("sidecar[%s]: drop malformed %s notification: %v", s.adapterName(), method, err)
 }
 
 func (s *session) record() *Record {
@@ -296,7 +329,8 @@ func (s *session) HandleRequest(ctx context.Context, method string, params json.
 func (s *session) HandleNotification(_ context.Context, method string, params json.RawMessage) {
 	switch method {
 	case wire.MethodPing:
-		_ = s.peer.Notify(wire.MethodPong, nil)
+		// a frame write can stall on the write lock, so keep it off the notification path
+		go func() { _ = s.peer.Notify(wire.MethodPong, nil) }()
 	case wire.MethodPong:
 		if rec := s.record(); rec != nil {
 			rec.recordPong(s.m.now())
@@ -304,31 +338,33 @@ func (s *session) HandleNotification(_ context.Context, method string, params js
 	case wire.MethodLog:
 		var p wire.LogParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			log.Printf("sidecar[%s]: drop malformed %s notification: %v", s.adapterName(), method, err)
+			s.queueDiag(func() { s.dropped(method, err) })
 		} else {
-			s.handleLog(&p)
+			s.queueDiag(func() { s.handleLog(&p) })
 		}
 	case wire.MethodReportMetrics:
 		var p wire.ReportMetricsParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			log.Printf("sidecar[%s]: drop malformed %s notification: %v", s.adapterName(), method, err)
+			s.queueDiag(func() { s.dropped(method, err) })
 		} else {
-			s.handleReportMetrics(&p)
+			s.queueDiag(func() { s.handleReportMetrics(&p) })
 		}
 	case wire.MethodCloseStream:
 		var p wire.StreamEndedParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			log.Printf("sidecar[%s]: drop malformed %s notification: %v", s.adapterName(), method, err)
+			s.queueDiag(func() { s.dropped(method, err) })
 		} else if rec := s.record(); rec != nil {
-			rec.bridge.streams.closeStream(p.StreamID)
+			rec.bridge.streams.closeStream(p.StreamID, p.Abort)
 		}
 	case wire.MethodStreamWrite:
 		var p wire.StreamWriteParams
 		if err := json.Unmarshal(params, &p); err != nil {
-			log.Printf("sidecar[%s]: drop malformed %s notification: %v", s.adapterName(), method, err)
+			s.queueDiag(func() { s.dropped(method, err) })
 		} else if rec := s.record(); rec != nil {
 			if werr := rec.bridge.streams.streamWrite(p.StreamID, p.Data); werr != nil {
-				log.Printf("sidecar[%s]: %s (stream_id=%s)", s.adapterName(), werr.Message, p.StreamID)
+				s.queueDiag(func() {
+					log.Printf("sidecar[%s]: %s (stream_id=%s)", s.adapterName(), werr.Message, p.StreamID)
+				})
 			}
 		}
 	}

@@ -22,7 +22,7 @@ The captured representation maps to an HTTP-shaped envelope (`method`, `path`, `
 1. **Connect & register.** Sidecar dials the socket and sends a `register` request (see [register](#register-sidecar--sectool)). Sectool replies with the effective version, or rejects with `-33001` on version mismatch.
 2. **Rule sync.** Rules arrive only through `sync_rules`, pushed at registration and on every change (see [sync_rules](#sync_rules-sectool--sidecar)).
 3. **Capture.** Sidecar emits flows via `push_flow`; two-phase completion, streams, and sessions all use the same method (see [Flow model](#flow-model)).
-4. **Data path.** For claimed connections, sectool drives `stream_open` then `stream_deliver`, awaiting each response before the next chunk; the sidecar returns `writes` and may nest `dial_upstream`, `core_invoke`, or `push_flow` (see [stream_deliver](#stream_deliver-sectool--sidecar)).
+4. **Data path.** For claimed connections, sectool drives `stream_open` then `stream_deliver`, awaiting each response before the next chunk; the sidecar sends outbound bytes as `stream_write` and names them in the response `wrote_to`, and may nest `dial_upstream`, `core_invoke`, or `push_flow` (see [stream_deliver](#stream_deliver-sectool--sidecar)).
 5. **Heartbeat.** `ping` / `pong` keep the connection alive in both directions.
 6. **Shutdown.** Sectool sends `shutdown`; the sidecar drains, emits final metrics, and closes.
 
@@ -221,7 +221,7 @@ func (h *myHandler) splitFrame(buf []byte) (n int, ok bool) {
 }
 ```
 
-The returned writes tell sectool what bytes to write back. A write may target a **different** `stream_id` than the event arrived on; that is how client data is forwarded upstream. `sidecar.Forward(streamID, bytes)` builds a single-target writes slice:
+The returned writes tell sectool what bytes to write back. A write may target a **different** `stream_id` than the event arrived on; that is how client data is forwarded upstream. The SDK sends them as `stream_write` so they share one ordered path with proactive `StreamWrite`, keeping a stream's bytes in send order. `sidecar.Forward(streamID, bytes)` builds a single-target writes slice:
 
 ```go
 func (h *myHandler) OnStreamDeliver(p wire.StreamWriteParams) ([]wire.StreamWrite, error) {
@@ -413,11 +413,12 @@ Invocation reaches `OnInvokeTool` with sectool-validated arguments. The handler 
 Two actions outside of event responses:
 
 ```go
-conn.CloseStream(streamID, "session ended")   // close an open stream
-conn.StreamWrite(streamID, keepaliveBytes)     // write without a triggering event
+conn.CloseStream(streamID, "session ended", false)  // close after the writes already sent
+conn.CloseStream(streamID, "stale", true)           // abort now, dropping queued writes
+conn.StreamWrite(streamID, keepaliveBytes)          // write without a triggering event
 ```
 
-`StreamWrite` is for keepalives and timer-driven output only. Ordinary data belongs in the writes returned from stream events, which preserve per-stream ordering.
+`StreamWrite` calls are applied in send order, so they also suit a synchronous state machine that produces output with no triggering event, and they stay ordered against writes returned from stream events.
 
 ### Logging and metrics
 
@@ -529,6 +530,10 @@ A `claim_probe` returning `{"claim": false}` is normal control flow, not an erro
 | `stream_ended` | sectool → sidecar | notification |
 | `ping` / `pong` | either direction | notification (or request) |
 
+Messages are ordered per concern, not globally. All of a stream's bytes travel as `stream_write` on one ordered path, so they reach its socket in the order the sidecar sent them, and `close_stream` takes its place in that same order. `log` and `report_metrics` keep their order against each other. `sync_rules` pushes apply in the order sectool sent them. Everything else, including `ping`/`pong` and the remaining request/response traffic, is handled concurrently.
+
+Sectool queues each stream's pending writes. A stream event's writes are paced by the queue, so a slow client throttles the stream feeding it. A proactive `stream_write` cannot be paced without stalling other streams, so outrunning a stalled client by more than the queue depth closes that stream, reported as the usual `stream_ended`.
+
 ### Methods
 
 Params and results below list JSON field names. Reused shapes (`Flow`, `FlowMessage`, `Rule`, `Capabilities`, …) are defined under [Shared structs](#shared-structs).
@@ -562,7 +567,7 @@ Internal tools are not invocable.
 
 **params:** `host` (string, optional), `port` (int, optional), `tls` (`{enabled, sni?, alpn?, skip_verify?}`, optional), `parent_flow_id` (string, optional, supplies the default destination and links the dial). Omitting `host`/`port` dials `parent_flow_id`'s original destination.
 
-**result:** `{ "stream_id": string }`, or a `-3330x` error on scope/dial/TLS failure. Bytes then flow via `stream_deliver` events and Response `writes`.
+**result:** `{ "stream_id": string }`, or a `-3330x` error on scope/dial/TLS failure. Bytes then flow via `stream_deliver` events and `stream_write`.
 
 #### invoke_adapter (sidecar → sectool)
 
@@ -580,11 +585,11 @@ Internal tools are not invocable.
 
 #### close_stream (sidecar → sectool, notification)
 
-**params:** `stream_id` (string), `reason` (string, optional). Proactively closes a client-facing or dialed upstream stream.
+**params:** `stream_id` (string), `reason` (string, optional), `abort` (bool, optional). Proactively closes a client-facing or dialed upstream stream after the writes already queued for it. Set `abort` to close immediately and drop them.
 
 #### stream_write (sidecar → sectool, notification)
 
-**params:** `stream_id` (string), `data` (standard-alphabet padded base64). Proactive write for keepalives and timer-driven output only; unknown `stream_id` is a `-33202` transport error. Ordinary data belongs in event-Response `writes`.
+**params:** `stream_id` (string), `data` (standard-alphabet padded base64). Proactive write for keepalives and for output produced with no triggering event; unknown `stream_id` is a `-33202` transport error.
 
 #### sync_rules (sectool → sidecar)
 
@@ -592,7 +597,7 @@ Internal tools are not invocable.
 
 **result:** `ack` (bool). On an unsupported rule shape, return `-33102` naming the `rule_id`; the sidecar keeps its previous rules.
 
-Pushed once at registration (before the `register` result, even when the list is empty, so a reconnecting sidecar never keeps a stale cache) and again on every change. Sectool bounds the ack at 10s and continues without it; `invoke_tool` is bounded at 60s. A frame write that stalls for 20s closes the connection.
+Pushed once at registration (before the `register` result, even when the list is empty, so a reconnecting sidecar never keeps a stale cache) and again on every change. Sectool serializes pushes to a sidecar and waits for each ack before the next, so a later snapshot never overwrites a newer one; each push is bounded by a timeout and fails open (the sidecar keeps capturing its traffic) so a stalled sidecar can't wedge later pushes. A stalled frame write will eventually close the connection.
 
 #### sidecar_send (sectool → sidecar)
 
@@ -612,13 +617,13 @@ The method behind agent `replay_send` and the destination side of `invoke_adapte
 
 **params:** `stream_id` (string), `host`, `path`, `peer_addr` (strings, optional), plus `request_flow_id` (string) and `request_headers` (`[Header]`), present only for an `upgrade_claim`, absent for `early_claim`.
 
-**result:** `{ "writes": [StreamWrite] }` (usually empty; the client speaks first).
+**result:** `{ "wrote_to": [string] }` (usually empty; the client speaks first).
 
 #### stream_deliver (sectool → sidecar)
 
 **params:** `stream_id` (string), `data` (standard-alphabet padded base64, a raw transport chunk **not** frame-aligned; see [Stream events](#stream-events) for reassembly).
 
-**result:** `{ "writes": [StreamWrite] }`, bytes for sectool to write, possibly to a different `stream_id`. Sectool awaits this response before the next chunk (per-stream ordering). The sidecar may nest `dial_upstream`, `core_invoke`, or `push_flow`.
+**result:** `{ "wrote_to": [string] }`, the stream ids the sidecar wrote to while handling the event. The bytes themselves travel as `stream_write` notifications sent before the response, keeping them ordered against proactive writes; `wrote_to` lets sectool pace those streams. Sectool awaits this response before the next chunk (per-stream ordering). The sidecar may nest `dial_upstream`, `core_invoke`, or `push_flow`.
 
 #### claim_probe (sectool → sidecar)
 
@@ -636,7 +641,7 @@ The method behind agent `replay_send` and the destination side of `invoke_adapte
 
 #### ping / pong (either direction)
 
-A `ping` request (has `id`) is answered with an empty `{}` result. A `ping` notification (no `id`) is answered with a `pong` notification. Sectool records a received `pong` as liveness. Default interval 10 s, unhealthy after ~30 s without a reply.
+A `ping` request (has `id`) is answered with an empty `{}` result. A `ping` notification (no `id`) is answered with a `pong` notification. Sectool records a received `pong` as liveness, and marks a sidecar unhealthy after enough consecutive intervals without a reply.
 
 ### Shared structs
 

@@ -36,6 +36,7 @@ func (m *Manager) PushRules(ctx context.Context) {
 // pushRules sends the adapter's current rules and waits for the ack, serialized
 // against other pushes to this sidecar.
 func (r *Record) pushRules(ctx context.Context, src RuleSource) {
+	// held across the call so pushes never overlap and a stale snapshot cannot overwrite a newer one
 	r.pushMu.Lock() // lock order pushMu -> rule store
 	defer r.pushMu.Unlock()
 

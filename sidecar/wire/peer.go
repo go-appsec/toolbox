@@ -20,6 +20,9 @@ var ErrPeerClosed = errors.New("sidecar: peer closed")
 // every other sender behind the write lock.
 const writeTimeout = 20 * time.Second
 
+// notifyQueue bounds the inbound notifications waiting on the dispatch goroutine.
+const notifyQueue = 128
+
 // Handler processes inbound requests and notifications from the remote peer.
 // HandleRequest returns either a result (marshaled to the JSON-RPC response) or
 // an *Error. HandleNotification has no reply.
@@ -50,14 +53,18 @@ func (h HandlerFuncs) HandleNotification(ctx context.Context, method string, par
 
 // Peer is a both-directions JSON-RPC 2.0 endpoint over one length-prefixed
 // stream. Either side may issue Requests (Call) and Notifications (Notify).
+// Inbound notifications are handled one at a time in the order they arrive, so a
+// HandleNotification implementation must return promptly. Requests are handled
+// concurrently and responses are delivered as soon as they are read.
 type Peer struct {
-	rw      net.Conn
-	h       Handler
-	writeMu sync.Mutex
-	nextID  atomic.Uint64
-	pending sync.Map // uint64 -> chan *Message
-	closed  atomic.Bool
-	done    chan struct{}
+	rw       net.Conn
+	h        Handler
+	writeMu  sync.Mutex
+	nextID   atomic.Uint64
+	pending  sync.Map // uint64 -> chan *Message
+	notifyCh chan *Message
+	closed   atomic.Bool
+	done     chan struct{}
 }
 
 // NewPeer wraps conn with the given inbound Handler. Call Run to start the reader.
@@ -65,7 +72,7 @@ func NewPeer(conn net.Conn, h Handler) *Peer {
 	if h == nil {
 		h = HandlerFuncs{}
 	}
-	return &Peer{rw: conn, h: h, done: make(chan struct{})}
+	return &Peer{rw: conn, h: h, notifyCh: make(chan *Message, notifyQueue), done: make(chan struct{})}
 }
 
 // SetHandler swaps the inbound handler. Safe to call before Run starts handling
@@ -81,6 +88,7 @@ func (p *Peer) SetHandler(h Handler) {
 // Returns nil on a clean close (local Close or remote EOF), otherwise the read
 // error.
 func (p *Peer) Run(ctx context.Context) error {
+	go p.dispatchNotifications(ctx)
 	for {
 		payload, err := ReadFrame(p.rw)
 		if err != nil {
@@ -103,8 +111,25 @@ func (p *Peer) Run(ctx context.Context) error {
 			m := msg
 			go p.dispatchRequest(ctx, &m)
 		case msg.IsNotification():
+			// queued for a single consumer so stream writes keep the order they were sent
 			m := msg
-			go p.h.HandleNotification(ctx, m.Method, m.Params)
+			select {
+			case p.notifyCh <- &m:
+			case <-p.done:
+			}
+		}
+	}
+}
+
+// dispatchNotifications handles queued notifications in arrival order, keeping the
+// read loop free.
+func (p *Peer) dispatchNotifications(ctx context.Context) {
+	for {
+		select {
+		case msg := <-p.notifyCh:
+			p.h.HandleNotification(ctx, msg.Method, msg.Params)
+		case <-p.done:
+			return
 		}
 	}
 }

@@ -84,7 +84,7 @@ func (h *forwardHandler) OnStreamEnded(p wire.StreamEndedParams) {
 	dst := h.pair[p.StreamID]
 	h.mu.Unlock()
 	if dst != "" {
-		_ = h.conn.CloseStream(dst, "peer closed")
+		_ = h.conn.CloseStream(dst, "peer closed", false)
 	}
 }
 

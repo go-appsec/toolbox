@@ -259,9 +259,10 @@ type StreamWrite struct {
 	Data     []byte `json:"data"`
 }
 
-// StreamResult replies to stream_open and stream_deliver with optional bytes to write back to one or more sockets.
+// StreamResult replies to stream_open and stream_deliver, naming the streams the
+// sidecar wrote to while handling the event. Bytes travel as stream_write.
 type StreamResult struct {
-	Writes []StreamWrite `json:"writes,omitempty"`
+	WroteTo []string `json:"wrote_to,omitempty"`
 }
 
 // StreamOpenParams announces that a claim fired and a new stream exists.
@@ -291,6 +292,9 @@ type StreamWriteParams struct {
 type StreamEndedParams struct {
 	StreamID string `json:"stream_id"`
 	Reason   string `json:"reason,omitempty"`
+	// Abort closes immediately, dropping the writes already queued for the stream
+	// rather than closing after them; close_stream only.
+	Abort bool `json:"abort,omitempty"`
 }
 
 // ClaimProbeParams asks the sidecar whether a buffered opening stream is its

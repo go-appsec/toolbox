@@ -38,7 +38,7 @@ func (s *session) handleDialUpstream(ctx context.Context, p *wire.DialUpstreamPa
 		return nil, rpcErr
 	}
 
-	id := rec.bridge.streams.add(conn)
+	id := rec.bridge.streams.add(rec, conn)
 	go rec.bridge.streams.serveUpstream(ctx, rec, id, conn)
 
 	s.recordDial(rec, p.ParentFlowID, host, port, scheme)

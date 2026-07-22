@@ -182,3 +182,77 @@ func TestPeerCloseWakesCallers(t *testing.T) {
 	require.NotNil(t, err)
 	assert.Equal(t, CodeTransportInternal, err.Code)
 }
+
+func TestPeerNotificationOrder(t *testing.T) {
+	t.Parallel()
+
+	// stays under laneQueue so every Notify completes while the first handler waits
+	const count = 100
+	got := make(chan int, count)
+	sent, release := make(chan struct{}), make(chan struct{})
+	var first sync.Once
+	handler := HandlerFuncs{
+		Notification: func(_ context.Context, _ string, params json.RawMessage) {
+			// hold the first handler until all are sent, so concurrent dispatch would overtake it
+			first.Do(func() { <-release })
+			var seq int
+			assert.NoError(t, json.Unmarshal(params, &seq))
+			got <- seq
+		},
+	}
+
+	pa, _ := newPeerPair(t, nil, handler)
+	go func() {
+		defer close(sent)
+		for i := range count {
+			assert.NoError(t, pa.Notify("seq", i))
+		}
+	}()
+	<-sent
+	close(release)
+
+	for i := range count {
+		select {
+		case seq := <-got:
+			require.Equal(t, i, seq)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for notification")
+		}
+	}
+}
+
+// TestPeerRequestsConcurrent verifies requests do not block behind each other, so a
+// handler awaiting a nested Call cannot wedge the reader.
+func TestPeerRequestsConcurrent(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	entered := make(chan string, 2)
+	handler := HandlerFuncs{
+		Request: func(_ context.Context, method string, _ json.RawMessage) (any, *Error) {
+			entered <- method
+			if method == "slow" {
+				<-release
+			}
+			return struct{}{}, nil
+		},
+	}
+	client, _ := newPeerPair(t, HandlerFuncs{}, handler)
+
+	go func() { _ = client.Call(t.Context(), "slow", nil, nil) }()
+	require.Equal(t, "slow", <-entered)
+
+	// a second request runs while the first is held
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		assert.Nil(t, client.Call(t.Context(), "fast", nil, nil))
+	}()
+	require.Equal(t, "fast", <-entered)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second request blocked behind the first")
+	}
+	close(release)
+}

@@ -268,3 +268,39 @@ func TestManagerShutdown(t *testing.T) {
 	}
 	assert.Eventually(t, func() bool { return m.Count() == 0 }, 2*time.Second, 10*time.Millisecond)
 }
+
+func TestSessionDiag(t *testing.T) {
+	t.Parallel()
+
+	srv, cli := net.Pipe()
+	t.Cleanup(func() { _ = cli.Close() })
+	s := &session{diag: make(chan func(), diagQueue)}
+	s.peer = wire.NewPeer(srv, nil)
+	t.Cleanup(func() { _ = s.peer.Close() })
+	go s.writeDiag()
+
+	t.Run("runs_in_order", func(t *testing.T) {
+		got := make(chan int, 10)
+		for i := range 10 {
+			s.queueDiag(func() { got <- i })
+		}
+		for i := range 10 {
+			select {
+			case v := <-got:
+				require.Equal(t, i, v)
+			case <-time.After(2 * time.Second):
+				t.Fatal("diagnostic not run")
+			}
+		}
+	})
+
+	t.Run("drops_when_full", func(t *testing.T) {
+		// a wedged first diagnostic keeps the writer busy while the queue fills
+		block := make(chan struct{})
+		s.queueDiag(func() { <-block })
+		for range diagQueue + 100 {
+			s.queueDiag(func() {})
+		}
+		close(block) // never blocked the caller
+	})
+}
