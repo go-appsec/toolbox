@@ -150,7 +150,7 @@ func TestReplayHistoryComplete(t *testing.T) {
 		require.Equal(t, 1, store.Count())
 
 		completedAt := created.Add(250 * time.Millisecond)
-		require.True(t, store.Complete("f1", []byte("HTTP/1.1 200 OK\r\n\r\n"), []byte("data: one\n\n"), 200, completedAt))
+		require.True(t, store.Complete("f1", []byte("HTTP/1.1 200 OK\r\n\r\n"), []byte("data: one\n\n"), 200, completedAt, nil))
 
 		got, ok := store.Get("f1")
 		require.True(t, ok)
@@ -171,7 +171,7 @@ func TestReplayHistoryComplete(t *testing.T) {
 		storage := NewMemStorage()
 		t.Cleanup(func() { _ = storage.Close() })
 		store := NewReplayHistoryStore(storage)
-		assert.False(t, store.Complete("missing", nil, nil, 200, time.Now()))
+		assert.False(t, store.Complete("missing", nil, nil, 200, time.Now(), nil))
 	})
 
 	t.Run("in_progress_leaves_duration_zero", func(t *testing.T) {
@@ -180,12 +180,64 @@ func TestReplayHistoryComplete(t *testing.T) {
 		store := NewReplayHistoryStore(storage)
 
 		store.Store(&ReplayHistoryEntry{FlowID: "f2", Method: "GET"})
-		require.True(t, store.Complete("f2", nil, []byte("partial"), 200, time.Time{}))
+		require.True(t, store.Complete("f2", nil, []byte("partial"), 200, time.Time{}, nil))
 
 		got, ok := store.Get("f2")
 		require.True(t, ok)
 		assert.Equal(t, "partial", string(got.RespBody))
 		assert.Zero(t, got.Duration)
+	})
+
+	t.Run("annotations_merged", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		store.Store(&ReplayHistoryEntry{
+			FlowID:      "f3",
+			Method:      "GET",
+			Annotations: map[string]any{"replay": true, "phase": "captured"},
+		})
+		require.True(t, store.Complete("f3", nil, nil, 200, time.Time{},
+			map[string]any{"phase": "mutated", "fired_rules": []string{"r1"}}))
+
+		got, ok := store.Get("f3")
+		require.True(t, ok)
+		assert.Equal(t, true, got.Annotations["replay"])
+		assert.Equal(t, "mutated", got.Annotations["phase"])
+		assert.Equal(t, []any{"r1"}, got.Annotations["fired_rules"]) // msgpack decodes slices as []any
+
+		metas := store.ListMeta()
+		require.Len(t, metas, 1)
+		assert.Equal(t, "mutated", metas[0].Annotations["phase"])
+	})
+}
+
+func TestReplayHistorySetInvokedBy(t *testing.T) {
+	t.Parallel()
+
+	t.Run("sets_and_round_trips", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		store.Store(&ReplayHistoryEntry{FlowID: "f1", Method: "GET"})
+		require.True(t, store.SetInvokedBy("f1", "httpsidecar"))
+
+		got, ok := store.Get("f1")
+		require.True(t, ok)
+		assert.Equal(t, "httpsidecar", got.InvokedBy)
+
+		metas := store.ListMeta()
+		require.Len(t, metas, 1)
+		assert.Equal(t, "httpsidecar", metas[0].InvokedBy)
+	})
+
+	t.Run("unknown_flow", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+		assert.False(t, store.SetInvokedBy("missing", "httpsidecar"))
 	})
 }
 

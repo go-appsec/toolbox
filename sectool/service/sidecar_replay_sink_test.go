@@ -74,7 +74,7 @@ func replayFlow() *types.Flow {
 			Body:       []byte("hello"),
 		},
 		StartedAt:   now,
-		CompletedAt: now,
+		CompletedAt: now.Add(100 * time.Millisecond),
 		Annotations: map[string]any{wire.AnnotationReplay: true},
 	}
 }
@@ -119,7 +119,8 @@ func TestReplayRoutingSink(t *testing.T) {
 		replay := store.NewReplayHistoryStore(store.NewMemStorage())
 		sink := &replayRoutingSink{history: history, replay: replay}
 
-		id := sink.Store(replayFlow())
+		f := replayFlow()
+		id := sink.Store(f)
 		// Not in proxy history, so Get must reconstruct it from the replay store.
 		got, ok := sink.Get(id)
 		require.True(t, ok)
@@ -127,6 +128,55 @@ func TestReplayRoutingSink(t *testing.T) {
 		assert.Equal(t, "GET", got.Request.Method)
 		assert.Equal(t, "/x", got.Request.Path)
 		assert.Equal(t, "other.test", got.Request.GetHeader("Host"))
+
+		require.NotNil(t, got.Response)
+		assert.Equal(t, 200, got.Response.StatusCode)
+		assert.Equal(t, "hello", string(got.Response.Body))
+		assert.Equal(t, f.CompletedAt.Sub(f.StartedAt), got.CompletedAt.Sub(got.StartedAt))
+	})
+
+	t.Run("complete_routes_to_replay_store", func(t *testing.T) {
+		history := newFakeFlowSink()
+		replay := store.NewReplayHistoryStore(store.NewMemStorage())
+		sink := &replayRoutingSink{history: history, replay: replay}
+
+		f := replayFlow()
+		f.Response = nil // deferred: response attached later
+		f.CompletedAt = time.Time{}
+		id := sink.Store(f)
+
+		resp := &types.Message{Version: "HTTP/1.1", StatusCode: 200, StatusText: "OK", Body: []byte("late")}
+		completedAt := f.StartedAt.Add(300 * time.Millisecond)
+		ok := sink.Complete(id, resp, completedAt, map[string]any{"phase": "mutated"})
+		require.True(t, ok)
+		assert.Empty(t, history.flows, "replay completion must not touch proxy history")
+
+		entry, ok := replay.Get(id)
+		require.True(t, ok)
+		assert.Equal(t, 200, entry.RespStatus)
+		assert.Contains(t, string(entry.RespBody), "late")
+		assert.Equal(t, 300*time.Millisecond, entry.Duration)
+		assert.Equal(t, "mutated", entry.Annotations["phase"])
+	})
+
+	t.Run("set_invoked_by_replay_flow", func(t *testing.T) {
+		history := newFakeFlowSink()
+		replay := store.NewReplayHistoryStore(store.NewMemStorage())
+		sink := &replayRoutingSink{history: history, replay: replay}
+
+		id := sink.Store(replayFlow())
+		require.True(t, sink.SetInvokedBy(id, "caller"))
+
+		entry, ok := replay.Get(id)
+		require.True(t, ok)
+		assert.Equal(t, "caller", entry.InvokedBy)
+
+		// proxy-owned ids still route to history
+		pid := sink.Store(func() *types.Flow { f := replayFlow(); f.Annotations = nil; return f }())
+		require.True(t, sink.SetInvokedBy(pid, "caller"))
+		pf, ok := history.Get(pid)
+		require.True(t, ok)
+		assert.Equal(t, "caller", pf.InvokedBy)
 	})
 
 	t.Run("get_keeps_h2_unframed_body", func(t *testing.T) {

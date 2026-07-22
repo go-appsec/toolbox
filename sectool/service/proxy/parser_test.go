@@ -795,7 +795,7 @@ func TestParseResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseResponse(strings.NewReader(tt.input), tt.requestMethod)
+			got, err := ParseResponse(strings.NewReader(tt.input), tt.requestMethod)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -822,7 +822,7 @@ func TestParseResponse(t *testing.T) {
 	// edge cases
 	t.Run("status_leading_zeros", func(t *testing.T) {
 		input := "HTTP/1.1 0200 OK\r\n\r\n"
-		resp, err := parseResponse(strings.NewReader(input), "GET")
+		resp, err := ParseResponse(strings.NewReader(input), "GET")
 		require.NoError(t, err)
 		assert.Equal(t, 200, resp.StatusCode)
 	})
@@ -838,7 +838,7 @@ func TestParseResponse(t *testing.T) {
 			{"HTTP/1.1 103 Early Hints\r\n\r\n", 103},
 		}
 		for _, tt := range tests {
-			resp, err := parseResponse(strings.NewReader(tt.input), "GET")
+			resp, err := ParseResponse(strings.NewReader(tt.input), "GET")
 			require.NoError(t, err)
 			assert.Equal(t, tt.code, resp.StatusCode)
 			assert.Empty(t, resp.Body)
@@ -847,14 +847,14 @@ func TestParseResponse(t *testing.T) {
 
 	t.Run("status_text_with_numbers", func(t *testing.T) {
 		input := "HTTP/1.1 404 Not Found 2024\r\n\r\n"
-		resp, err := parseResponse(strings.NewReader(input), "GET")
+		resp, err := ParseResponse(strings.NewReader(input), "GET")
 		require.NoError(t, err)
 		assert.Equal(t, "Not Found 2024", resp.StatusText)
 	})
 
 	t.Run("non_chunked_transfer_encoding", func(t *testing.T) {
 		input := "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\nContent-Length: 5\r\n\r\nHello"
-		resp, err := parseResponse(strings.NewReader(input), "GET")
+		resp, err := ParseResponse(strings.NewReader(input), "GET")
 		require.NoError(t, err)
 		// gzip TE should be treated as non-chunked, use Content-Length
 		assert.Equal(t, []byte("Hello"), resp.Body)
@@ -862,7 +862,7 @@ func TestParseResponse(t *testing.T) {
 
 	t.Run("multiple_transfer_encoding_headers", func(t *testing.T) {
 		input := "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nHello\r\n0\r\n\r\n"
-		resp, err := parseResponse(strings.NewReader(input), "GET")
+		resp, err := ParseResponse(strings.NewReader(input), "GET")
 		require.NoError(t, err)
 		// GetHeader returns first header, so "gzip" is seen, not chunked
 		// Body is read until EOF as raw bytes
@@ -871,14 +871,14 @@ func TestParseResponse(t *testing.T) {
 
 	t.Run("extra_whitespace_in_status", func(t *testing.T) {
 		input := "HTTP/1.1  200  OK\r\nContent-Length: 5\r\n\r\nHello"
-		_, err := parseResponse(strings.NewReader(input), "GET")
+		_, err := ParseResponse(strings.NewReader(input), "GET")
 		// Parser rejects extra whitespace in status line
 		require.Error(t, err)
 	})
 
 	t.Run("bare_cr_status_line", func(t *testing.T) {
 		input := "HTTP/1.1 200 OK\rContent-Length: 5\r\n\r\nHello"
-		resp, err := parseResponse(strings.NewReader(input), "GET")
+		resp, err := ParseResponse(strings.NewReader(input), "GET")
 		require.NoError(t, err)
 		assert.Equal(t, 200, resp.StatusCode)
 		assert.Equal(t, "OK", resp.StatusText)
@@ -902,7 +902,7 @@ func TestParseResponse(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				resp, err := parseResponse(strings.NewReader(tt.input), tt.method)
+				resp, err := ParseResponse(strings.NewReader(tt.input), tt.method)
 				require.NoError(t, err)
 				assert.Equal(t, tt.want, resp.CloseDelimited)
 			})
@@ -1128,21 +1128,21 @@ func TestParseResponseBoundedBody(t *testing.T) {
 		// Declared length is huge but only a few bytes arrive then EOF; must read
 		// what actually arrives without pre-allocating the declared size.
 		input := "HTTP/1.1 200 OK\r\nContent-Length: 9999999999\r\n\r\nShort"
-		resp, err := parseResponse(strings.NewReader(input), "GET")
+		resp, err := ParseResponse(strings.NewReader(input), "GET")
 		require.NoError(t, err)
 		assert.Equal(t, []byte("Short"), resp.Body)
 	})
 
 	t.Run("oversized_content_length_no_body", func(t *testing.T) {
 		input := "HTTP/1.1 200 OK\r\nContent-Length: 9999999999\r\n\r\n"
-		resp, err := parseResponse(strings.NewReader(input), "GET")
+		resp, err := ParseResponse(strings.NewReader(input), "GET")
 		require.NoError(t, err)
 		assert.Empty(t, resp.Body)
 	})
 
 	t.Run("oversized_chunk_size_short_data", func(t *testing.T) {
 		input := "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nFFFFFFFF\r\npartial"
-		resp, err := parseResponse(strings.NewReader(input), "GET")
+		resp, err := ParseResponse(strings.NewReader(input), "GET")
 		require.NoError(t, err)
 		assert.Equal(t, []byte("partial"), resp.Body)
 	})
@@ -1985,7 +1985,7 @@ func TestWireFormatTracking(t *testing.T) {
 
 	t.Run("bare_lf_response", func(t *testing.T) {
 		input := "HTTP/1.1 200 OK\nContent-Length: 5\n\nHello"
-		resp, err := parseResponse(strings.NewReader(input), "GET")
+		resp, err := ParseResponse(strings.NewReader(input), "GET")
 		require.NoError(t, err)
 		require.NotNil(t, resp.Wire)
 		assert.True(t, resp.Wire.UsedBareLF)
@@ -1993,7 +1993,7 @@ func TestWireFormatTracking(t *testing.T) {
 
 	t.Run("chunked_response", func(t *testing.T) {
 		input := "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nHello\r\n0\r\n\r\n"
-		resp, err := parseResponse(strings.NewReader(input), "GET")
+		resp, err := ParseResponse(strings.NewReader(input), "GET")
 		require.NoError(t, err)
 		require.NotNil(t, resp.Wire)
 		assert.True(t, resp.Wire.WasChunked)
@@ -2011,7 +2011,7 @@ func TestWireFormatTracking(t *testing.T) {
 
 	t.Run("bare_cr_response", func(t *testing.T) {
 		input := "HTTP/1.1 200 OK\rContent-Length: 5\r\rHello"
-		resp, err := parseResponse(strings.NewReader(input), "GET")
+		resp, err := ParseResponse(strings.NewReader(input), "GET")
 		require.NoError(t, err)
 		require.NotNil(t, resp.Wire)
 		assert.True(t, resp.Wire.UsedBareCR)
@@ -2225,7 +2225,7 @@ func TestChunkedRoundTrip(t *testing.T) {
 			"4;foo=bar\n" + "wiki\n" +
 			"3\r\n" + "pes\r\n" +
 			"0\r\n\r\n"
-		resp, err := parseResponse(strings.NewReader(body), "GET")
+		resp, err := ParseResponse(strings.NewReader(body), "GET")
 		require.NoError(t, err)
 		assert.Equal(t, "wikipes", string(resp.Body))
 		require.Len(t, resp.Chunks, 3) // two data chunks + final 0
@@ -2246,7 +2246,7 @@ func TestChunkedRoundTrip(t *testing.T) {
 			"\r\n" +
 			"5\r\nHello\r\n" +
 			"0\r\n\r\n"
-		resp, err := parseResponse(strings.NewReader(body), "GET")
+		resp, err := ParseResponse(strings.NewReader(body), "GET")
 		require.NoError(t, err)
 		require.NotEmpty(t, resp.Chunks)
 
@@ -2376,7 +2376,7 @@ func TestCompareSerializeRedirect(t *testing.T) {
 	// Simulate a typical redirect response that the upstream might send
 	input := "HTTP/1.1 307 Temporary Redirect\r\nContent-Length: 0\r\nLocation: /final\r\nDate: Mon, 01 Jan 2024 00:00:00 GMT\r\n\r\n"
 
-	resp, err := parseResponse(strings.NewReader(input), "POST")
+	resp, err := ParseResponse(strings.NewReader(input), "POST")
 	require.NoError(t, err)
 
 	var buf bytes.Buffer

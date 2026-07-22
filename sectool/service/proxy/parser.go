@@ -133,9 +133,9 @@ func chunksBareFlags(chunks []types.ChunkFrame) (bareLF, bareCR bool) {
 // slices are valid only for the duration of the call. A non-nil return aborts.
 type bodyUnitFunc func(decoded, wire []byte) error
 
-// parseResponse parses an HTTP/1.1 response from the reader.
+// ParseResponse parses an HTTP/1.1 response from the reader.
 // The request method is needed to determine body handling for HEAD responses.
-func parseResponse(r io.Reader, requestMethod string) (*types.RawHTTP1Response, error) {
+func ParseResponse(r io.Reader, requestMethod string) (*types.RawHTTP1Response, error) {
 	br := bufio.NewReader(r)
 
 	resp, bodyExpected, usedBareLF, usedBareCR, err := parseResponseHead(br, requestMethod)
@@ -210,7 +210,7 @@ func parseResponseHead(br *bufio.Reader, requestMethod string) (resp *types.RawH
 // The same *bufio.Reader must be reused across calls so buffered bytes are not dropped.
 func readFinalResponse(br *bufio.Reader, requestMethod string, onInterim func(*types.RawHTTP1Response) error) (interim []*types.RawHTTP1Response, final *types.RawHTTP1Response, err error) {
 	for {
-		resp, perr := parseResponse(br, requestMethod)
+		resp, perr := ParseResponse(br, requestMethod)
 		if perr != nil {
 			return interim, nil, perr
 		} else if resp.StatusCode < 100 || resp.StatusCode >= 200 || resp.StatusCode == 101 {

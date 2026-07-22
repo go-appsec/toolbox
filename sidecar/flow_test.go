@@ -118,13 +118,12 @@ func TestPushFlow(t *testing.T) {
 		return cap.pushed[0]
 	}
 
-	t.Run("replay_without_response_gets_placeholder", func(t *testing.T) {
+	t.Run("replay_without_response_stays_in_progress", func(t *testing.T) {
 		got := pushOne(t, wire.Flow{
 			Request:     &wire.FlowMessage{Method: "PUBLISH", Path: "/topic"},
 			Annotations: map[string]any{wire.AnnotationReplay: true},
 		})
-		require.NotNil(t, got.Response)
-		assert.Equal(t, 204, got.Response.StatusCode)
+		assert.Nil(t, got.Response)
 	})
 
 	t.Run("replay_with_response_unchanged", func(t *testing.T) {

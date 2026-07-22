@@ -48,11 +48,16 @@ func (s *replayRoutingSink) Complete(flowID string, resp *types.Message, complet
 		respHeaders = slices.Clone(respHeaders)
 		respBody = slices.Clone(respBody)
 	}
-	return s.replay.Complete(flowID, respHeaders, respBody, status, completedAt)
+	return s.replay.Complete(flowID, respHeaders, respBody, status, completedAt, annotations)
 }
 
+// SetInvokedBy attributes an already-stored flow to its originating sidecar, routing
+// replay-owned flow ids (unknown to proxy history) to the replay store.
 func (s *replayRoutingSink) SetInvokedBy(flowID, invokedBy string) bool {
-	return s.history.SetInvokedBy(flowID, invokedBy)
+	if s.history.SetInvokedBy(flowID, invokedBy) {
+		return true
+	}
+	return s.replay.SetInvokedBy(flowID, invokedBy)
 }
 
 func (s *replayRoutingSink) ShouldCapture(flow *types.Flow) bool {
@@ -112,14 +117,14 @@ func flowToReplayEntry(id string, flow *types.Flow) *store.ReplayHistoryEntry {
 }
 
 // replayEntryToFlow reconstructs a store Flow from a replay entry so the FlowSink Get
-// can serve a chained replay's source lookup; returns nil if the request won't parse.
+// can serve a lookup of the sidecar replay; returns nil if the request won't parse.
 func replayEntryToFlow(entry *store.ReplayHistoryEntry) *types.Flow {
 	// the entry holds exactly the one request we sent, so trailing bytes are its body
 	parsed, err := proxy.ParseRequest(bytes.NewReader(entry.RawRequest), true)
 	if err != nil {
 		return nil
 	}
-	return &types.Flow{
+	flow := &types.Flow{
 		FlowID:       entry.FlowID,
 		Adapter:      entry.Adapter,
 		ProtocolTag:  entry.Protocol,
@@ -131,4 +136,15 @@ func replayEntryToFlow(entry *store.ReplayHistoryEntry) *types.Flow {
 		Annotations:  entry.Annotations,
 		InvokedBy:    entry.InvokedBy,
 	}
+	// response present only once completed; parse failures leave it absent
+	if len(entry.RespHeaders) > 0 {
+		raw := slices.Concat(entry.RespHeaders, entry.RespBody)
+		if resp, err := proxy.ParseResponse(bytes.NewReader(raw), entry.Method); err == nil {
+			flow.Response = types.ResponseToMessage(resp)
+		}
+	}
+	if entry.Duration > 0 {
+		flow.CompletedAt = entry.CreatedAt.Add(entry.Duration)
+	}
+	return flow
 }

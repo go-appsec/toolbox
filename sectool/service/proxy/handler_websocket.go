@@ -176,7 +176,7 @@ func (h *webSocketHandler) proxyWebSocketWithReader(
 	if h.timeouts.ReadTimeout > 0 {
 		_ = upstreamConn.SetReadDeadline(now.Add(h.timeouts.ReadTimeout))
 	}
-	resp, err := parseResponse(upstreamReader, req.Method)
+	resp, err := ParseResponse(upstreamReader, req.Method)
 	if err != nil {
 		log.Printf("proxy: websocket upgrade response parse failed: %v", err)
 		sendError(clientConn, 502, "Bad Gateway: malformed response")

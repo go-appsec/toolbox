@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"log"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -108,8 +109,9 @@ func (s *ReplayHistoryStore) Store(entry *ReplayHistoryEntry) {
 
 // Complete attaches a response to an already-stored replay entry: the two-phase
 // form used for deferred and streaming replays. A non-zero completedAt records the
-// elapsed duration. Returns false when flowID is unknown.
-func (s *ReplayHistoryStore) Complete(flowID string, respHeaders, respBody []byte, status int, completedAt time.Time) bool {
+// elapsed duration; annotations merge over existing keys. Returns false when flowID
+// is unknown.
+func (s *ReplayHistoryStore) Complete(flowID string, respHeaders, respBody []byte, status int, completedAt time.Time, annotations map[string]any) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -123,6 +125,26 @@ func (s *ReplayHistoryStore) Complete(flowID string, respHeaders, respBody []byt
 	if !completedAt.IsZero() {
 		entry.Duration = completedAt.Sub(entry.CreatedAt)
 	}
+	if len(annotations) > 0 {
+		if entry.Annotations == nil {
+			entry.Annotations = make(map[string]any, len(annotations))
+		}
+		maps.Copy(entry.Annotations, annotations)
+	}
+	return s.persistLocked(entry)
+}
+
+// SetInvokedBy records the originating sidecar on an already-stored replay entry.
+// Returns false when flowID is unknown.
+func (s *ReplayHistoryStore) SetInvokedBy(flowID, invokedBy string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.getLocked(flowID)
+	if !ok {
+		return false
+	}
+	entry.InvokedBy = invokedBy
 	return s.persistLocked(entry)
 }
 
