@@ -118,6 +118,8 @@ package main
 import (
     "context"
     "log"
+    "os"
+    "path/filepath"
 
     "github.com/go-appsec/toolbox/sidecar"
     "github.com/go-appsec/toolbox/sidecar/wire"
@@ -143,7 +145,9 @@ func main() {
     }
 
     ctx := context.Background()
-    conn, err := sidecar.Dial(ctx, "~/.sectool/sidecar.sock", reg)
+    home, _ := os.UserHomeDir()
+    sock := filepath.Join(home, ".sectool", "sidecar.sock")
+    conn, err := sidecar.Dial(ctx, sock, reg)
     if err != nil {
         log.Fatal(err)
     }
@@ -542,7 +546,7 @@ Params and results below list JSON field names. Reused shapes (`Flow`, `FlowMess
 
 Issued exactly once, first message on the connection.
 
-**params:** `name` (string, required), `protocol_version` (`{major, minor}`, required), `protocols` (`[string]`, required), `capabilities` (object, required), `mcp_tools` (`[MCPTool]`, optional), `instance_id` (string UUID, optional), `resume` (bool, optional).
+**params:** `name` (string, required), `protocol_version` (`{major, minor}`, required), `protocols` (`[string]`, optional), `capabilities` (object, optional), `mcp_tools` (`[MCPTool]`, optional), `instance_id` (string UUID, optional), `resume` (bool, optional).
 
 **result:** `protocol_version` (the effective `{major, minor}`), `server_time` (RFC3339Nano string).
 
@@ -589,7 +593,7 @@ Internal tools are not invocable.
 
 #### stream_write (sidecar → sectool, notification)
 
-**params:** `stream_id` (string), `data` (standard-alphabet padded base64). Proactive write for keepalives and for output produced with no triggering event; unknown `stream_id` is a `-33202` transport error.
+**params:** `stream_id` (string), `data` (standard-alphabet padded base64). Proactive write for keepalives and for output produced with no triggering event. As a notification it is fire-and-forget: an unknown `stream_id` is logged and dropped by sectool (`-33202`) and is not reported back to the sidecar.
 
 #### sync_rules (sectool → sidecar)
 
@@ -659,7 +663,14 @@ A `ping` request (has `id`) is answered with an empty `{}` result. A `ping` noti
 }
 ```
 
-All fields `omitempty`. `annotations` is a free-form object the sidecar owns (well-known key `replay`); sectool stores it verbatim. Timestamps are RFC 3339 strings. An empty `flow_id` is first emission (sectool assigns); set `flow_id` to re-target an existing flow for two-phase completion or teardown.
+All fields `omitempty`. `annotations` is a free-form object the sidecar owns; sectool stores it verbatim. Well-known keys:
+
+- `replay` (bool) — routes the flow to replay history instead of proxy history.
+- `phase` (`captured` | `mutated`) — the two sides of a mutated-pair audit.
+- `fired_rules` (`[string]`) — rule ids that mutated the flow, set on the `mutated` side.
+- `parent_flow_id` (string) — the mutated flow's link back to its captured form. Distinct from the top-level `parent_flow_id` field, which groups stream/session parent-child flows.
+
+Timestamps are RFC 3339 strings. An empty `flow_id` is first emission (sectool assigns); set `flow_id` to re-target an existing flow for two-phase completion or teardown.
 
 #### FlowMessage
 
