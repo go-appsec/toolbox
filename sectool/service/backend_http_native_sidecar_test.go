@@ -54,7 +54,7 @@ func TestNativeProxyBackendSidecarLifecycle(t *testing.T) {
 	require.Nil(t, p.Call(ctx, wire.MethodRegister, params, &res))
 	assert.Equal(t, 1, backend.sidecarManager.Count())
 
-	require.NoError(t, backend.Close(context.Background()))
+	require.NoError(t, backend.Close(t.Context()))
 	_, statErr := os.Stat(socket)
 	assert.True(t, os.IsNotExist(statErr), "socket should be removed on close")
 }

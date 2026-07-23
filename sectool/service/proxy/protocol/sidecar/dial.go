@@ -140,7 +140,7 @@ func (s *session) recordDial(rec *Record, parentFlowID, host string, port int, s
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	s.m.flows.Store(&types.Flow{
 		Adapter:      rec.Name,
-		ProtocolTag:  "dial_upstream",
+		ProtocolTag:  wire.MethodDialUpstream,
 		Direction:    "bidirectional",
 		ParentFlowID: parentFlowID,
 		Scheme:       scheme,

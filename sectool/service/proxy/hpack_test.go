@@ -540,7 +540,7 @@ func TestEnqueueWrite(t *testing.T) {
 		for range 256 {
 			h.writeCh <- []byte{}
 		}
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		ok := h.enqueueWrite(ctx, []byte("test"))

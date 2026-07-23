@@ -228,7 +228,7 @@ func TestNativeProxyBackend_GetProxyEntryInProgress(t *testing.T) {
 		// CompletedAt zero => in progress
 	})
 
-	entry, err := backend.GetProxyEntry(context.Background(), flowID)
+	entry, err := backend.GetProxyEntry(t.Context(), flowID)
 	require.NoError(t, err)
 	assert.True(t, entry.InProgress)
 	// response head is visible while streaming, but the body has not arrived yet
@@ -236,7 +236,7 @@ func TestNativeProxyBackend_GetProxyEntryInProgress(t *testing.T) {
 	assert.NotContains(t, entry.Response, "data")
 
 	require.True(t, backend.server.History().Complete(flowID, &types.Message{StatusCode: 200, Body: []byte("data")}, time.Now(), nil))
-	entry, err = backend.GetProxyEntry(context.Background(), flowID)
+	entry, err = backend.GetProxyEntry(t.Context(), flowID)
 	require.NoError(t, err)
 	assert.False(t, entry.InProgress)
 	// completion appends the body that was absent mid-stream
@@ -305,7 +305,7 @@ func TestNativeProxyBackend_Rules_Persistence(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, backend1.Close(context.Background()))
+	require.NoError(t, backend1.Close(t.Context()))
 
 	// New backend over the same rule storage should load persisted rules.
 	backend2, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, provider, proxy.TimeoutConfig{}, false)
@@ -351,7 +351,7 @@ func TestNativeProxyBackend_Rules_DeletePersists(t *testing.T) {
 
 	err = backend1.DeleteRule(t.Context(), "to-delete")
 	require.NoError(t, err)
-	require.NoError(t, backend1.Close(context.Background()))
+	require.NoError(t, backend1.Close(t.Context()))
 
 	// New backend should only see the surviving rule
 	backend2, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, provider, proxy.TimeoutConfig{}, false)
@@ -650,11 +650,11 @@ func TestNativeProxyBackend_Close(t *testing.T) {
 	require.NoError(t, backend.WaitReady(t.Context()))
 
 	// Close should succeed
-	err = backend.Close(context.Background())
+	err = backend.Close(t.Context())
 	require.NoError(t, err)
 
 	// Double close should be safe
-	err = backend.Close(context.Background())
+	err = backend.Close(t.Context())
 	require.NoError(t, err)
 }
 

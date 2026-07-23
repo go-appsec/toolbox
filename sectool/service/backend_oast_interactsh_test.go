@@ -326,11 +326,11 @@ func TestInteractshBackend_CloseWhileClosed(t *testing.T) {
 	backend := NewInteractshBackend("", "")
 
 	// Close once
-	err := backend.Close(context.Background())
+	err := backend.Close(t.Context())
 	require.NoError(t, err)
 
 	// Close again should be idempotent
-	err = backend.Close(context.Background())
+	err = backend.Close(t.Context())
 	require.NoError(t, err)
 }
 
@@ -338,7 +338,7 @@ func TestInteractshBackend_CreateAfterClose(t *testing.T) {
 	t.Parallel()
 
 	backend := NewInteractshBackend("", "")
-	require.NoError(t, backend.Close(context.Background()))
+	require.NoError(t, backend.Close(t.Context()))
 
 	_, err := backend.CreateSession(t.Context(), "", "")
 	require.Error(t, err)

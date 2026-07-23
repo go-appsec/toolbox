@@ -140,7 +140,7 @@ Go client library for building out-of-process protocol adapters; see `sidecar/RE
 - `sidecar/conn.go` - `Conn`, `Dial` (register handshake, `ErrVersionUnsupported`), `Serve`, inbound request/notification routing
 - `sidecar/dial.go` - `Conn.DialUpstream`
 - `sidecar/handler.go` - `Registration`, `Handler` callback interface, `BaseHandler` no-op defaults
-- `sidecar/flow.go` - Flow emission (`PushFlow`, `CompleteFlow`, `EmitMutatedPair`), `Log`, `ReportMetrics`, `CoreInvoke`
+- `sidecar/flow.go` - Flow emission (`PushFlow`, `CompleteFlow`), `Log`, `ReportMetrics`, `CoreInvoke`
 - `sidecar/send.go` - Send surface: `ApplyMutations` (ordered §3.4 ops via `pkg/mutate`) and `Conn.InvokeAdapter`
 - `sidecar/stream.go` - `CloseStream`, `StreamWrite`, and the `Forward` writes helper
 - `sidecar/rules.go` - `RuleCache`: hot-path find/replace scoped to this adapter

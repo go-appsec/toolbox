@@ -142,12 +142,81 @@ func TestManagerSidecarSend(t *testing.T) {
 		}
 	})
 
+	t.Run("marks_source_during_replay_call", func(t *testing.T) {
+		flows := newFakeFlows()
+		srcID := flows.Store(&types.Flow{Adapter: "demo", Request: &types.Message{Method: "GET"}})
+		m := managerWithFlows(flows)
+
+		marked := make(chan bool, 1)
+		p := dialManagerReq(t, m, func(method string, params json.RawMessage) (any, *wire.Error) {
+			if method == wire.MethodSidecarSend {
+				marked <- m.IsReplaySource(srcID) // probe while the send Call is blocked
+				return wire.SidecarSendResult{NewFlowIDs: []string{"new1"}}, nil
+			}
+			return declineUnknown(method, params)
+		})
+		_, err := register(t, p, baseParams("demo"))
+		require.Nil(t, err)
+
+		_, serr := m.SidecarSend(t.Context(), "demo", wire.SidecarSendParams{FlowID: srcID})
+		require.Nil(t, serr)
+		select {
+		case ok := <-marked:
+			assert.True(t, ok)
+		case <-time.After(2 * time.Second):
+			t.Fatal("sidecar_send not delivered")
+		}
+		assert.False(t, m.IsReplaySource(srcID))
+	})
+
+	t.Run("origination_does_not_mark", func(t *testing.T) {
+		flows := newFakeFlows()
+		m := managerWithFlows(flows)
+
+		probed := make(chan bool, 1)
+		p := dialManagerReq(t, m, func(method string, params json.RawMessage) (any, *wire.Error) {
+			if method == wire.MethodSidecarSend {
+				probed <- m.IsReplaySource("")
+				return wire.SidecarSendResult{NewFlowIDs: []string{"new1"}}, nil
+			}
+			return declineUnknown(method, params)
+		})
+		_, err := register(t, p, baseParams("demo"))
+		require.Nil(t, err)
+
+		_, serr := m.SidecarSend(t.Context(), "demo", wire.SidecarSendParams{})
+		require.Nil(t, serr)
+		select {
+		case ok := <-probed:
+			assert.False(t, ok)
+		case <-time.After(2 * time.Second):
+			t.Fatal("sidecar_send not delivered")
+		}
+	})
+
 	t.Run("unknown_adapter", func(t *testing.T) {
 		m := managerWithFlows(newFakeFlows())
 		_, serr := m.SidecarSend(t.Context(), "ghost", wire.SidecarSendParams{})
 		require.NotNil(t, serr)
 		assert.Equal(t, wire.CodeUnknownDestAdapter, serr.Code)
 	})
+}
+
+func TestManagerReplaySource(t *testing.T) {
+	t.Parallel()
+
+	m := managerWithFlows(newFakeFlows())
+	assert.False(t, m.IsReplaySource("s"))
+
+	m.markReplaySource("s")
+	m.markReplaySource("s")
+	assert.True(t, m.IsReplaySource("s"))
+
+	m.unmarkReplaySource("s")
+	assert.True(t, m.IsReplaySource("s"))
+
+	m.unmarkReplaySource("s")
+	assert.False(t, m.IsReplaySource("s"))
 }
 
 func TestHandleInvokeAdapter(t *testing.T) {

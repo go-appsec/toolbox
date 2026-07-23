@@ -13,19 +13,23 @@ import (
 	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
-// replayRoutingSink is a sidecar.FlowSink that diverts sidecar-performed replays
-// (annotated replay=true) into the ReplayHistoryStore so they report source "replay"
-// like native replays; every other flow passes through to proxy history. Its Get
-// falls back to the replay store so a chained replay can fetch its source request.
+// replayRoutingSink is a sidecar.FlowSink that diverts sidecar-performed replays into
+// the ReplayHistoryStore so they report source "replay" like native replays; every
+// other flow passes through to proxy history. A flow is a replay when its parent is a
+// source currently being replayed (checkReplaySource). Its Get falls back to the
+// replay store so a chained replay can fetch its source request.
 type replayRoutingSink struct {
-	history sidecar.FlowSink // the proxy HistoryStore
-	replay  *store.ReplayHistoryStore
+	history           sidecar.FlowSink // the proxy HistoryStore
+	replay            *store.ReplayHistoryStore
+	checkReplaySource func(flowID string) bool // in-flight replay sources; set after the Manager exists
 }
 
 var _ sidecar.FlowSink = (*replayRoutingSink)(nil)
 
 func (s *replayRoutingSink) Store(flow *types.Flow) string {
-	if v, _ := flow.Annotations[wire.AnnotationReplay].(bool); v {
+	// dial audit flows also carry a parent, so exclude them from replay matching
+	if flow.ParentFlowID != "" && flow.ProtocolTag != wire.MethodDialUpstream &&
+		s.checkReplaySource != nil && s.checkReplaySource(flow.ParentFlowID) {
 		id := ids.Generate(ids.DefaultLength)
 		s.replay.Store(flowToReplayEntry(id, flow))
 		return id

@@ -262,15 +262,9 @@ flowID, _ := conn.PushFlow(ctx, wire.Flow{Request: req})
 conn.CompleteFlow(ctx, flowID, resp, time.Now())
 ```
 
-#### Captured/mutated audit pairs
+#### Rule mutations
 
-When a rule mutates a message on the hot path, emit both forms for agent review:
-
-```go
-capturedID, mutatedID, err := conn.EmitMutatedPair(ctx, capturedFlow, mutatedFlow, firedRuleIDs)
-```
-
-The captured flow is tagged `phase=captured`; the mutated flow `phase=mutated` with a link back. Both appear in unified history and diff via `diff_flow`.
+When a rule mutates a message on the hot path, store a single flow (the mutated one) via `PushFlow`, mirroring the native proxy. Do not emit a separate pre-mutation copy.
 
 #### Streams and sessions
 
@@ -374,10 +368,13 @@ func (h *myHandler) OnSidecarSend(p wire.SidecarSendParams) (wire.SidecarSendRes
     if err := sidecar.ApplyMutations(&msg, p.Mutations); err != nil {
         return wire.SidecarSendResult{}, err
     }
-    // Re-encode and send per adapter configuration; emit resulting flow(s) via conn.PushFlow()
+    // Re-encode and send per adapter configuration; emit resulting flow(s) via
+    // conn.PushFlow() with parent_flow_id set to p.FlowID
     return wire.SidecarSendResult{NewFlowIDs: []string{newFlowID}}, nil
 }
 ```
+
+Set the result flow's `parent_flow_id` to the source (`p.FlowID`). sectool files any flow you push from `OnSidecarSend` whose parent is the flow being replayed into replay history automatically, reported with source `replay` like a native replay.
 
 #### Mutation operations
 
@@ -659,16 +656,11 @@ A `ping` request (has `id`) is answered with an empty `{}` result. A `ping` noti
   "request":  { /* FlowMessage */ },
   "response": { /* FlowMessage */ },
   "started_at": "2026-07-02T09:30:00Z", "completed_at": "0001-01-01T00:00:00Z",
-  "annotations": { "phase": "captured" }
+  "annotations": {}
 }
 ```
 
-All fields `omitempty`. `annotations` is a free-form object the sidecar owns; sectool stores it verbatim. Well-known keys:
-
-- `replay` (bool) — routes the flow to replay history instead of proxy history.
-- `phase` (`captured` | `mutated`) — the two sides of a mutated-pair audit.
-- `fired_rules` (`[string]`) — rule ids that mutated the flow, set on the `mutated` side.
-- `parent_flow_id` (string) — the mutated flow's link back to its captured form. Distinct from the top-level `parent_flow_id` field, which groups stream/session parent-child flows.
+All fields `omitempty`. `annotations` is a free-form object the sidecar owns; sectool stores it verbatim. Replay classification is not annotation-driven: sectool files a pushed flow into replay history when its `parent_flow_id` is the source of an in-flight replay (see [Replay and origination](#replay-and-origination-onsidecarsend)).
 
 Timestamps are RFC 3339 strings. An empty `flow_id` is first emission (sectool assigns); set `flow_id` to re-target an existing flow for two-phase completion or teardown.
 

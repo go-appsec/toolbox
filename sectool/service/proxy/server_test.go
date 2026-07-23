@@ -203,7 +203,7 @@ func TestServe(t *testing.T) {
 		testutil.WaitForCount(t, func() int { return proxy.History().Count() }, 1)
 		countBefore := proxy.History().Count()
 
-		_ = proxy.Shutdown(context.Background())
+		_ = proxy.Shutdown(t.Context())
 
 		// History should still be accessible
 		countAfter := proxy.History().Count()
@@ -524,7 +524,7 @@ func TestServeContextCancellation(t *testing.T) {
 	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	t.Cleanup(cancel)
 
 	// Start serving
@@ -567,7 +567,7 @@ func TestShutdownForceClose(t *testing.T) {
 	require.NoError(t, err)
 
 	// Shutdown with very short timeout - should force-close the connection
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	t.Cleanup(cancel)
 
 	shutdownDone := make(chan struct{})

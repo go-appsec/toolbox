@@ -216,9 +216,6 @@ type Flow struct {
 	Annotations  map[string]any `json:"annotations,omitempty"`
 }
 
-// AnnotationReplay is the Flow.Annotations key marking a flow as a replay.
-const AnnotationReplay = "replay"
-
 // PushFlowParams is the Flow emitted via push_flow.
 type PushFlowParams = Flow
 

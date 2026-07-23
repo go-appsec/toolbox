@@ -141,6 +141,7 @@ func (b *NativeProxyBackend) EnableSidecars(cfg sidecar.Config, coreInvoke sidec
 	// "replay" like native replays; other flows go to proxy history.
 	sink := &replayRoutingSink{history: b.server.History(), replay: replayStore}
 	b.sidecarManager = sidecar.NewManager(cfg, b.server.Registry(), sink, coreInvoke, b)
+	sink.checkReplaySource = b.sidecarManager.IsReplaySource
 	lst, err := sidecar.NewListener(cfg, b.sidecarManager)
 	if err != nil {
 		return err

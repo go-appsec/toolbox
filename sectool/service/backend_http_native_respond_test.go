@@ -212,7 +212,7 @@ func TestNativeProxyBackend_Responder_Persistence(t *testing.T) {
 		Label:      "persisted",
 	})
 	require.NoError(t, err)
-	_ = backend1.Close(context.Background())
+	_ = backend1.Close(t.Context())
 
 	// New backend over the same responder storage should load persisted responders.
 	backend2, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, provider, proxy.TimeoutConfig{}, false)

@@ -1082,7 +1082,7 @@ func TestHTTP2StreamingClientCancelFinalizes(t *testing.T) {
 	}
 	client := &http.Client{Transport: transport}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	req, err := http.NewRequestWithContext(ctx, "GET", upstream.URL+"/events", nil)
 	require.NoError(t, err)

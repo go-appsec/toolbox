@@ -17,9 +17,14 @@ func (m *Manager) SidecarSend(ctx context.Context, adapter string, p wire.Sideca
 		return wire.SidecarSendResult{}, wire.NewError(wire.CodeUnknownDestAdapter, "sidecar_send: adapter unhealthy: "+adapter).
 			WithData(&wire.ErrorData{Adapter: adapter})
 	}
-	if p.FlowID != "" && p.Flow == nil {
-		if f, ok := m.flows.Get(p.FlowID); ok {
-			p.Flow = flowToWireFlow(f)
+	if p.FlowID != "" {
+		// mark before the blocking call so the adapter's push_flow classifies as replay
+		m.markReplaySource(p.FlowID)
+		defer m.unmarkReplaySource(p.FlowID)
+		if p.Flow == nil {
+			if f, ok := m.flows.Get(p.FlowID); ok {
+				p.Flow = flowToWireFlow(f)
+			}
 		}
 	}
 	var res wire.SidecarSendResult

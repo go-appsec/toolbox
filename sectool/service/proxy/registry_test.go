@@ -34,7 +34,7 @@ func TestRegistryDispatchEarly(t *testing.T) {
 		second := &stubEarly{name: "second", claim: true}
 		reg := &protocol.Registry{Early: []protocol.EarlyAdapter{first, second}}
 
-		reg.DispatchEarly(context.Background(), &protocol.EarlyClaimCtx{})
+		reg.DispatchEarly(t.Context(), &protocol.EarlyClaimCtx{})
 
 		assert.Equal(t, 1, first.serveCalls)
 		assert.Equal(t, 0, second.serveCalls)
@@ -46,7 +46,7 @@ func TestRegistryDispatchEarly(t *testing.T) {
 		fallthr := &stubEarly{name: "fallthrough", claim: true}
 		reg := &protocol.Registry{Early: []protocol.EarlyAdapter{decline, fallthr}}
 
-		reg.DispatchEarly(context.Background(), &protocol.EarlyClaimCtx{})
+		reg.DispatchEarly(t.Context(), &protocol.EarlyClaimCtx{})
 
 		assert.Equal(t, 0, decline.serveCalls)
 		assert.Equal(t, 1, fallthr.serveCalls)
@@ -56,7 +56,7 @@ func TestRegistryDispatchEarly(t *testing.T) {
 		none := &stubEarly{name: "none", claim: false}
 		reg := &protocol.Registry{Early: []protocol.EarlyAdapter{none}}
 
-		reg.DispatchEarly(context.Background(), &protocol.EarlyClaimCtx{})
+		reg.DispatchEarly(t.Context(), &protocol.EarlyClaimCtx{})
 
 		assert.Equal(t, 0, none.serveCalls)
 	})
@@ -72,13 +72,13 @@ func TestRegistryInsertRemoveEarly(t *testing.T) {
 	reg.InsertEarly(sidecar)
 
 	// Inserted ahead of the fallthrough, so it claims first
-	reg.DispatchEarly(context.Background(), &protocol.EarlyClaimCtx{})
+	reg.DispatchEarly(t.Context(), &protocol.EarlyClaimCtx{})
 	assert.Equal(t, 1, sidecar.serveCalls)
 	assert.Equal(t, 0, fallthr.serveCalls)
 
 	// Removed, the fallthrough handles the connection again
 	reg.RemoveEarly("sidecar")
-	reg.DispatchEarly(context.Background(), &protocol.EarlyClaimCtx{})
+	reg.DispatchEarly(t.Context(), &protocol.EarlyClaimCtx{})
 	assert.Equal(t, 1, sidecar.serveCalls)
 	assert.Equal(t, 1, fallthr.serveCalls)
 }

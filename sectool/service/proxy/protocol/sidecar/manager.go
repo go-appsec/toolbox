@@ -49,6 +49,9 @@ type Manager struct {
 	byInstance  map[string]*Record
 	resumeState map[string]*resumeEntry
 
+	replayMu      sync.Mutex
+	replaySources map[string]int // in-flight replay source flow ids, refcounted
+
 	toolsChanged atomic.Pointer[func()]
 }
 
@@ -102,6 +105,37 @@ func (m *Manager) Count() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.records)
+}
+
+// markReplaySource marks flowID as an in-flight replay source so a result an adapter
+// pushes for it is classified as a replay. Refcounted for concurrent replays; pair
+// every call with unmarkReplaySource. Only the synchronous OnSidecarSend emit path is
+// covered; an adapter emitting out-of-band should set the replay annotation itself.
+func (m *Manager) markReplaySource(flowID string) {
+	m.replayMu.Lock()
+	if m.replaySources == nil {
+		m.replaySources = map[string]int{}
+	}
+	m.replaySources[flowID]++
+	m.replayMu.Unlock()
+}
+
+func (m *Manager) unmarkReplaySource(flowID string) {
+	m.replayMu.Lock()
+	if n := m.replaySources[flowID]; n <= 1 {
+		delete(m.replaySources, flowID)
+	} else {
+		m.replaySources[flowID] = n - 1
+	}
+	m.replayMu.Unlock()
+}
+
+// IsReplaySource reports whether flowID is currently being replayed, so the routing
+// sink can file a result pushed for it into replay history.
+func (m *Manager) IsReplaySource(flowID string) bool {
+	m.replayMu.Lock()
+	defer m.replayMu.Unlock()
+	return m.replaySources[flowID] > 0
 }
 
 // hasResumeState reports whether bookkeeping is stashed for an instance_id.

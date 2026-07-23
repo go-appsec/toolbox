@@ -19,16 +19,28 @@ import (
 	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
-// replaySendHandler records the routed request and returns a canned result.
+// replaySendHandler records the routed request and emits the result flow linked to
+// the source, without setting the replay annotation (sectool must classify it).
 type replaySendHandler struct {
 	sidecar.BaseHandler
-	got chan wire.SidecarSendParams
+	t    *testing.T
+	conn *sidecar.Conn
+	got  chan wire.SidecarSendParams
 }
 
 func (h *replaySendHandler) OnSidecarSend(p wire.SidecarSendParams) (wire.SidecarSendResult, error) {
 	h.got <- p
+	id, err := h.conn.PushFlow(h.t.Context(), wire.Flow{
+		ParentFlowID: p.FlowID,
+		ProtocolTag:  "mqtt/3.publish",
+		Request:      &wire.FlowMessage{Method: "PUBLISH", Path: "/topic"},
+		Response:     &wire.FlowMessage{StatusCode: 202, Body: []byte("queued")},
+	})
+	if err != nil {
+		return wire.SidecarSendResult{}, err
+	}
 	return wire.SidecarSendResult{
-		NewFlowIDs: []string{"sc-replayed"},
+		NewFlowIDs: []string{id},
 		Response:   &wire.FlowMessage{StatusCode: 202, Body: []byte("queued")},
 	}, nil
 }
@@ -75,7 +87,7 @@ func TestSidecarReplaySendE2E(t *testing.T) {
 	ctx := t.Context()
 
 	// install up front: Serve's own install races the sidecar_send request below
-	h := &replaySendHandler{got: make(chan wire.SidecarSendParams, 1)}
+	h := &replaySendHandler{t: t, conn: conn, got: make(chan wire.SidecarSendParams, 1)}
 	conn.SetHandler(h)
 	go func() { _ = conn.Serve(ctx, h) }()
 
@@ -98,9 +110,16 @@ func TestSidecarReplaySendE2E(t *testing.T) {
 		StreamStrategy: "per_chunk",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "sc-replayed", resp.FlowID)
+	assert.NotEmpty(t, resp.FlowID)
 	assert.Equal(t, 202, resp.Status)
 	assert.Contains(t, resp.RespPreview, "queued")
+
+	// sectool auto-classified the un-annotated result into replay history
+	entry, ok := srv.replayHistoryStore.Get(resp.FlowID)
+	require.True(t, ok)
+	assert.Equal(t, flowID, entry.SourceFlowID)
+	_, inProxy := backend.server.History().Get(resp.FlowID)
+	assert.False(t, inProxy)
 
 	// The replay routed to the adapter with the source flow inline and the
 	// built mutation list.

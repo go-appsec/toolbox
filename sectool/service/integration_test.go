@@ -57,7 +57,7 @@ func TestInteractshBackend_EnsureClientForRedirectTarget(t *testing.T) {
 
 	t.Run("closed_backend_returns_error", func(t *testing.T) {
 		b := NewInteractshBackend("", "")
-		require.NoError(t, b.Close(context.Background()))
+		require.NoError(t, b.Close(t.Context()))
 
 		_, err := b.ensureClientForRedirectTarget(ctx, "")
 		require.Error(t, err)
