@@ -25,19 +25,16 @@ func setupNotesEnabledServer(t *testing.T) (*Server, *mcpclient.Client, *mockHtt
 
 	configPath := filepath.Join(t.TempDir(), "config.json")
 
-	srv, err := NewServer(MCPServerFlags{
-		MCPPort:      0,
+	srv, err := NewServerWithStorageDir(MCPServerFlags{
+		MCPPort:      -1,
 		WorkflowMode: protocol.WorkflowModeNone,
 		ConfigPath:   configPath,
 		Notes:        true,
-	}, mockHTTP, mockOast, mockCrawler)
+	}, t.TempDir(), mockHTTP, mockOast, mockCrawler)
 	require.NoError(t, err)
 	srv.SetQuietLogging()
 
-	serverErr := make(chan error, 1)
-	go func() {
-		serverErr <- srv.Run(t.Context())
-	}()
+	go func() { _ = srv.Run(t.Context()) }()
 	srv.WaitTillStarted()
 
 	require.NotNil(t, srv.mcpServer)
@@ -62,7 +59,6 @@ func setupNotesEnabledServer(t *testing.T) (*Server, *mcpclient.Client, *mockHtt
 	t.Cleanup(func() {
 		_ = mcpClient.Close()
 		srv.RequestShutdown()
-		<-serverErr
 	})
 
 	return srv, mcpClient, mockHTTP, mockCrawler

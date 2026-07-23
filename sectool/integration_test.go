@@ -213,23 +213,12 @@ func runForAllBackendsWithHandler(t *testing.T, handler http.HandlerFunc, testFn
 	}
 }
 
-// findAvailablePort finds an available TCP port by briefly binding to port 0.
-func findAvailablePort(t *testing.T) int {
-	t.Helper()
-
-	var lc net.ListenConfig
-	l, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer func() { _ = l.Close() }()
-	return l.Addr().(*net.TCPAddr).Port
-}
-
 // startMCPServerAndClient creates an MCP server with the given backend, starts it, and returns a connected client.
 func startMCPServerAndClient(t *testing.T, backendType httpBackendType, httpBackend service.HttpBackend) *mcpclient.Client {
 	t.Helper()
 
 	flags := service.MCPServerFlags{
-		MCPPort:      findAvailablePort(t),
+		MCPPort:      -1, // ephemeral: OS-assigned port, read back via srv.MCPAddr()
 		WorkflowMode: protocol.WorkflowModeNone,
 		ConfigPath:   filepath.Join(t.TempDir(), "config.json"),
 	}
@@ -238,17 +227,16 @@ func startMCPServerAndClient(t *testing.T, backendType httpBackendType, httpBack
 		flags.BurpMCPURL = config.DefaultBurpMCPURL
 	}
 
-	srv, err := service.NewServer(flags, httpBackend, nil, nil)
+	srv, err := service.NewServerWithStorageDir(flags, t.TempDir(), httpBackend, nil, nil)
 	require.NoError(t, err)
 	srv.SetQuietLogging()
 
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- srv.Run(t.Context()) }()
+	go func() { _ = srv.Run(t.Context()) }()
 	srv.WaitTillStarted()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	client, err := mcpclient.New(ctx, fmt.Sprintf("http://127.0.0.1:%d/mcp", flags.MCPPort))
+	client, err := mcpclient.New(ctx, "http://"+srv.MCPAddr()+"/mcp")
 	require.NoError(t, err)
 
 	t.Cleanup(func() {

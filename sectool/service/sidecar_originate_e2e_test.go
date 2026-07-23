@@ -48,11 +48,11 @@ func startOriginateHarness(t *testing.T, allowedDomains []string) *originateHarn
 		require.NoError(t, cfg.Save(configPath))
 	}
 
-	srv, err := NewServer(MCPServerFlags{
-		MCPPort:      0,
+	srv, err := NewServerWithStorageDir(MCPServerFlags{
+		MCPPort:      -1,
 		WorkflowMode: protocol.WorkflowModeNone,
 		ConfigPath:   configPath,
-	}, backend, newMockOastBackend(), newMockCrawlerBackend())
+	}, t.TempDir(), backend, newMockOastBackend(), newMockCrawlerBackend())
 	require.NoError(t, err)
 	srv.SetQuietLogging()
 
@@ -60,12 +60,10 @@ func startOriginateHarness(t *testing.T, allowedDomains []string) *originateHarn
 		Socket: socket, NativeProxyPort: 0, NativeHTTPSend: srv.OriginateNative,
 	}, srv, srv.replayHistoryStore))
 
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- srv.Run(t.Context()) }()
+	go func() { _ = srv.Run(t.Context()) }()
 	srv.WaitTillStarted()
 	t.Cleanup(func() {
 		srv.RequestShutdown()
-		<-serverErr
 	})
 
 	mcpClient, err := mcpclient.Connect(t.Context(), "http://"+srv.mcpServer.Addr()+"/mcp")
@@ -94,6 +92,8 @@ func jsonRaw(t *testing.T, v any) json.RawMessage {
 // adapter against a real upstream, asserting mutations reach the wire, the flow
 // is attributed to the caller, and wait_for_response gates the response form.
 func TestSidecarOriginateNativeE2E(t *testing.T) {
+	t.Parallel()
+
 	var gotURI, gotBody string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotURI = r.URL.RequestURI()
@@ -182,6 +182,8 @@ func TestSidecarOriginateNativeE2E(t *testing.T) {
 // TestSidecarOriginateNativeScope confirms native origination honors the domain
 // allowlist inside the shared send path.
 func TestSidecarOriginateNativeScope(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

@@ -53,18 +53,15 @@ func setupMockMCPServer(t *testing.T, cfg *config.Config, workflowMode string) (
 		require.NoError(t, defaults.Save(configPath))
 	}
 
-	srv, err := NewServer(MCPServerFlags{
-		MCPPort:      0, // Let OS pick a port
+	srv, err := NewServerWithStorageDir(MCPServerFlags{
+		MCPPort:      -1, // ephemeral: OS-assigned port
 		WorkflowMode: workflowMode,
 		ConfigPath:   configPath,
-	}, mockHTTP, mockOast, mockCrawler)
+	}, t.TempDir(), mockHTTP, mockOast, mockCrawler)
 	require.NoError(t, err)
 	srv.SetQuietLogging()
 
-	serverErr := make(chan error, 1)
-	go func() {
-		serverErr <- srv.Run(t.Context())
-	}()
+	go func() { _ = srv.Run(t.Context()) }()
 	srv.WaitTillStarted()
 
 	require.NotNil(t, srv.mcpServer, "MCP server should be started")
@@ -90,7 +87,6 @@ func setupMockMCPServer(t *testing.T, cfg *config.Config, workflowMode string) (
 	t.Cleanup(func() {
 		_ = mcpClient.Close()
 		srv.RequestShutdown()
-		<-serverErr
 	})
 
 	return srv, mcpClient, mockHTTP, mockOast, mockCrawler

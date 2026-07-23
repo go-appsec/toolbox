@@ -62,9 +62,12 @@ type Server struct {
 	crawlerBackend CrawlerBackend
 
 	// Storage temp directory (shared by all spill stores)
-	storageTempDir string
+	storageDir string
 
-	// storageProvider allocates per-backend Storage instances under storageTempDir.
+	// ownsStorageDir set when the server created storageDir and must remove it on shutdown
+	ownsStorageDir bool
+
+	// storageProvider allocates per-backend Storage instances under storageDir.
 	storageProvider store.Provider
 
 	// Replay history store (shared across backends and tool handlers)
@@ -85,27 +88,37 @@ type Server struct {
 	quietLogging bool
 }
 
-// NewServer creates a new MCP server instance with optional backends.
-// If a backend is nil, Run initializes the default implementation.
+// NewServer creates a new MCP server instance with optional backends, allocating and owning a temp
+// storage directory. If a backend is nil, Run initializes the default implementation.
 func NewServer(flags MCPServerFlags, hb HttpBackend, ob OastBackend, cb CrawlerBackend) (*Server, error) {
-	storageTempDir, err := os.MkdirTemp("", "sectool-spill-*")
+	storageDir, err := os.MkdirTemp("", "sectool-spill-*")
 	if err != nil {
 		return nil, fmt.Errorf("create storage temp dir: %w", err)
 	}
+	s, err := NewServerWithStorageDir(flags, storageDir, hb, ob, cb)
+	if err != nil {
+		_ = os.RemoveAll(storageDir)
+		return nil, err
+	}
+	s.ownsStorageDir = true
+	return s, nil
+}
+
+// NewServerWithStorageDir creates a new MCP server instance with optional backends, using the
+// caller-owned storageDir for spill stores. The caller is responsible for removing storageDir.
+func NewServerWithStorageDir(flags MCPServerFlags, storageDir string, hb HttpBackend, ob OastBackend, cb CrawlerBackend) (*Server, error) {
 	storageProvider := func(name string) (store.Storage, error) {
-		return newSpillStore(storageTempDir, name)
+		return newSpillStore(storageDir, name)
 	}
 
 	// Cross-cutting stores allocated
 	replayStorage, err := storageProvider("replay")
 	if err != nil {
-		_ = os.RemoveAll(storageTempDir)
 		return nil, fmt.Errorf("create replay storage: %w", err)
 	}
 	notesStorage, err := storageProvider("notes")
 	if err != nil {
 		_ = replayStorage.Close()
-		_ = os.RemoveAll(storageTempDir)
 		return nil, fmt.Errorf("create notes storage: %w", err)
 	}
 
@@ -120,7 +133,7 @@ func NewServer(flags MCPServerFlags, hb HttpBackend, ob OastBackend, cb CrawlerB
 		notesEnabled:       flags.Notes,
 		started:            make(chan struct{}),
 		shutdownCh:         make(chan struct{}),
-		storageTempDir:     storageTempDir,
+		storageDir:         storageDir,
 		storageProvider:    storageProvider,
 		replayHistoryStore: store.NewReplayHistoryStore(replayStorage),
 		noteStore:          store.NewNoteStore(notesStorage),
@@ -250,7 +263,9 @@ func (s *Server) shutdown() error {
 		log.Printf("warning: shutdown did not complete within %s; forcing exit", gracefulShutdownTimeout+time.Second)
 	}
 
-	_ = os.RemoveAll(s.storageTempDir)
+	if s.ownsStorageDir {
+		_ = os.RemoveAll(s.storageDir)
+	}
 
 	log.Printf("sectool MCP server stopped")
 	return nil
@@ -287,6 +302,14 @@ func (s *Server) CoreToolNames() []string {
 		return nil
 	}
 	return m.coreTools
+}
+
+// MCPAddr returns the bound MCP listener address, or "" before the server starts.
+func (s *Server) MCPAddr() string {
+	if s.mcpServer == nil {
+		return ""
+	}
+	return s.mcpServer.Addr()
 }
 
 // RequestShutdown initiates server shutdown.
@@ -380,10 +403,13 @@ func (s *Server) loadOrCreateConfig() error {
 		return err
 	}
 
-	// Apply CLI flag overrides (non-zero values override config)
-	if s.flagMCPPort != 0 {
+	// Apply CLI flag overrides (positive overrides config; negative = ephemeral)
+	switch {
+	case s.flagMCPPort < 0:
+		s.mcpPort = 0 // ephemeral: OS assigns a free port
+	case s.flagMCPPort > 0:
 		s.mcpPort = s.flagMCPPort
-	} else {
+	default:
 		s.mcpPort = cfg.MCPPort
 	}
 

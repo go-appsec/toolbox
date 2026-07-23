@@ -60,23 +60,21 @@ func startUpgrade(t *testing.T, name string, caps wire.Capabilities) *upgradeHar
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 
-	srv, err := NewServer(MCPServerFlags{
-		MCPPort:      0,
+	srv, err := NewServerWithStorageDir(MCPServerFlags{
+		MCPPort:      -1,
 		WorkflowMode: protocol.WorkflowModeNone,
 		ConfigPath:   filepath.Join(t.TempDir(), "config.json"),
-	}, backend, newMockOastBackend(), newMockCrawlerBackend())
+	}, t.TempDir(), backend, newMockOastBackend(), newMockCrawlerBackend())
 	require.NoError(t, err)
 	srv.SetQuietLogging()
 
 	require.NoError(t, backend.EnableSidecars(scsidecar.Config{Socket: socket, NativeProxyPort: 0}, srv, srv.replayHistoryStore))
 
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- srv.Run(t.Context()) }()
+	go func() { _ = srv.Run(t.Context()) }()
 	srv.WaitTillStarted()
 	require.NoError(t, backend.WaitReady(t.Context()))
 	t.Cleanup(func() {
 		srv.RequestShutdown()
-		<-serverErr
 	})
 
 	mcpClient, err := mcpclient.Connect(t.Context(), "http://"+srv.mcpServer.Addr()+"/mcp")
@@ -122,6 +120,8 @@ func headerValue(hs []wire.Header, name string) string {
 }
 
 func TestSidecarUpgradeClaimHTTP101E2E(t *testing.T) {
+	t.Parallel()
+
 	uc := &wire.UpgradeClaim{HostPattern: "ctrl.example.com", PathPattern: "/control", UpgradeSignal: "http_101", MethodSet: []string{"POST"}}
 	h := startUpgrade(t, "upgrade-sidecar", wire.Capabilities{UpgradeClaims: []wire.UpgradeClaim{*uc}})
 	ctx := t.Context()
@@ -166,6 +166,8 @@ func TestSidecarUpgradeClaimHTTP101E2E(t *testing.T) {
 }
 
 func TestSidecarUpgradeClaimConnectE2E(t *testing.T) {
+	t.Parallel()
+
 	uc := &wire.UpgradeClaim{HostPattern: "tunnel.test", UpgradeSignal: "connect"}
 	h := startUpgrade(t, "connect-upgrade", wire.Capabilities{UpgradeClaims: []wire.UpgradeClaim{*uc}})
 	ctx := t.Context()

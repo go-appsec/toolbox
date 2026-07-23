@@ -55,6 +55,8 @@ func (h *toolSidecar) OnInvokeTool(p wire.InvokeToolParams) (wire.InvokeToolResu
 }
 
 func TestSidecarToolsE2E(t *testing.T) {
+	t.Parallel()
+
 	const adapterName = "tool-sidecar"
 	const toolName = "custom_echo"
 
@@ -62,23 +64,21 @@ func TestSidecarToolsE2E(t *testing.T) {
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 
-	srv, err := NewServer(MCPServerFlags{
-		MCPPort:      0,
+	srv, err := NewServerWithStorageDir(MCPServerFlags{
+		MCPPort:      -1,
 		WorkflowMode: protocol.WorkflowModeNone,
 		ConfigPath:   filepath.Join(t.TempDir(), "config.json"),
-	}, backend, newMockOastBackend(), newMockCrawlerBackend())
+	}, t.TempDir(), backend, newMockOastBackend(), newMockCrawlerBackend())
 	require.NoError(t, err)
 	srv.SetQuietLogging()
 
 	require.NoError(t, backend.EnableSidecars(scsidecar.Config{Socket: socket, NativeProxyPort: 0}, srv, srv.replayHistoryStore))
 
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- srv.Run(t.Context()) }()
+	go func() { _ = srv.Run(t.Context()) }()
 	srv.WaitTillStarted()
 	require.NoError(t, backend.WaitReady(t.Context()))
 	t.Cleanup(func() {
 		srv.RequestShutdown()
-		<-serverErr
 	})
 
 	// The sidecar registers before the MCP client connects, so its tool is composed
@@ -156,6 +156,8 @@ func TestSidecarToolsE2E(t *testing.T) {
 }
 
 func TestSidecarCoreToolNameRejected(t *testing.T) {
+	t.Parallel()
+
 	// registration declaring a core tool name, rejected at any point in startup
 	coreToolReg := sidecar.Registration{
 		Name:            "hijack",
@@ -170,11 +172,11 @@ func TestSidecarCoreToolNameRejected(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
-		srv, err := NewServer(MCPServerFlags{
-			MCPPort:      0,
+		srv, err := NewServerWithStorageDir(MCPServerFlags{
+			MCPPort:      -1,
 			WorkflowMode: protocol.WorkflowModeNone,
 			ConfigPath:   filepath.Join(t.TempDir(), "config.json"),
-		}, backend, newMockOastBackend(), newMockCrawlerBackend())
+		}, t.TempDir(), backend, newMockOastBackend(), newMockCrawlerBackend())
 		require.NoError(t, err)
 		srv.SetQuietLogging()
 
@@ -195,23 +197,21 @@ func TestSidecarCoreToolNameRejected(t *testing.T) {
 		backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 		require.NoError(t, err)
 
-		srv, err := NewServer(MCPServerFlags{
-			MCPPort:      0,
+		srv, err := NewServerWithStorageDir(MCPServerFlags{
+			MCPPort:      -1,
 			WorkflowMode: protocol.WorkflowModeNone,
 			ConfigPath:   filepath.Join(t.TempDir(), "config.json"),
-		}, backend, newMockOastBackend(), newMockCrawlerBackend())
+		}, t.TempDir(), backend, newMockOastBackend(), newMockCrawlerBackend())
 		require.NoError(t, err)
 		srv.SetQuietLogging()
 
 		require.NoError(t, backend.EnableSidecars(scsidecar.Config{Socket: socket, NativeProxyPort: 0}, srv, srv.replayHistoryStore))
 
-		serverErr := make(chan error, 1)
-		go func() { serverErr <- srv.Run(t.Context()) }()
+		go func() { _ = srv.Run(t.Context()) }()
 		srv.WaitTillStarted()
 		require.NoError(t, backend.WaitReady(t.Context()))
 		t.Cleanup(func() {
 			srv.RequestShutdown()
-			<-serverErr
 		})
 
 		_, err = sidecar.Dial(t.Context(), socket, coreToolReg)
@@ -224,27 +224,27 @@ func TestSidecarCoreToolNameRejected(t *testing.T) {
 }
 
 func TestSidecarToolsAbsentWithoutSidecar(t *testing.T) {
+	t.Parallel()
+
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 
-	srv, err := NewServer(MCPServerFlags{
-		MCPPort:      0,
+	srv, err := NewServerWithStorageDir(MCPServerFlags{
+		MCPPort:      -1,
 		WorkflowMode: protocol.WorkflowModeNone,
 		ConfigPath:   filepath.Join(t.TempDir(), "config.json"),
-	}, backend, newMockOastBackend(), newMockCrawlerBackend())
+	}, t.TempDir(), backend, newMockOastBackend(), newMockCrawlerBackend())
 	require.NoError(t, err)
 	srv.SetQuietLogging()
 
 	// Sidecars enabled but none connected: the surface must be unchanged.
 	require.NoError(t, backend.EnableSidecars(scsidecar.Config{Socket: filepath.Join(t.TempDir(), "sidecar.sock"), NativeProxyPort: 0}, srv, srv.replayHistoryStore))
 
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- srv.Run(t.Context()) }()
+	go func() { _ = srv.Run(t.Context()) }()
 	srv.WaitTillStarted()
 	require.NoError(t, backend.WaitReady(t.Context()))
 	t.Cleanup(func() {
 		srv.RequestShutdown()
-		<-serverErr
 	})
 
 	mcpClient, err := mcpclient.Connect(t.Context(), "http://"+srv.mcpServer.Addr()+"/mcp")

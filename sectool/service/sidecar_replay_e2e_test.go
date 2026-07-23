@@ -37,28 +37,28 @@ func (h *replaySendHandler) OnSidecarSend(p wire.SidecarSendParams) (wire.Sideca
 // asserts it routes to the owning adapter's OnSidecarSend (with the source flow
 // and built mutations) rather than the native HTTP send path.
 func TestSidecarReplaySendE2E(t *testing.T) {
+	t.Parallel()
+
 	const adapterName = "mqtt"
 
 	socket := filepath.Join(t.TempDir(), "sidecar.sock")
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 
-	srv, err := NewServer(MCPServerFlags{
-		MCPPort:      0,
+	srv, err := NewServerWithStorageDir(MCPServerFlags{
+		MCPPort:      -1,
 		WorkflowMode: protocol.WorkflowModeNone,
 		ConfigPath:   filepath.Join(t.TempDir(), "config.json"),
-	}, backend, newMockOastBackend(), newMockCrawlerBackend())
+	}, t.TempDir(), backend, newMockOastBackend(), newMockCrawlerBackend())
 	require.NoError(t, err)
 	srv.SetQuietLogging()
 
 	require.NoError(t, backend.EnableSidecars(scsidecar.Config{Socket: socket, NativeProxyPort: 0}, srv, srv.replayHistoryStore))
 
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- srv.Run(t.Context()) }()
+	go func() { _ = srv.Run(t.Context()) }()
 	srv.WaitTillStarted()
 	t.Cleanup(func() {
 		srv.RequestShutdown()
-		<-serverErr
 	})
 
 	mcpClient, err := mcpclient.Connect(t.Context(), "http://"+srv.mcpServer.Addr()+"/mcp")

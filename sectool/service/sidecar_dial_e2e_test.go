@@ -105,11 +105,11 @@ func startForward(t *testing.T, name string, caps wire.Capabilities, scope func(
 	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 
-	srv, err := NewServer(MCPServerFlags{
-		MCPPort:      0,
+	srv, err := NewServerWithStorageDir(MCPServerFlags{
+		MCPPort:      -1,
 		WorkflowMode: protocol.WorkflowModeNone,
 		ConfigPath:   filepath.Join(t.TempDir(), "config.json"),
-	}, backend, newMockOastBackend(), newMockCrawlerBackend())
+	}, t.TempDir(), backend, newMockOastBackend(), newMockCrawlerBackend())
 	require.NoError(t, err)
 	srv.SetQuietLogging()
 
@@ -119,13 +119,11 @@ func startForward(t *testing.T, name string, caps wire.Capabilities, scope func(
 		ScopeCheck:      scope,
 	}, srv, srv.replayHistoryStore))
 
-	serverErr := make(chan error, 1)
-	go func() { serverErr <- srv.Run(t.Context()) }()
+	go func() { _ = srv.Run(t.Context()) }()
 	srv.WaitTillStarted()
 	require.NoError(t, backend.WaitReady(t.Context()))
 	t.Cleanup(func() {
 		srv.RequestShutdown()
-		<-serverErr
 	})
 
 	mcpClient, err := mcpclient.Connect(t.Context(), "http://"+srv.mcpServer.Addr()+"/mcp")
@@ -208,6 +206,8 @@ func hasDialAudit(t *testing.T, h *forwardHarness, adapter string) bool {
 }
 
 func TestSidecarDialUpstreamForwardE2E(t *testing.T) {
+	t.Parallel()
+
 	ehost, eport := startEchoServer(t, nil)
 	h := startForward(t, "fwd-plain",
 		wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{MagicBytesPrefix: magic("FWD")}}}, nil,
@@ -230,6 +230,8 @@ func TestSidecarDialUpstreamForwardE2E(t *testing.T) {
 }
 
 func TestSidecarDialUpstreamOutOfScope(t *testing.T) {
+	t.Parallel()
+
 	ehost, eport := startEchoServer(t, nil)
 	// Scope policy rejects the upstream host; the sidecar cannot reach it.
 	h := startForward(t, "fwd-scope",
@@ -267,6 +269,8 @@ func TestSidecarDialUpstreamOutOfScope(t *testing.T) {
 }
 
 func TestSidecarDialUpstreamTLS(t *testing.T) {
+	t.Parallel()
+
 	cert := selfSignedCert(t)
 	ehost, eport := startEchoServer(t, &cert)
 	h := startForward(t, "fwd-tls",
@@ -286,6 +290,8 @@ func TestSidecarDialUpstreamTLS(t *testing.T) {
 }
 
 func TestSidecarDialUpstreamDefaultDest(t *testing.T) {
+	t.Parallel()
+
 	ehost, eport := startEchoServer(t, nil)
 	// dial_upstream with only parent_flow_id resolves the destination from the
 	// parent flow the sidecar recorded.
