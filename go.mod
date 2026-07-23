@@ -12,7 +12,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jedib0t/go-pretty/v6 v6.8.3
 	github.com/klauspost/compress v1.19.1
-	github.com/mark3labs/mcp-go v0.56.0
+	github.com/mark3labs/mcp-go v0.57.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/pflag v1.0.10
