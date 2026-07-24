@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -278,6 +279,25 @@ func (r *StreamRouter) Accept(ctx context.Context) (*StreamConn, error) {
 	case <-r.conn.peer.Done():
 		return nil, ErrRouterClosed
 	}
+}
+
+// DialUpstream dials an upstream through the conn and returns a StreamConn routed by this
+// router: inbound bytes arrive via OnStreamDeliver and it is torn down by stream_ended or
+// Close. Unlike an accepted stream it is not queued for Accept.
+func (r *StreamRouter) DialUpstream(ctx context.Context, p wire.DialUpstreamParams) (*StreamConn, error) {
+	id, err := r.conn.DialUpstream(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	sc := newStreamConn(r.conn, wire.StreamOpenParams{
+		StreamID: id,
+		Host:     p.Host,
+		PeerAddr: net.JoinHostPort(p.Host, strconv.Itoa(p.Port)),
+	})
+	r.mu.Lock()
+	r.streams[id] = sc
+	r.mu.Unlock()
+	return sc, nil
 }
 
 // OnStreamOpen registers the stream and queues it for Accept.

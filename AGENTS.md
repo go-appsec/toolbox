@@ -142,7 +142,7 @@ Go client library for building out-of-process protocol adapters; see `sidecar/RE
 - `sidecar/handler.go` - `Registration`, `Handler` callback interface, `BaseHandler` no-op defaults
 - `sidecar/flow.go` - Flow emission (`PushFlow`, `CompleteFlow`), `Log`, `ReportMetrics`, `CoreInvoke`
 - `sidecar/send.go` - Send surface: `ApplyMutations` (ordered §3.4 ops via `pkg/mutate`) and `Conn.InvokeAdapter`
-- `sidecar/stream.go` - `CloseStream`, `StreamWrite`, and the `Forward` writes helper
+- `sidecar/stream.go` - `CloseStream`, `StreamWrite`, the `Forward` writes helper, and `StreamConn`/`StreamRouter` (`net.Conn` over a stream; `Accept` for claimed streams, `DialUpstream` for dialed upstreams)
 - `sidecar/rules.go` - `RuleCache`: hot-path find/replace scoped to this adapter
 - `sidecar/reassembly.go` - `Reassembler`: buffers stream bytes into complete protocol frames
 - `sidecar/net_unix.go` / `sidecar/net_windows.go` - Per-OS dial network selection (UDS vs loopback TCP)

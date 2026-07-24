@@ -21,13 +21,14 @@ type streamServer struct {
 	mu     sync.Mutex
 	writes map[string][]byte
 	closed map[string]bool
+	dialID string
 	peer   chan *wire.Peer
 }
 
 func newStreamServer(t *testing.T) (*streamServer, *Conn, *StreamRouter) {
 	t.Helper()
-	s := &streamServer{writes: map[string][]byte{}, closed: map[string]bool{}, peer: make(chan *wire.Peer, 1)}
-	addr, peerCh := fakeServer(t, registerOK, s.onNotify)
+	s := &streamServer{writes: map[string][]byte{}, closed: map[string]bool{}, dialID: "up1", peer: make(chan *wire.Peer, 1)}
+	addr, peerCh := fakeServer(t, s.onRequest, s.onNotify)
 	conn, err := Dial(t.Context(), addr, Registration{Name: "streamer"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
@@ -43,6 +44,13 @@ func (s *streamServer) srvPeer(t *testing.T) *wire.Peer {
 	p := <-s.peer
 	s.peer <- p
 	return p
+}
+
+func (s *streamServer) onRequest(method string, params json.RawMessage) (any, *wire.Error) {
+	if method == wire.MethodDialUpstream {
+		return wire.DialUpstreamResult{StreamID: s.dialID}, nil
+	}
+	return registerOK(method, params)
 }
 
 func (s *streamServer) onNotify(_ context.Context, method string, params json.RawMessage) {
@@ -155,6 +163,54 @@ func TestStreamRouter(t *testing.T) {
 		rest, err := io.ReadAll(sc)
 		require.NoError(t, err)
 		assert.Equal(t, "de", string(rest))
+	})
+}
+
+func TestStreamRouterDialUpstream(t *testing.T) {
+	t.Parallel()
+
+	t.Run("registers_and_routes_deliver", func(t *testing.T) {
+		s, _, router := newStreamServer(t)
+		srv := s.srvPeer(t)
+
+		sc, err := router.DialUpstream(t.Context(), wire.DialUpstreamParams{Host: "up.example.com", Port: 443})
+		require.NoError(t, err)
+		assert.Equal(t, s.dialID, sc.StreamID())
+		assert.Equal(t, "up.example.com:443", sc.RemoteAddr().String())
+		// dialed stream is routed but not queued for Accept
+		assert.Empty(t, router.accept)
+
+		var res wire.StreamResult
+		require.Nil(t, srv.Call(t.Context(), wire.MethodStreamDeliver,
+			wire.StreamWriteParams{StreamID: s.dialID, Data: []byte("pong")}, &res))
+
+		got := make([]byte, 4)
+		n, err := io.ReadFull(sc, got)
+		require.NoError(t, err)
+		assert.Equal(t, "pong", string(got[:n]))
+	})
+
+	t.Run("stream_ended_cleans_up", func(t *testing.T) {
+		s, _, router := newStreamServer(t)
+		srv := s.srvPeer(t)
+
+		sc, err := router.DialUpstream(t.Context(), wire.DialUpstreamParams{Host: "up", Port: 1})
+		require.NoError(t, err)
+
+		require.NoError(t, srv.Notify(wire.MethodStreamEnded, wire.StreamEndedParams{StreamID: s.dialID}))
+		assert.Eventually(t, func() bool { return router.lookup(s.dialID) == nil }, time.Second, 5*time.Millisecond)
+		_, err = sc.Read(make([]byte, 1))
+		assert.ErrorIs(t, err, io.EOF)
+	})
+
+	t.Run("close_notifies_sectool", func(t *testing.T) {
+		s, _, router := newStreamServer(t)
+		_ = s.srvPeer(t)
+
+		sc, err := router.DialUpstream(t.Context(), wire.DialUpstreamParams{Host: "up", Port: 1})
+		require.NoError(t, err)
+		require.NoError(t, sc.Close())
+		assert.Eventually(t, func() bool { return s.wasClosed(s.dialID) }, time.Second, 5*time.Millisecond)
 	})
 }
 

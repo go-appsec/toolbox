@@ -277,6 +277,16 @@ func handle(conn *sidecar.Conn, sc *sidecar.StreamConn) {
 
 `Close` is graceful (after queued writes); call `conn.CloseStream(id, reason, true)` to abort. A successful `Write` means the bytes were accepted for delivery, not that they reached the socket.
 
+To bridge a dialed upstream through the same router, use `router.DialUpstream` instead of `conn.DialUpstream`: it dials, then returns a `StreamConn` routed by the router, so the upstream half reads and writes as an ordinary `net.Conn` alongside the accepted client stream. A dialed stream is not queued for `Accept`; `stream_ended` or `Close` tears it down through the same path as an accepted stream.
+
+```go
+up, err := router.DialUpstream(ctx, wire.DialUpstreamParams{Host: "api.example.com", Port: 443})
+if err != nil {
+    return err
+}
+defer up.Close()
+```
+
 ### Emitting flows
 
 #### PushFlow
