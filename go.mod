@@ -1,6 +1,6 @@
 module github.com/go-appsec/toolbox
 
-go 1.25.5
+go 1.26.0
 
 require (
 	github.com/agnivade/levenshtein v1.2.1
@@ -20,7 +20,7 @@ require (
 	github.com/tdewolff/parse/v2 v2.8.16
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	golang.org/x/net v0.58.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.45.0
 )
 
