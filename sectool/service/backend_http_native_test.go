@@ -52,7 +52,7 @@ func newTestNativeBackend(t *testing.T) *NativeProxyBackend {
 // a group of subtests share one generated CA cert.
 func newTestNativeBackendDir(t *testing.T, configDir string) *NativeProxyBackend {
 	t.Helper()
-	backend, err := NewNativeProxyBackend(0, configDir, 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
+	backend, err := NewNativeProxyBackend(t.Context(), 0, configDir, 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 	return backend
@@ -61,7 +61,7 @@ func newTestNativeBackendDir(t *testing.T, configDir string) *NativeProxyBackend
 // newServingNativeBackend returns a backend with its proxy accept loop running.
 func newServingNativeBackend(t *testing.T) *NativeProxyBackend {
 	t.Helper()
-	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
+	backend, err := NewNativeProxyBackend(t.Context(), 0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 	go func() { _ = backend.Serve() }()
 	t.Cleanup(func() { _ = backend.Close(context.Background()) })
@@ -79,7 +79,7 @@ func newProxiedClient(t *testing.T, backend *NativeProxyBackend) *http.Client {
 func TestNativeProxyBackend_CreateAndServe(t *testing.T) {
 	t.Parallel()
 
-	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
+	backend, err := NewNativeProxyBackend(t.Context(), 0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 
 	go func() { _ = backend.Serve() }()
@@ -426,7 +426,7 @@ func TestNativeProxyBackend_Rules_Persistence(t *testing.T) {
 	t.Parallel()
 
 	newBackend := func(provider store.Provider) *NativeProxyBackend {
-		b, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, provider, proxy.TimeoutConfig{}, false)
+		b, err := NewNativeProxyBackend(t.Context(), 0, t.TempDir(), 10*1024*1024, provider, proxy.TimeoutConfig{}, false)
 		require.NoError(t, err)
 		return b
 	}
@@ -671,7 +671,7 @@ func TestNativeProxyBackend_SendRequest(t *testing.T) {
 func TestNativeProxyBackend_Close(t *testing.T) {
 	t.Parallel()
 
-	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
+	backend, err := NewNativeProxyBackend(t.Context(), 0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 	go func() { _ = backend.Serve() }()
 	require.NoError(t, backend.WaitReady(t.Context()))

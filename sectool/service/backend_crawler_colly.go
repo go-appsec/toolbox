@@ -46,6 +46,7 @@ type CollyBackend struct {
 	config       config.Config
 	maxBodyBytes int
 	closed       bool
+	ctx          context.Context // backend lifetime; parents all crawl session contexts
 
 	// For resolving seed flows from proxy or replay history
 	replayHistoryStore *store.ReplayHistoryStore
@@ -206,7 +207,7 @@ func (b *CollyBackend) fetchSeedRequest(ctx context.Context, flowID string) (raw
 }
 
 // NewCollyBackend creates a new Colly-backed CrawlerBackend.
-func NewCollyBackend(cfg *config.Config, replayHistoryStore *store.ReplayHistoryStore, httpBackend HttpBackend) *CollyBackend {
+func NewCollyBackend(ctx context.Context, cfg *config.Config, replayHistoryStore *store.ReplayHistoryStore, httpBackend HttpBackend) *CollyBackend {
 	return &CollyBackend{
 		sessions:           make(map[string]*crawlSession),
 		byLabel:            make(map[string]string),
@@ -214,6 +215,7 @@ func NewCollyBackend(cfg *config.Config, replayHistoryStore *store.ReplayHistory
 		maxBodyBytes:       cfg.MaxBodyBytes,
 		replayHistoryStore: replayHistoryStore,
 		httpBackend:        httpBackend,
+		ctx:                ctx,
 	}
 }
 
@@ -253,7 +255,7 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		opts.MaxRequests = b.config.Crawler.MaxRequests
 	}
 
-	sessionCtx, cancel := context.WithCancel(context.Background())
+	sessionCtx, cancel := context.WithCancel(b.ctx)
 
 	sessionID := ids.Generate(ids.EntityLength)
 
@@ -284,7 +286,8 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 
 	c := colly.NewCollector(
 		colly.Async(true),
-		colly.StdlibContext(sessionCtx),
+		// sessionCtx is backend-lifetime, not a per-call param; contextcheck can't trace it through the struct field
+		colly.StdlibContext(sessionCtx), //nolint:contextcheck
 		colly.ParseHTTPErrorResponse(),
 	)
 

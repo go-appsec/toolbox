@@ -58,6 +58,8 @@ type BurpClient struct {
 	healthCheckInterval time.Duration // 0 disables health loop
 	healthCancel        context.CancelFunc
 	healthWg            sync.WaitGroup
+	ctx                 context.Context // client lifetime; parents the health loop and SSE stream
+	lifeCancel          context.CancelFunc
 
 	mu               sync.Mutex
 	mcpClient        *client.Client
@@ -85,25 +87,30 @@ func WithHealthCheckInterval(d time.Duration) Option {
 }
 
 // New creates a new BurpClient and starts the health monitoring loop.
+// ctx governs the client lifetime: cancelling it stops the health loop and any
+// active SSE stream; Close stops both without it.
 // Call Connect to establish the connection, or let operations connect lazily.
-func New(url string, opts ...Option) *BurpClient {
+func New(ctx context.Context, url string, opts ...Option) *BurpClient {
 	if url == "" {
 		url = config.DefaultBurpMCPURL
 	}
+	lifeCtx, lifeCancel := context.WithCancel(ctx)
 	c := &BurpClient{
 		url:                 url,
 		healthCheckInterval: healthCheckInterval,
 		healthCancel:        func() {},
 		done:                make(chan struct{}),
+		ctx:                 lifeCtx,
+		lifeCancel:          lifeCancel,
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
 	if c.healthCheckInterval > 0 {
-		ctx, cancel := context.WithCancel(context.Background())
+		loopCtx, cancel := context.WithCancel(ctx)
 		c.healthCancel = cancel
 		c.healthWg.Add(1)
-		go c.healthLoop(ctx)
+		go c.healthLoop(loopCtx)
 	}
 	return c
 }
@@ -150,7 +157,7 @@ func (c *BurpClient) connectLocked(ctx context.Context) error {
 
 	// Use context.Background() for SSE stream - it needs to be long-lived
 	// The passed ctx is only used for the initialization timeout
-	if err := mcpClient.Start(context.Background()); err != nil {
+	if err := mcpClient.Start(c.ctx); err != nil { //nolint:contextcheck // c.ctx is client-lifetime, not a per-call param
 		return fmt.Errorf("failed to connect to Burp MCP at %s: %w", c.url, err)
 	}
 
@@ -260,6 +267,7 @@ func (c *BurpClient) Close() error {
 	c.mu.Unlock()
 
 	c.healthCancel()
+	c.lifeCancel()
 	c.healthWg.Wait()
 
 	c.mu.Lock()

@@ -12,7 +12,7 @@ import (
 
 // listen binds a Unix domain socket with dir 0700 and socket 0600, removing any
 // stale socket first.
-func listen(socket string) (net.Listener, error) {
+func listen(ctx context.Context, socket string) (net.Listener, error) {
 	dir := filepath.Dir(socket)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("sidecar: create socket dir: %w", err)
@@ -21,7 +21,7 @@ func listen(socket string) (net.Listener, error) {
 		return nil, fmt.Errorf("sidecar: remove stale socket: %w", err)
 	}
 	var lc net.ListenConfig
-	ln, err := lc.Listen(context.Background(), "unix", socket)
+	ln, err := lc.Listen(ctx, "unix", socket)
 	if err != nil {
 		return nil, fmt.Errorf("sidecar: listen unix %s: %w", socket, err)
 	}

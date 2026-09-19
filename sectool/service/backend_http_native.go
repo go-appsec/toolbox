@@ -79,7 +79,7 @@ var _ SidecarRegistry = (*sidecar.Manager)(nil)
 // NewNativeProxyBackend creates a new native proxy backend.
 // Does NOT start serving - call Serve() separately (typically in a goroutine).
 // Call EnableSidecars before Serve to host the out-of-process sidecar listener.
-func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, storage store.Provider, timeouts proxy.TimeoutConfig, fullBuffer bool) (*NativeProxyBackend, error) {
+func NewNativeProxyBackend(ctx context.Context, port int, configDir string, maxBodyBytes int, storage store.Provider, timeouts proxy.TimeoutConfig, fullBuffer bool) (*NativeProxyBackend, error) {
 	historyStorage, err := storage("hist")
 	if err != nil {
 		return nil, fmt.Errorf("history storage: %w", err)
@@ -96,7 +96,7 @@ func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, storage
 		return nil, fmt.Errorf("responder storage: %w", err)
 	}
 
-	server, err := proxy.NewProxyServer(port, configDir, maxBodyBytes, historyStorage, timeouts, fullBuffer)
+	server, err := proxy.NewProxyServer(ctx, port, configDir, maxBodyBytes, historyStorage, timeouts, fullBuffer)
 	if err != nil {
 		_ = historyStorage.Close()
 		_ = ruleStorage.Close()
@@ -112,15 +112,15 @@ func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, storage
 	}
 
 	if b.httpRules, err = b.loadRuleList(ruleKeyHTTP); err != nil {
-		_ = b.Close(context.Background())
+		_ = b.Close(ctx)
 		return nil, fmt.Errorf("load HTTP rules: %w", err)
 	} else if b.wsRules, err = b.loadRuleList(ruleKeyWS); err != nil {
-		_ = b.Close(context.Background())
+		_ = b.Close(ctx)
 		return nil, fmt.Errorf("load WebSocket rules: %w", err)
 	}
 
 	if b.responders, err = b.loadResponders(); err != nil {
-		_ = b.Close(context.Background())
+		_ = b.Close(ctx)
 		return nil, fmt.Errorf("load responders: %w", err)
 	}
 
@@ -135,14 +135,14 @@ func NewNativeProxyBackend(port int, configDir string, maxBodyBytes int, storage
 // port; the built-in adapter names are reserved automatically. coreInvoke backs
 // the sidecar core_invoke method; it resolves the read-side tools lazily so it can
 // be supplied before the MCP server exists.
-func (b *NativeProxyBackend) EnableSidecars(cfg sidecar.Config, coreInvoke sidecar.CoreService, replayStore *store.ReplayHistoryStore) error {
+func (b *NativeProxyBackend) EnableSidecars(ctx context.Context, cfg sidecar.Config, coreInvoke sidecar.CoreService, replayStore *store.ReplayHistoryStore) error {
 	cfg.ReservedNames = []string{types.ProtocolHTTP11, types.ProtocolH2, types.ProtocolTagWS, types.AdapterScopeCore}
 	// Route sidecar-performed replays into the replay store so they report source
 	// "replay" like native replays; other flows go to proxy history.
 	sink := &replayRoutingSink{history: b.server.History(), replay: replayStore}
 	b.sidecarManager = sidecar.NewManager(cfg, b.server.Registry(), sink, coreInvoke, b)
 	sink.checkReplaySource = b.sidecarManager.IsReplaySource
-	lst, err := sidecar.NewListener(cfg, b.sidecarManager)
+	lst, err := sidecar.NewListener(ctx, cfg, b.sidecarManager)
 	if err != nil {
 		return err
 	}

@@ -180,7 +180,7 @@ func TestNativeProxyBackend_Responder_Persistence(t *testing.T) {
 	respStorage := store.NewMemStorage()
 	provider := sharedMemProvider("resp", respStorage)
 
-	backend1, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, provider, proxy.TimeoutConfig{}, false)
+	backend1, err := NewNativeProxyBackend(t.Context(), 0, t.TempDir(), 10*1024*1024, provider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 
 	_, err = backend1.AddResponder(t.Context(), protocol.ResponderEntry{
@@ -193,7 +193,7 @@ func TestNativeProxyBackend_Responder_Persistence(t *testing.T) {
 	_ = backend1.Close(t.Context())
 
 	// New backend over the same responder storage should load persisted responders.
-	backend2, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, provider, proxy.TimeoutConfig{}, false)
+	backend2, err := NewNativeProxyBackend(t.Context(), 0, t.TempDir(), 10*1024*1024, provider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = backend2.Close(context.Background()) })
 

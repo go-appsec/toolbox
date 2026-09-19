@@ -21,13 +21,13 @@ type Listener struct {
 
 // NewListener binds the local socket: a Unix domain socket on unix, loopback TCP
 // on Windows. Call Serve to start accepting.
-func NewListener(cfg Config, mgr *Manager) (*Listener, error) {
-	ln, err := listen(cfg.Socket)
+func NewListener(ctx context.Context, cfg Config, mgr *Manager) (*Listener, error) {
+	ln, err := listen(ctx, cfg.Socket)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	return &Listener{mgr: mgr, ln: ln, ctx: ctx, cancel: cancel}, nil
+	serverCtx, cancel := context.WithCancel(ctx)
+	return &Listener{mgr: mgr, ln: ln, ctx: serverCtx, cancel: cancel}, nil
 }
 
 // Addr returns the bound socket address.

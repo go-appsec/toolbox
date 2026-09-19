@@ -288,7 +288,7 @@ func newTestCollySession(t *testing.T, flows []*CrawlFlow) (*CollyBackend, strin
 	t.Helper()
 
 	cfg := config.DefaultConfig()
-	b := NewCollyBackend(cfg, nil, nil)
+	b := NewCollyBackend(t.Context(), cfg, nil, nil)
 	t.Cleanup(func() { _ = b.Close(context.Background()) })
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -356,7 +356,7 @@ func TestCollyBackend_resolveSeeds(t *testing.T) {
 			mockHTTP := newMockHttpBackend()
 			flowID := mockHTTP.AddProxyEntryScheme(tt.request, "HTTP/1.1 200 OK\r\n\r\n", tt.scheme, tt.port)
 
-			b := NewCollyBackend(config.DefaultConfig(), nil, mockHTTP)
+			b := NewCollyBackend(t.Context(), config.DefaultConfig(), nil, mockHTTP)
 			t.Cleanup(func() { _ = b.Close(context.Background()) })
 
 			_, seedURLs, _, err := b.resolveSeeds(t.Context(), []CrawlSeed{{FlowID: flowID}}, nil)
@@ -574,7 +574,7 @@ func crawlTestConfig() *config.Config {
 func newCollyBackend(t *testing.T, cfg *config.Config) *CollyBackend {
 	t.Helper()
 
-	b := NewCollyBackend(cfg, nil, nil)
+	b := NewCollyBackend(t.Context(), cfg, nil, nil)
 	t.Cleanup(func() { _ = b.Close(context.Background()) })
 	return b
 }

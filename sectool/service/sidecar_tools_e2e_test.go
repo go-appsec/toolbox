@@ -145,7 +145,7 @@ func TestSidecarCoreToolNameRejected(t *testing.T) {
 
 	t.Run("before_core_tools_ready", func(t *testing.T) {
 		socket := filepath.Join(t.TempDir(), "sidecar.sock")
-		backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
+		backend, err := NewNativeProxyBackend(t.Context(), 0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
@@ -158,7 +158,7 @@ func TestSidecarCoreToolNameRejected(t *testing.T) {
 		srv.SetQuietLogging()
 
 		// accept without ever running the server, so no core tools exist
-		require.NoError(t, backend.EnableSidecars(scsidecar.Config{Socket: socket, NativeProxyPort: 0}, srv, srv.replayHistoryStore))
+		require.NoError(t, backend.EnableSidecars(t.Context(), scsidecar.Config{Socket: socket, NativeProxyPort: 0}, srv, srv.replayHistoryStore))
 		go func() { _ = backend.Serve() }()
 		require.NoError(t, backend.WaitReady(t.Context()))
 
@@ -171,7 +171,7 @@ func TestSidecarCoreToolNameRejected(t *testing.T) {
 
 	t.Run("after_core_tools_ready", func(t *testing.T) {
 		socket := filepath.Join(t.TempDir(), "sidecar.sock")
-		backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
+		backend, err := NewNativeProxyBackend(t.Context(), 0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 		require.NoError(t, err)
 
 		srv, err := NewServerWithStorageDir(MCPServerFlags{
@@ -182,7 +182,7 @@ func TestSidecarCoreToolNameRejected(t *testing.T) {
 		require.NoError(t, err)
 		srv.SetQuietLogging()
 
-		require.NoError(t, backend.EnableSidecars(scsidecar.Config{Socket: socket, NativeProxyPort: 0}, srv, srv.replayHistoryStore))
+		require.NoError(t, backend.EnableSidecars(t.Context(), scsidecar.Config{Socket: socket, NativeProxyPort: 0}, srv, srv.replayHistoryStore))
 
 		go func() { _ = srv.Run(t.Context()) }()
 		srv.WaitTillStarted()

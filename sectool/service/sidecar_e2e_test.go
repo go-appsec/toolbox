@@ -47,7 +47,7 @@ func startSidecarProxy(t *testing.T, cfg scsidecar.Config, configPath ...string)
 		cfgPath = configPath[0]
 	}
 
-	backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
+	backend, err := NewNativeProxyBackend(t.Context(), 0, t.TempDir(), 10*1024*1024, store.MemProvider, proxy.TimeoutConfig{}, false)
 	require.NoError(t, err)
 
 	srv, err := NewServerWithStorageDir(MCPServerFlags{
@@ -59,7 +59,7 @@ func startSidecarProxy(t *testing.T, cfg scsidecar.Config, configPath ...string)
 	srv.SetQuietLogging()
 
 	cfg.NativeHTTPSend = srv.OriginateNative
-	require.NoError(t, backend.EnableSidecars(cfg, srv, srv.replayHistoryStore))
+	require.NoError(t, backend.EnableSidecars(t.Context(), cfg, srv, srv.replayHistoryStore))
 
 	go func() { _ = srv.Run(t.Context()) }()
 	srv.WaitTillStarted()

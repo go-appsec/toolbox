@@ -52,8 +52,10 @@ func (b *BurpBackend) Sidecars() SidecarRegistry { return nil }
 
 // ConnectBurpBackend creates a new Burp HttpBackend with the given MCP URL.
 func ConnectBurpBackend(ctx context.Context, url string, storage store.Provider, opts ...mcp.Option) (*BurpBackend, error) {
-	backend, err := NewBurpBackend(mcp.New(url, opts...), storage)
+	client := mcp.New(ctx, url, opts...)
+	backend, err := NewBurpBackend(client, storage)
 	if err != nil {
+		_ = client.Close() // don't leak the client's health loop
 		return nil, err
 	}
 	if err := backend.Connect(ctx); err != nil {

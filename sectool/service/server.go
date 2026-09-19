@@ -192,12 +192,16 @@ func (s *Server) Run(ctx context.Context) error {
 		s.oastBackend = ib
 	}
 	if s.crawlerBackend == nil {
-		s.crawlerBackend = NewCollyBackend(s.cfg, s.replayHistoryStore, s.httpBackend)
+		s.crawlerBackend = NewCollyBackend(ctx, s.cfg, s.replayHistoryStore, s.httpBackend)
 	}
 
 	s.mcpServer = newMCPServer(s, s.mcpWorkflowMode)
 	s.mcpReady.Store(s.mcpServer)
-	if err := s.mcpServer.Start(s.mcpPort); err != nil {
+	if err := s.mcpServer.Start(ctx, s.mcpPort); err != nil {
+		// backends hold listeners and goroutines; don't leak them on failed startup
+		failCtx, failCancel := context.WithTimeout(context.WithoutCancel(ctx), gracefulShutdownTimeout)
+		_ = s.shutdown(failCtx)
+		failCancel()
 		return fmt.Errorf("failed to start MCP server: %w", err)
 	}
 
@@ -227,13 +231,14 @@ func (s *Server) Run(ctx context.Context) error {
 
 	signal.Stop(sigCh)
 
-	return s.shutdown()
+	// WithoutCancel keeps the drain alive when ctx is already cancelled so
+	// backends still close gracefully
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), gracefulShutdownTimeout)
+	defer cancel()
+	return s.shutdown(shutdownCtx)
 }
 
-func (s *Server) shutdown() error {
-	ctx, cancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
-	defer cancel()
-
+func (s *Server) shutdown(ctx context.Context) error {
 	var wg sync.WaitGroup
 	closeAsync := func(name string, fn func(context.Context) error) {
 		wg.Add(1)
@@ -449,7 +454,7 @@ func (s *Server) setupHttpBackend(ctx context.Context) error {
 	// Case 1: --proxy-port specified, use built-in proxy directly
 	if s.flagProxyPort != 0 {
 		log.Printf("--proxy-port specified, using built-in proxy")
-		return s.startBuiltinProxy()
+		return s.startBuiltinProxy(ctx)
 	}
 
 	// Case 2: --burp flag requires Burp
@@ -473,7 +478,7 @@ func (s *Server) setupHttpBackend(ctx context.Context) error {
 	// Case 4: Try Burp, fall back to built-in proxy
 	if err := s.connectBurpMCP(ctx); err != nil {
 		log.Printf("Burp MCP not available, falling back to built-in proxy")
-		return s.startBuiltinProxy()
+		return s.startBuiltinProxy(ctx)
 	}
 	s.warnSidecarsUnderBurp()
 	return nil
@@ -511,7 +516,7 @@ func (s *Server) connectBurpMCP(ctx context.Context) error {
 }
 
 // startBuiltinProxy starts the native built-in proxy.
-func (s *Server) startBuiltinProxy() error {
+func (s *Server) startBuiltinProxy(ctx context.Context) error {
 	configDir := filepath.Dir(s.configPath)
 	timeouts := proxy.TimeoutConfig{
 		DialTimeout:  time.Duration(s.cfg.Proxy.DialTimeoutSecs) * time.Second,
@@ -519,13 +524,13 @@ func (s *Server) startBuiltinProxy() error {
 		WriteTimeout: time.Duration(s.cfg.Proxy.WriteTimeoutSecs) * time.Second,
 	}
 
-	backend, err := NewNativeProxyBackend(s.proxyPort, configDir, s.cfg.MaxBodyBytes, s.storageProvider, timeouts, s.cfg.Proxy.FullBuffer)
+	backend, err := NewNativeProxyBackend(ctx, s.proxyPort, configDir, s.cfg.MaxBodyBytes, s.storageProvider, timeouts, s.cfg.Proxy.FullBuffer)
 	if err != nil {
 		return fmt.Errorf("start built-in proxy: %w", err)
 	}
 
 	if s.sidecarsEnabled() {
-		if err := backend.EnableSidecars(sidecar.Config{
+		if err := backend.EnableSidecars(ctx, sidecar.Config{
 			Socket:            s.sidecarSocket,
 			HeartbeatInterval: time.Duration(s.cfg.Sidecars.HeartbeatIntervalSecs) * time.Second,
 			HeartbeatTimeout:  time.Duration(s.cfg.Sidecars.HeartbeatTimeoutSecs) * time.Second,
@@ -534,7 +539,7 @@ func (s *Server) startBuiltinProxy() error {
 			DialTimeout:       timeouts.DialTimeout,
 			NativeHTTPSend:    s.OriginateNative,
 		}, s, s.replayHistoryStore); err != nil {
-			_ = backend.Close(context.Background())
+			_ = backend.Close(ctx)
 			return fmt.Errorf("enable sidecars: %w", err)
 		}
 	}

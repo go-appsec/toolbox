@@ -21,7 +21,7 @@ func TestListenerUnix(t *testing.T) {
 
 	socket := filepath.Join(t.TempDir(), "sub", "sidecar.sock")
 	m := testManager(Config{})
-	ln, err := NewListener(Config{Socket: socket}, m)
+	ln, err := NewListener(t.Context(), Config{Socket: socket}, m)
 	require.NoError(t, err)
 	go func() { _ = ln.Serve() }()
 
@@ -54,7 +54,7 @@ func TestListenerCloseUnregistered(t *testing.T) {
 	t.Parallel()
 
 	socket := filepath.Join(t.TempDir(), "sidecar.sock")
-	ln, err := NewListener(Config{Socket: socket}, testManager(Config{}))
+	ln, err := NewListener(t.Context(), Config{Socket: socket}, testManager(Config{}))
 	require.NoError(t, err)
 	go func() { _ = ln.Serve() }()
 
@@ -76,7 +76,7 @@ func TestListenerCloseUnregistered(t *testing.T) {
 
 	// no ctx deadline: Close must still return
 	closed := make(chan error, 1)
-	go func() { closed <- ln.Close(context.Background()) }()
+	go func() { closed <- ln.Close(t.Context()) }()
 	select {
 	case closeErr := <-closed:
 		require.NoError(t, closeErr)

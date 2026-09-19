@@ -129,11 +129,11 @@ func newMCPServer(svc *Server, workflowMode string) *mcpServer {
 	return m
 }
 
-func (m *mcpServer) Start(port int) error {
+func (m *mcpServer) Start(ctx context.Context, port int) error {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 
 	var lc net.ListenConfig
-	listener, err := lc.Listen(context.Background(), "tcp", addr)
+	listener, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}

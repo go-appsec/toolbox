@@ -62,16 +62,16 @@ type ProxyServer struct {
 // maxBodyBytes limits request and response body sizes stored in history.
 // historyStorage is the storage backend for proxy history entries.
 // fullBuffer forces whole-body buffering for response body rules instead of streaming.
-func NewProxyServer(port int, configDir string, maxBodyBytes int, historyStorage store.Storage, timeouts TimeoutConfig, fullBuffer bool) (*ProxyServer, error) {
+func NewProxyServer(ctx context.Context, port int, configDir string, maxBodyBytes int, historyStorage store.Storage, timeouts TimeoutConfig, fullBuffer bool) (*ProxyServer, error) {
 	certManager, err := newCertManager(configDir)
 	if err != nil {
 		return nil, fmt.Errorf("create cert manager: %w", err)
 	}
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	ctx, cancel := context.WithCancel(context.Background())
+	serverCtx, cancel := context.WithCancel(ctx)
 	var lc net.ListenConfig
-	listener, err := lc.Listen(ctx, "tcp", addr)
+	listener, err := lc.Listen(serverCtx, "tcp", addr)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("listen on %s: %w", addr, err)
@@ -115,7 +115,7 @@ func NewProxyServer(port int, configDir string, maxBodyBytes int, historyStorage
 		connectHandler: connectHandler,
 		wsHandler:      wsHandler,
 		registry:       registry,
-		ctx:            ctx,
+		ctx:            serverCtx,
 		cancel:         cancel,
 	}
 

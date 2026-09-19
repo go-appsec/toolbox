@@ -57,7 +57,7 @@ func TestInteractshBackend_EnsureClientForRedirectTarget(t *testing.T) {
 
 	t.Run("closed_backend_returns_error", func(t *testing.T) {
 		b := NewInteractshBackend("", "")
-		require.NoError(t, b.Close(t.Context()))
+		require.NoError(t, b.Close(ctx))
 
 		_, err := b.ensureClientForRedirectTarget(ctx, "")
 		require.Error(t, err)
@@ -107,7 +107,7 @@ func TestNativeProxyIntegrationTest(t *testing.T) {
 		t.Cleanup(func() { _ = upstreamListener.Close() })
 		upstreamAddr := upstreamListener.Addr().String()
 
-		backend, err := NewNativeProxyBackend(0, t.TempDir(), 10*1024*1024,
+		backend, err := NewNativeProxyBackend(t.Context(), 0, t.TempDir(), 10*1024*1024,
 			store.MemProvider, proxy.TimeoutConfig{}, false)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = backend.Close(context.Background()) })

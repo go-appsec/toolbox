@@ -30,7 +30,7 @@ func connectOrSkip(t *testing.T) *BurpClient {
 
 	testutil.AcquireBurpLock(t)
 
-	client := New(config.DefaultBurpMCPURL)
+	client := New(t.Context(), config.DefaultBurpMCPURL)
 	if err := client.Connect(t.Context()); err != nil {
 		t.Skipf("Burp MCP not available at %s: %v", config.DefaultBurpMCPURL, err)
 	}
@@ -273,7 +273,7 @@ func TestBurpCloseAndReconnect(t *testing.T) {
 
 	testutil.AcquireBurpLock(t)
 
-	client := New(config.DefaultBurpMCPURL)
+	client := New(t.Context(), config.DefaultBurpMCPURL)
 	if err := client.Connect(t.Context()); err != nil {
 		t.Skipf("Burp MCP not available: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestBurpCloseAndReconnect(t *testing.T) {
 	assert.False(t, client.IsConnected())
 
 	// Create new client for reconnection (old client is closed)
-	client2 := New(config.DefaultBurpMCPURL)
+	client2 := New(t.Context(), config.DefaultBurpMCPURL)
 	t.Cleanup(func() { _ = client2.Close() })
 
 	err = client2.Connect(t.Context())

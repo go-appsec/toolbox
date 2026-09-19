@@ -286,7 +286,7 @@ func TestBurpBackendConfigEditingDisabled(t *testing.T) {
 func newTestBurpBackend(t *testing.T) (*BurpBackend, *TestMCPServer) {
 	t.Helper()
 	mockServer := NewTestMCPServer(t)
-	client := mcp.New(mockServer.URL(), mcp.WithHealthCheckInterval(0))
+	client := mcp.New(t.Context(), mockServer.URL(), mcp.WithHealthCheckInterval(0))
 	require.NoError(t, client.Connect(t.Context()))
 	backend, err := NewBurpBackend(client, store.MemProvider)
 	require.NoError(t, err)
@@ -541,7 +541,7 @@ func TestBurpClientClosePrompt(t *testing.T) {
 	t.Parallel()
 
 	mockServer := NewTestMCPServer(t)
-	client := mcp.New(mockServer.URL(), mcp.WithHealthCheckInterval(200*time.Millisecond))
+	client := mcp.New(t.Context(), mockServer.URL(), mcp.WithHealthCheckInterval(200*time.Millisecond))
 	require.NoError(t, client.Connect(t.Context()))
 
 	done := make(chan error, 1)

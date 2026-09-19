@@ -1211,7 +1211,7 @@ func chunkedTruncatedUpstream(t *testing.T, trailing string) string {
 func newStreamingProxy(t *testing.T, applier types.RuleApplier) *ProxyServer {
 	t.Helper()
 
-	proxy, err := NewProxyServer(0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
+	proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 	if applier != nil {
 		proxy.SetRuleApplier(applier)

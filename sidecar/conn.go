@@ -41,7 +41,9 @@ func Dial(ctx context.Context, addr string, reg Registration) (*Conn, error) {
 
 	c := &Conn{handler: BaseHandler{}, name: reg.Name, rules: &RuleCache{adapter: reg.Name}}
 	c.peer = wire.NewPeer(raw, connHandler{c})
-	go func() { _ = c.peer.Run(context.Background()) }()
+	// reader outlives the dial ctx; cancellation is Close/Serve's job
+	readerCtx := context.WithoutCancel(ctx)
+	go func() { _ = c.peer.Run(readerCtx) }()
 
 	ctx, cancel := context.WithTimeout(ctx, registerTimeout)
 	defer cancel()
