@@ -521,22 +521,26 @@ func (m *mcpServer) executeSendFlow(ctx context.Context, rawRequest []byte, http
 	// native send measures elapsed time; anchor created/completed around it
 	now := time.Now()
 	m.service.replayHistoryStore.Store(&store.ReplayHistoryEntry{
-		FlowID:          replayID,
-		RawRequest:      rawRequest,
-		ModifiedRequest: result.ModifiedRequest,
-		Method:          method,
-		Host:            replayHost,
-		Path:            replayPath,
-		Scheme:          scheme,
-		Port:            port,
-		Protocol:        httpProtocol,
-		RespHeaders:     result.Headers,
-		RespBody:        result.Body,
-		RespStatus:      respCode,
-		CreatedAt:       now.Add(-result.Duration),
-		CompletedAt:     now,
-		SourceFlowID:    sourceFlowID,
-		InvokedBy:       invokedBy,
+		ReplayHistoryMeta: store.ReplayHistoryMeta{
+			FlowID:       replayID,
+			Method:       method,
+			Host:         replayHost,
+			Path:         replayPath,
+			Scheme:       scheme,
+			Port:         port,
+			Protocol:     httpProtocol,
+			RespStatus:   respCode,
+			CreatedAt:    now.Add(-result.Duration),
+			CompletedAt:  now,
+			SourceFlowID: sourceFlowID,
+			InvokedBy:    invokedBy,
+		},
+		ReplayHistoryPayload: store.ReplayHistoryPayload{
+			RawRequest:      rawRequest,
+			ModifiedRequest: result.ModifiedRequest,
+			RespHeaders:     result.Headers,
+			RespBody:        result.Body,
+		},
 	})
 
 	return replayID, result, nil, nil

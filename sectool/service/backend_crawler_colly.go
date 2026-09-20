@@ -42,11 +42,13 @@ var _ CrawlerBackend = (*CollyBackend)(nil)
 type CollyBackend struct {
 	mu           sync.RWMutex
 	sessions     map[string]*crawlSession // by ID
-	byLabel      map[string]string        // label -> session ID
 	config       config.Config
 	maxBodyBytes int
 	closed       bool
 	ctx          context.Context // backend lifetime; parents all crawl session contexts
+
+	// Persistent results routed through the store.
+	crawlStore *store.CrawlStore
 
 	// For resolving seed flows from proxy or replay history
 	replayHistoryStore *store.ReplayHistoryStore
@@ -55,23 +57,17 @@ type CollyBackend struct {
 
 // crawlSession holds the state for a single crawl session.
 type crawlSession struct {
-	info      CrawlSessionInfo
+	info      store.CrawlSessionInfo
 	collector *colly.Collector
-	startedAt time.Time
 
 	mu           sync.RWMutex
 	completeCond *sync.Cond // over mu; signaled when pendingRecon/pendingSeeds change or state stops
 	pendingRecon int        // in-flight recon goroutines (guarded by mu)
 	pendingSeeds int        // in-flight AddSeeds calls (guarded by mu)
 
-	flowsByID       map[string]*CrawlFlow // by flow ID for lookup
-	flowsOrdered    []*CrawlFlow          // ordered by discovery time
-	forms           []protocol.CrawlForm
-	errors          []protocol.CrawlError
 	urlsSeen        map[string]bool
 	urlsQueued      int
 	requestCount    int // for MaxRequests enforcement
-	lastActivity    time.Time
 	lastReturnedIdx int // for --since last feature
 
 	// seedHeaders from resolved seed flows (auth cookies, tokens, etc.)
@@ -206,33 +202,38 @@ func (b *CollyBackend) fetchSeedRequest(ctx context.Context, flowID string) (raw
 	return "", "", fmt.Errorf("seed flow %q not found in proxy or replay history", flowID)
 }
 
-// NewCollyBackend creates a new Colly-backed CrawlerBackend.
-func NewCollyBackend(ctx context.Context, cfg *config.Config, replayHistoryStore *store.ReplayHistoryStore, httpBackend HttpBackend) *CollyBackend {
+// NewCollyBackend creates a new Colly-backed CrawlerBackend. A named "crawl"
+// store is allocated from the provider and owned by this backend.
+func NewCollyBackend(ctx context.Context, cfg *config.Config, replayHistoryStore *store.ReplayHistoryStore,
+	httpBackend HttpBackend, storage store.Provider) (*CollyBackend, error) {
+	crawlStorage, err := storage("crawl")
+	if err != nil {
+		return nil, fmt.Errorf("crawl storage: %w", err)
+	}
 	return &CollyBackend{
 		sessions:           make(map[string]*crawlSession),
-		byLabel:            make(map[string]string),
 		config:             *cfg,
 		maxBodyBytes:       cfg.MaxBodyBytes,
+		crawlStore:         store.NewCrawlStore(crawlStorage),
 		replayHistoryStore: replayHistoryStore,
 		httpBackend:        httpBackend,
 		ctx:                ctx,
-	}
+	}, nil
 }
 
-func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*CrawlSessionInfo, error) {
-	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
+func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*store.CrawlSessionInfo, error) {
+	b.mu.RLock()
+	closed := b.closed
+	b.mu.RUnlock()
+	if closed {
 		return nil, errors.New("backend is closed")
 	}
 
 	if opts.Label != "" { // Check label uniqueness
-		if existingID, exists := b.byLabel[opts.Label]; exists {
-			b.mu.Unlock()
-			return nil, fmt.Errorf("%w: label %q already in use by session %s", ErrLabelExists, opts.Label, existingID)
+		if existing, ok := b.crawlStore.GetSession(opts.Label); ok {
+			return nil, fmt.Errorf("%w: label %q already in use by session %s", ErrLabelExists, opts.Label, existing.ID)
 		}
 	}
-	b.mu.Unlock()
 
 	// Compute allowed domains from seeds
 	allowedDomains, seedURLs, seedHeaders, err := b.resolveSeeds(ctx, opts.Seeds, opts.ExplicitDomains)
@@ -264,16 +265,13 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 	allowedRegexes := globsToRegexes(opts.AllowedPaths)
 
 	sess := &crawlSession{
-		info: CrawlSessionInfo{
+		info: store.CrawlSessionInfo{
 			ID:        sessionID,
 			Label:     opts.Label,
 			CreatedAt: time.Now(),
 			State:     crawlStateRunning,
 		},
-		startedAt:         time.Now(),
-		flowsByID:         make(map[string]*CrawlFlow),
 		urlsSeen:          make(map[string]bool),
-		lastActivity:      time.Now(),
 		seedHeaders:       seedHeaders,
 		reconnedDomains:   make(map[string]bool),
 		allowedDomains:    allowedDomains,
@@ -358,7 +356,6 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		}
 		sess.requestCount++
 		sess.urlsQueued++
-		sess.lastActivity = time.Now()
 		sess.mu.Unlock()
 
 		// Correlate via headers, not Colly context (shared between sibling requests)
@@ -436,7 +433,7 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		}
 
 		flowID := ids.Generate(ids.DefaultLength)
-		flow := &CrawlFlow{
+		flow := &store.CrawlFlow{
 			ID:             flowID,
 			SessionID:      sess.info.ID,
 			URL:            r.Request.URL.String(),
@@ -456,11 +453,11 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		}
 
 		sess.mu.Lock()
-		sess.flowsByID[flowID] = flow
-		sess.flowsOrdered = append(sess.flowsOrdered, flow)
 		sess.urlsQueued--
-		sess.lastActivity = time.Now()
 		sess.mu.Unlock()
+		if err := b.crawlStore.AppendFlow(sessionID, flow); err != nil {
+			log.Printf("crawler: session %s append flow %s: %v", sessionID, flow.ID, err)
+		}
 	})
 
 	// URL discovery from links
@@ -500,9 +497,9 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		c.OnHTML("form", func(e *colly.HTMLElement) {
 			form := extractForm(e)
 
-			sess.mu.Lock()
-			sess.forms = append(sess.forms, form)
-			sess.mu.Unlock()
+			if err := b.crawlStore.AppendForm(sessionID, form); err != nil {
+				log.Printf("crawler: session %s append form: %v", sessionID, err)
+			}
 
 			// Optionally submit form
 			if submitForms {
@@ -540,10 +537,11 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 		}
 
 		sess.mu.Lock()
-		sess.errors = append(sess.errors, crawlErr)
 		sess.urlsQueued--
-		sess.lastActivity = time.Now()
 		sess.mu.Unlock()
+		if err := b.crawlStore.AppendError(sessionID, crawlErr); err != nil {
+			log.Printf("crawler: session %s append error: %v", sessionID, err)
+		}
 	})
 
 	sess.collector = c
@@ -563,10 +561,19 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 	}
 
 	b.sessions[sessionID] = sess
-	if opts.Label != "" {
-		b.byLabel[opts.Label] = sessionID
-	}
 	b.mu.Unlock()
+
+	if err := b.crawlStore.Create(&store.CrawlSessionData{
+		CrawlSessionInfo: sess.info,
+		StartedAt:        time.Now(),
+		LastActivity:     time.Now(),
+	}); err != nil {
+		b.mu.Lock()
+		delete(b.sessions, sessionID)
+		b.mu.Unlock()
+		cancel()
+		return nil, fmt.Errorf("persist crawl session: %w", err)
+	}
 
 	// Start recon in background if enabled
 	if b.config.Crawler.Recon && len(allowedDomains) > 0 {
@@ -601,6 +608,9 @@ func (b *CollyBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*C
 				continue
 			} else if sess.info.State == crawlStateRunning {
 				sess.info.State = crawlStateCompleted
+				if err := b.crawlStore.UpdateState(sessionID, crawlStateCompleted); err != nil {
+					log.Printf("crawler: session %s update state: %v", sessionID, err)
+				}
 			}
 			sess.mu.Unlock()
 			break
@@ -708,24 +718,39 @@ func (b *CollyBackend) GetStatus(ctx context.Context, sessionID string) (*CrawlS
 		return nil, err
 	}
 
+	id := sess.info.ID
+	stored, ok := b.crawlStore.GetSession(id)
+	if !ok {
+		return nil, fmt.Errorf("%w: session %s", ErrNotFound, id)
+	}
+	flows, _ := b.crawlStore.Flows(id)
+	forms, _ := b.crawlStore.Forms(id)
+	errs, _ := b.crawlStore.Errors(id)
+
 	sess.mu.RLock()
-	defer sess.mu.RUnlock()
+	queued := sess.urlsQueued
+	sess.mu.RUnlock()
 
 	return &CrawlStatus{
-		State:           sess.info.State,
-		URLsQueued:      sess.urlsQueued,
-		URLsVisited:     len(sess.flowsOrdered),
-		URLsErrored:     len(sess.errors),
-		FormsDiscovered: len(sess.forms),
-		Duration:        time.Since(sess.startedAt),
-		LastActivity:    sess.lastActivity,
+		State:           stored.State,
+		URLsQueued:      queued,
+		URLsVisited:     len(flows),
+		URLsErrored:     len(errs),
+		FormsDiscovered: len(forms),
+		Duration:        time.Since(stored.StartedAt),
+		LastActivity:    stored.LastActivity,
 	}, nil
 }
 
-func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts CrawlListOptions) ([]CrawlFlow, int, error) {
+func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts CrawlListOptions) ([]store.CrawlFlow, int, error) {
 	sess, err := b.resolveSession(sessionID)
 	if err != nil {
 		return nil, 0, err
+	}
+
+	flows, ok := b.crawlStore.Flows(sess.info.ID)
+	if !ok {
+		return nil, 0, fmt.Errorf("%w: session %s", ErrNotFound, sess.info.ID)
 	}
 
 	sess.mu.Lock()
@@ -746,7 +771,7 @@ func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts Cra
 			useSinceTime = true
 		} else {
 			// Find flow by ID and start after it
-			for i, flow := range sess.flowsOrdered {
+			for i, flow := range flows {
 				if flow.ID == opts.Since {
 					startIdx = i + 1 // exclusive - start after found flow
 					break
@@ -763,16 +788,16 @@ func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts Cra
 		maxCollect = opts.Offset + opts.Limit
 	}
 	type indexedFlow struct {
-		flow *CrawlFlow
-		idx  int // original index in flowsOrdered
+		flow *store.CrawlFlow
+		idx  int // original index in flows
 	}
 	// no filters/timestamp-since: every flow from startIdx matches, so total is
 	// arithmetic and the page can stop at maxCollect
 	noFilter := !opts.hasFilters() && !useSinceTime
 	var filtered []indexedFlow
 	var total int
-	for i := startIdx; i < len(sess.flowsOrdered); i++ {
-		flow := sess.flowsOrdered[i]
+	for i := startIdx; i < len(flows); i++ {
+		flow := flows[i]
 		// Apply timestamp filter if specified (exclusive - only flows after sinceTime)
 		if useSinceTime && !flow.DiscoveredAt.After(sinceTime) {
 			continue
@@ -785,7 +810,7 @@ func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts Cra
 		if maxCollect == 0 || len(filtered) < maxCollect {
 			filtered = append(filtered, indexedFlow{flow: flow, idx: i})
 		} else if noFilter {
-			total = len(sess.flowsOrdered) - startIdx
+			total = len(flows) - startIdx
 			break
 		}
 	}
@@ -793,7 +818,7 @@ func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts Cra
 	// Apply offset (after filtering)
 	if opts.Offset > 0 {
 		if opts.Offset >= len(filtered) {
-			return []CrawlFlow{}, total, nil
+			return []store.CrawlFlow{}, total, nil
 		}
 		filtered = filtered[opts.Offset:]
 	}
@@ -812,7 +837,7 @@ func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts Cra
 		}
 	}
 
-	result := make([]CrawlFlow, len(filtered))
+	result := make([]store.CrawlFlow, len(filtered))
 	for i, f := range filtered {
 		result[i] = *f.flow
 	}
@@ -825,10 +850,10 @@ func (b *CollyBackend) ListForms(ctx context.Context, sessionID string, limit in
 		return nil, err
 	}
 
-	sess.mu.RLock()
-	defer sess.mu.RUnlock()
-
-	forms := sess.forms
+	forms, ok := b.crawlStore.Forms(sess.info.ID)
+	if !ok {
+		return nil, fmt.Errorf("%w: session %s", ErrNotFound, sess.info.ID)
+	}
 	if limit > 0 && limit < len(forms) {
 		forms = forms[:limit]
 	}
@@ -841,10 +866,10 @@ func (b *CollyBackend) ListErrors(ctx context.Context, sessionID string, limit i
 		return nil, err
 	}
 
-	sess.mu.RLock()
-	defer sess.mu.RUnlock()
-
-	errs := sess.errors
+	errs, ok := b.crawlStore.Errors(sess.info.ID)
+	if !ok {
+		return nil, fmt.Errorf("%w: session %s", ErrNotFound, sess.info.ID)
+	}
 	if limit > 0 && limit < len(errs) {
 		errs = errs[:limit]
 	}
@@ -853,22 +878,12 @@ func (b *CollyBackend) ListErrors(ctx context.Context, sessionID string, limit i
 
 // GetFlow returns the flow for flowID. The returned Request and Response bytes
 // alias the stored flow and must not be mutated.
-func (b *CollyBackend) GetFlow(ctx context.Context, flowID string) (*CrawlFlow, error) {
-	b.mu.RLock()
-	sessions := bulk.MapValuesSlice(b.sessions)
-	b.mu.RUnlock()
-
-	for _, sess := range sessions {
-		sess.mu.RLock()
-		flow, ok := sess.flowsByID[flowID]
-		sess.mu.RUnlock()
-		if ok {
-			flowCopy := *flow
-			return &flowCopy, nil
-		}
+func (b *CollyBackend) GetFlow(ctx context.Context, flowID string) (*store.CrawlFlow, error) {
+	flow, ok := b.crawlStore.GetFlow(flowID)
+	if !ok {
+		return nil, fmt.Errorf("%w: flow %s", ErrNotFound, flowID)
 	}
-
-	return nil, fmt.Errorf("%w: flow %s", ErrNotFound, flowID)
+	return flow, nil
 }
 
 func (b *CollyBackend) StopSession(ctx context.Context, sessionID string) error {
@@ -878,31 +893,30 @@ func (b *CollyBackend) StopSession(ctx context.Context, sessionID string) error 
 	}
 
 	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	if sess.info.State != crawlStateRunning {
-		sess.mu.Unlock()
-		return nil // Already stopped
+		return nil // already stopped or completed
+	}
+	if err := b.crawlStore.UpdateState(sess.info.ID, crawlStateStopped); err != nil {
+		return err
 	}
 	sess.info.State = crawlStateStopped
 	sess.completeCond.Broadcast()
-	sess.mu.Unlock()
 
 	sess.cancel()
 	return nil
 }
 
-func (b *CollyBackend) ListSessions(ctx context.Context, limit int) ([]CrawlSessionInfo, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
+func (b *CollyBackend) ListSessions(ctx context.Context, limit int) ([]store.CrawlSessionInfo, error) {
+	stored := b.crawlStore.Sessions()
 
-	sessions := make([]CrawlSessionInfo, 0, len(b.sessions))
-	for _, sess := range b.sessions {
-		sess.mu.RLock()
-		sessions = append(sessions, sess.info)
-		sess.mu.RUnlock()
+	sessions := make([]store.CrawlSessionInfo, len(stored))
+	for i, sd := range stored {
+		sessions[i] = sd.CrawlSessionInfo
 	}
 
 	// Sort by creation time descending
-	slices.SortFunc(sessions, func(a, b CrawlSessionInfo) int {
+	slices.SortFunc(sessions, func(a, b store.CrawlSessionInfo) int {
 		return b.CreatedAt.Compare(a.CreatedAt)
 	})
 
@@ -912,7 +926,7 @@ func (b *CollyBackend) ListSessions(ctx context.Context, limit int) ([]CrawlSess
 	return sessions, nil
 }
 
-func (b *CollyBackend) Close(_ context.Context) error {
+func (b *CollyBackend) Close(ctx context.Context) error {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -925,7 +939,8 @@ func (b *CollyBackend) Close(_ context.Context) error {
 	for _, sess := range sessions {
 		sess.cancel()
 	}
-	return nil
+
+	return b.crawlStore.Close(ctx)
 }
 
 // resolveSession finds a session by ID or label.
@@ -935,13 +950,17 @@ func (b *CollyBackend) resolveSession(identifier string) (*crawlSession, error) 
 
 	if sess, ok := b.sessions[identifier]; ok {
 		return sess, nil
-	} else if sessID, ok := b.byLabel[identifier]; ok {
-		if sess, ok := b.sessions[sessID]; ok {
-			return sess, nil
-		}
 	}
 
-	return nil, fmt.Errorf("%w: session %s", ErrNotFound, identifier)
+	stored, ok := b.crawlStore.GetSession(identifier)
+	if !ok || stored.ID == "" {
+		return nil, fmt.Errorf("%w: session %s", ErrNotFound, identifier)
+	}
+	sess, ok := b.sessions[stored.ID]
+	if !ok {
+		return nil, fmt.Errorf("%w: session %s (not running in this process)", ErrNotFound, stored.ID)
+	}
+	return sess, nil
 }
 
 // resolveSeeds processes seed options and returns allowed domains, seed URLs, and headers.
@@ -1084,7 +1103,7 @@ func (b *CollyBackend) runReconForSession(ctx context.Context, sess *crawlSessio
 	}
 }
 
-func matchesFlowFilters(flow *CrawlFlow, opts CrawlListOptions) bool {
+func matchesFlowFilters(flow *store.CrawlFlow, opts CrawlListOptions) bool {
 	if opts.Host != "" && !matchesGlob(flow.Host, opts.Host) {
 		return false
 	}

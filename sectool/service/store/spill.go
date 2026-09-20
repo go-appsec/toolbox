@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/go-analyze/bulk"
@@ -298,6 +299,15 @@ func (s *spillStore) Get(key string) ([]byte, bool, error) {
 		// Return defensive copy
 		return slices.Clone(data), true, nil
 	}
+}
+
+func (s *spillStore) Keys(prefix string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return bulk.SliceFilterInPlace(func(k string) bool {
+		return strings.HasPrefix(k, prefix)
+	}, bulk.MapKeysSlice(s.index))
 }
 
 func (s *spillStore) KeySet() []string {

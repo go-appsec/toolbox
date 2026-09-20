@@ -110,10 +110,14 @@ func NewServer(flags MCPServerFlags, hb HttpBackend, ob OastBackend, cb CrawlerB
 // NewServerWithStorageDir creates a new MCP server instance with optional backends, using the
 // caller-owned storageDir for spill stores. The caller is responsible for removing storageDir.
 func NewServerWithStorageDir(flags MCPServerFlags, storageDir string, hb HttpBackend, ob OastBackend, cb CrawlerBackend) (*Server, error) {
-	storageProvider := func(name string) (store.Storage, error) {
+	return newServer(flags, storageDir, func(name string) (store.Storage, error) {
 		return newSpillStore(storageDir, name)
-	}
+	}, hb, ob, cb)
+}
 
+// newServer builds a Server over the given provider. The provider owns no stores;
+// each allocated store is closed by its backend on shutdown.
+func newServer(flags MCPServerFlags, storageDir string, storageProvider store.Provider, hb HttpBackend, ob OastBackend, cb CrawlerBackend) (*Server, error) {
 	// Cross-cutting stores allocated
 	replayStorage, err := storageProvider("replay")
 	if err != nil {
@@ -187,12 +191,19 @@ func (s *Server) Run(ctx context.Context) error {
 		if token == "" {
 			token = os.Getenv("INTERACTSH_TOKEN")
 		}
-		ib := NewInteractshBackend(s.cfg.InteractshServerURL, token)
+		ib, err := NewInteractshBackend(s.cfg.InteractshServerURL, token, s.storageProvider)
+		if err != nil {
+			return fmt.Errorf("failed to create OAST backend: %w", err)
+		}
 		ib.Start(ctx)
 		s.oastBackend = ib
 	}
 	if s.crawlerBackend == nil {
-		s.crawlerBackend = NewCollyBackend(ctx, s.cfg, s.replayHistoryStore, s.httpBackend)
+		cb, err := NewCollyBackend(ctx, s.cfg, s.replayHistoryStore, s.httpBackend, s.storageProvider)
+		if err != nil {
+			return fmt.Errorf("failed to create crawler backend: %w", err)
+		}
+		s.crawlerBackend = cb
 	}
 
 	s.mcpServer = newMCPServer(s, s.mcpWorkflowMode)

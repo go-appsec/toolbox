@@ -116,7 +116,13 @@ func TestMCP_HistoryDelete(t *testing.T) {
 		srv, mcpClient, mockHTTP, _, _ := setupMockMCPServer(t, nil, protocol.WorkflowModeNone)
 
 		pid := mockHTTP.AddProxyEntry("GET / HTTP/1.1\r\nHost: a\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n", "")
-		srv.replayHistoryStore.Store(&store.ReplayHistoryEntry{FlowID: "r1", SourceFlowID: pid, CreatedAt: time.Now()})
+		srv.replayHistoryStore.Store(&store.ReplayHistoryEntry{
+			ReplayHistoryMeta: store.ReplayHistoryMeta{
+				FlowID:       "r1",
+				SourceFlowID: pid,
+				CreatedAt:    time.Now(),
+			},
+		})
 
 		resp := CallMCPToolJSONOK[protocol.HistoryDeleteResponse](t, mcpClient, "_internal_history_delete", map[string]interface{}{
 			"flow_ids": []string{pid},
@@ -146,8 +152,18 @@ func TestMCP_HistoryDelete(t *testing.T) {
 		pid1 := mockHTTP.AddProxyEntry("GET / HTTP/1.1\r\nHost: a\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n", "")
 		pid2 := mockHTTP.AddProxyEntry("GET / HTTP/1.1\r\nHost: b\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n", "")
 
-		srv.replayHistoryStore.Store(&store.ReplayHistoryEntry{FlowID: "r1", CreatedAt: time.Now()})
-		srv.replayHistoryStore.Store(&store.ReplayHistoryEntry{FlowID: "r2", CreatedAt: time.Now()})
+		srv.replayHistoryStore.Store(&store.ReplayHistoryEntry{
+			ReplayHistoryMeta: store.ReplayHistoryMeta{
+				FlowID:    "r1",
+				CreatedAt: time.Now(),
+			},
+		})
+		srv.replayHistoryStore.Store(&store.ReplayHistoryEntry{
+			ReplayHistoryMeta: store.ReplayHistoryMeta{
+				FlowID:    "r2",
+				CreatedAt: time.Now(),
+			},
+		})
 
 		resp := CallMCPToolJSONOK[protocol.HistoryDeleteResponse](t, mcpClient, "_internal_history_delete", map[string]interface{}{
 			"flow_ids": []string{pid1, "r1", "missing"},

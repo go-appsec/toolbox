@@ -16,6 +16,7 @@ import (
 	"github.com/go-appsec/interactsh-lite/oobclient"
 
 	"github.com/go-appsec/toolbox/sectool/service/ids"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
 const (
@@ -41,11 +42,13 @@ type InteractshBackend struct {
 	authToken         string       // optional auth token for protected servers
 	redirectSupported bool         // whether the server supports redirect responses
 	httpClient        *http.Client // shared HTTP client for all oobclient instances and probes
-	mu                sync.RWMutex
-	sessions          map[string]*oastSession // by domain (canonical key)
-	byID              map[string]string       // session ID -> domain
-	byLabel           map[string]string       // label -> domain (only non-empty labels)
-	closed            bool
+
+	// oastStore persists session metadata and events.
+	oastStore *store.OastStore
+
+	mu       sync.RWMutex
+	sessions map[string]*oastSession // by domain (canonical key)
+	closed   bool
 
 	// Clients keyed by redirect target ("" = default/no-redirect), lazily created.
 	clients map[string]*oobclient.Client
@@ -57,19 +60,20 @@ var _ OastBackend = (*InteractshBackend)(nil)
 
 // oastSession holds the state for a single OAST session.
 type oastSession struct {
-	info OastSessionInfo
+	info store.OastSessionInfo
 
-	mu           sync.Mutex
-	notify       chan struct{} // closed when new events arrive, then replaced
-	events       []OastEventInfo
-	droppedCount int
-	lastPollIdx  int // Index after last poll (for "last" filter)
-
-	stopped bool
+	mu          sync.Mutex
+	notify      chan struct{} // closed when new events arrive, then replaced
+	lastPollIdx int           // index after last poll (for "last" filter), not persisted
+	stopped     bool
 }
 
-// NewInteractshBackend creates a new Interactsh-backed OastBackend.
-func NewInteractshBackend(serverURL, authToken string) *InteractshBackend {
+// NewInteractshBackend creates a new Interactsh-backed OastBackend over the given storage provider.
+func NewInteractshBackend(serverURL, authToken string, provider store.Provider) (*InteractshBackend, error) {
+	oastStorage, err := provider("oast")
+	if err != nil {
+		return nil, fmt.Errorf("oast storage: %w", err)
+	}
 	return &InteractshBackend{
 		serverURL: serverURL,
 		authToken: authToken,
@@ -79,11 +83,10 @@ func NewInteractshBackend(serverURL, authToken string) *InteractshBackend {
 			},
 			Timeout: 10 * time.Second,
 		},
-		sessions: make(map[string]*oastSession),
-		byID:     make(map[string]string),
-		byLabel:  make(map[string]string),
-		clients:  make(map[string]*oobclient.Client),
-	}
+		oastStore: store.NewOastStore(oastStorage),
+		sessions:  make(map[string]*oastSession),
+		clients:   make(map[string]*oobclient.Client),
+	}, nil
 }
 
 // Start probes the server for capabilities and starts background maintenance.
@@ -227,14 +230,16 @@ func (b *InteractshBackend) makeInteractionHandler(correlationID string) func(*o
 		}
 		sessionID := leaf[len(correlationID):]
 
-		b.mu.RLock()
-		domain, ok := b.byID[sessionID]
-		if !ok {
-			b.mu.RUnlock()
+		rec, found := b.oastStore.Resolve(sessionID)
+		if !found {
 			return
 		}
-		sess := b.sessions[domain]
+		b.mu.RLock()
+		sess := b.sessions[rec.Domain]
 		b.mu.RUnlock()
+		if sess == nil {
+			return
+		}
 
 		sess.mu.Lock()
 		defer sess.mu.Unlock()
@@ -271,31 +276,43 @@ func (b *InteractshBackend) makeInteractionHandler(correlationID string) func(*o
 			}
 		}
 
-		if len(sess.events) >= MaxOastEventsPerSession {
-			sess.events = sess.events[1:]
-			sess.droppedCount++
-			if sess.lastPollIdx > 0 {
-				sess.lastPollIdx--
-			}
-		}
-		event := OastEventInfo{
+		b.persistEventLocked(sess, store.OastEvent{
 			ID:        ids.Generate(ids.DefaultLength),
 			Time:      interaction.Timestamp,
 			Type:      eventType,
 			SourceIP:  interaction.RemoteAddress,
 			Subdomain: interaction.FullId,
 			Details:   details,
-		}
-		sess.events = append(sess.events, event)
+		})
 
-		close(sess.notify)
-		sess.notify = make(chan struct{})
-
-		log.Printf("oast: session %s received %s event from %s", sess.info.ID, event.Type, event.SourceIP)
+		log.Printf("oast: session %s received %s event from %s", sess.info.ID, eventType, interaction.RemoteAddress)
 	}
 }
 
-func (b *InteractshBackend) CreateSession(ctx context.Context, label, redirectTarget string) (*OastSessionInfo, error) {
+// persistEventLocked appends an event to a stored session record, trims beyond
+// the cap, adjusts the ephemeral poll cursor, and wakes any waiters.
+// Caller must hold sess.mu.
+func (b *InteractshBackend) persistEventLocked(sess *oastSession, ev store.OastEvent) {
+	if sess.stopped {
+		return
+	}
+	dropped, err := b.oastStore.AppendEvent(sess.info.ID, ev, MaxOastEventsPerSession)
+	if errors.Is(err, store.ErrOastNotFound) {
+		sess.stopped = true // session deleted concurrently; stop accepting events
+		return
+	}
+	if err != nil {
+		log.Printf("oast: session %s append event failed: %v", sess.info.ID, err)
+		return
+	}
+	if dropped && sess.lastPollIdx > 0 {
+		sess.lastPollIdx--
+	}
+	close(sess.notify)
+	sess.notify = make(chan struct{})
+}
+
+func (b *InteractshBackend) CreateSession(ctx context.Context, label, redirectTarget string) (*store.OastSessionInfo, error) {
 	if redirectTarget != "" && !b.redirectSupported {
 		return nil, errors.New("OAST server does not support redirect responses")
 	}
@@ -305,16 +322,18 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label, redirectTa
 		b.mu.Unlock()
 		return nil, errors.New("backend is closed")
 	}
-	// Check label uniqueness before potentially slow client init
+	var existingID string
 	if label != "" {
-		if existingDomain, exists := b.byLabel[label]; exists {
-			existingSess := b.sessions[existingDomain]
-			b.mu.Unlock()
-			return nil, fmt.Errorf("%w: %q already in use by session %s; delete it first",
-				ErrLabelExists, label, existingSess.info.ID)
+		if rec, ok := b.oastStore.SessionByLabel(label); ok {
+			existingID = rec.ID
 		}
 	}
 	b.mu.Unlock()
+
+	if existingID != "" {
+		return nil, fmt.Errorf("%w: %q already in use by session %s; delete it first",
+			ErrLabelExists, label, existingID)
+	}
 
 	c, err := b.ensureClientForRedirectTarget(ctx, redirectTarget)
 	if err != nil {
@@ -322,46 +341,46 @@ func (b *InteractshBackend) CreateSession(ctx context.Context, label, redirectTa
 	}
 
 	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if b.closed {
-		b.mu.Unlock()
 		return nil, errors.New("backend is closed")
 	}
-
 	// Re-check label uniqueness in case of race
 	if label != "" {
-		if existingDomain, exists := b.byLabel[label]; exists {
-			existingSess := b.sessions[existingDomain]
-			b.mu.Unlock()
+		if rec, ok := b.oastStore.SessionByLabel(label); ok {
 			return nil, fmt.Errorf("%w: %q already in use by session %s; delete it first",
-				ErrLabelExists, label, existingSess.info.ID)
+				ErrLabelExists, label, rec.ID)
 		}
 	}
 
 	sessionID := strings.ToLower(ids.Generate(ids.EntityLength))
-	for b.byID[sessionID] != "" {
+	for {
+		if _, found := b.oastStore.Get(sessionID); !found {
+			break
+		}
 		sessionID = strings.ToLower(ids.Generate(ids.EntityLength))
 	}
 	domain := c.CorrelationID() + sessionID + "." + c.ServerHost()
 
-	sess := &oastSession{
-		info: OastSessionInfo{
-			ID:             sessionID,
-			Domain:         domain,
-			Label:          label,
-			RedirectTarget: redirectTarget,
-			CreatedAt:      time.Now(),
-		},
-		notify: make(chan struct{}),
+	info := store.OastSessionInfo{
+		ID:             sessionID,
+		Domain:         domain,
+		Label:          label,
+		RedirectTarget: redirectTarget,
+		CreatedAt:      time.Now(),
 	}
+	sess := &oastSession{info: info, notify: make(chan struct{})}
 
+	if err := b.oastStore.CreateSession(info); err != nil {
+		if errors.Is(err, store.ErrOastLabelExists) {
+			return nil, fmt.Errorf("%w: %q already in use; delete it first", ErrLabelExists, label)
+		}
+		return nil, fmt.Errorf("persist oast session: %w", err)
+	}
 	b.sessions[domain] = sess
-	b.byID[sessionID] = domain
-	if label != "" {
-		b.byLabel[label] = domain
-	}
-	b.mu.Unlock()
 
-	return &sess.info, nil
+	return &info, nil
 }
 
 func (b *InteractshBackend) PollSession(ctx context.Context, idOrDomain string, since string, eventType string, wait time.Duration, limit int) (*OastPollResultInfo, error) {
@@ -379,15 +398,23 @@ func (b *InteractshBackend) PollSession(ctx context.Context, idOrDomain string, 
 			return nil, errors.New("session has been deleted")
 		}
 
-		events := sess.filterEvents(since, eventType)
+		rec, ok := b.oastStore.Get(sess.info.ID)
+		if !ok {
+			sess.mu.Unlock()
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, sess.info.ID)
+		}
+
+		events := filterEvents(rec.Events, since, sess.lastPollIdx, eventType)
 		if len(events) > 0 || wait == 0 || time.Now().After(deadline) || ctx.Err() != nil {
 			if limit > 0 && len(events) > limit {
 				events = events[:limit]
 			}
-			sess.updateLastPollIdx(events)
+			if len(events) > 0 {
+				sess.lastPollIdx = advanceLastPollIdx(events, rec.Events)
+			}
 			result := &OastPollResultInfo{
 				Events:       events,
-				DroppedCount: sess.droppedCount,
+				DroppedCount: rec.DroppedCount,
 			}
 			sess.mu.Unlock()
 			return result, nil
@@ -405,40 +432,39 @@ func (b *InteractshBackend) PollSession(ctx context.Context, idOrDomain string, 
 }
 
 // filterEvents returns events based on the since and eventType filters.
-// Caller must hold s.mu until result slice is discarded.
-func (s *oastSession) filterEvents(since, eventType string) []OastEventInfo {
-	var events []OastEventInfo
+func filterEvents(full []store.OastEvent, since string, lastPollIdx int, eventType string) []store.OastEvent {
+	var events []store.OastEvent
 	switch since {
 	case "":
-		events = s.events
+		events = full
 	case sinceLast:
-		if s.lastPollIdx >= len(s.events) {
+		if lastPollIdx >= len(full) {
 			events = nil
 		} else {
-			events = s.events[s.lastPollIdx:]
+			events = full[lastPollIdx:]
 		}
 	default:
 		// Try parsing as timestamp first
 		if sinceTime, ok := parseSinceTimestamp(since); ok {
-			events = bulk.SliceFilter(func(e OastEventInfo) bool {
+			events = bulk.SliceFilter(func(e store.OastEvent) bool {
 				return e.Time.After(sinceTime)
-			}, s.events)
+			}, full)
 		} else {
 			// Find event by ID and return everything after it
 			var found bool
-			for i, e := range s.events {
+			for i, e := range full {
 				if e.ID == since {
-					if i+1 >= len(s.events) {
+					if i+1 >= len(full) {
 						events = nil
 					} else {
-						events = s.events[i+1:]
+						events = full[i+1:]
 					}
 					found = true
 					break
 				}
 			}
 			if !found {
-				events = s.events
+				events = full
 			}
 		}
 	}
@@ -447,9 +473,20 @@ func (s *oastSession) filterEvents(since, eventType string) []OastEventInfo {
 		return events
 	}
 
-	return bulk.SliceFilter(func(e OastEventInfo) bool {
+	return bulk.SliceFilter(func(e store.OastEvent) bool {
 		return matchesEventType(e.Type, eventType)
 	}, events)
+}
+
+// advanceLastPollIdx returns the new cursor after returning returnedEvents.
+func advanceLastPollIdx(returned []store.OastEvent, full []store.OastEvent) int {
+	lastID := returned[len(returned)-1].ID
+	for i, e := range full {
+		if e.ID == lastID {
+			return i + 1
+		}
+	}
+	return len(full)
 }
 
 // matchesEventType reports whether an event type matches the filter.
@@ -461,86 +498,48 @@ func matchesEventType(eventType, filter string) bool {
 	return (eventType == "http" || eventType == "https") && (filter == "http" || filter == "https")
 }
 
-// updateLastPollIdx updates lastPollIdx based on returned events (for --since last tracking).
-// Caller must hold s.mu.
-func (s *oastSession) updateLastPollIdx(returnedEvents []OastEventInfo) {
-	if len(returnedEvents) == 0 {
-		return
+func (b *InteractshBackend) GetEvent(_ context.Context, eventID string) (*store.OastEvent, error) {
+	ev, ok := b.oastStore.FindEvent(eventID)
+	if !ok {
+		return nil, fmt.Errorf("%w: event %s", ErrNotFound, eventID)
 	}
-	// Find the index of the last returned event in s.events
-	lastEventID := returnedEvents[len(returnedEvents)-1].ID
-	for i, e := range s.events {
-		if e.ID == lastEventID {
-			s.lastPollIdx = i + 1
-			return
-		}
-	}
-	// Fallback: if not found, use len(events)
-	s.lastPollIdx = len(s.events)
+	return ev, nil
 }
 
-func (b *InteractshBackend) GetEvent(_ context.Context, eventID string) (*OastEventInfo, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	for _, sess := range b.sessions {
-		sess.mu.Lock()
-		if sess.stopped {
-			sess.mu.Unlock()
-			continue
-		}
-		for _, e := range sess.events {
-			if e.ID == eventID {
-				eventCopy := e
-				sess.mu.Unlock()
-				return &eventCopy, nil
-			}
-		}
-		sess.mu.Unlock()
-	}
-
-	return nil, fmt.Errorf("%w: event %s", ErrNotFound, eventID)
-}
-
-func (b *InteractshBackend) ListSessions(ctx context.Context) ([]OastSessionInfo, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	sessions := make([]OastSessionInfo, 0, len(b.sessions))
-	for _, sess := range b.sessions {
-		sessions = append(sessions, sess.info)
+func (b *InteractshBackend) ListSessions(ctx context.Context) ([]store.OastSessionInfo, error) {
+	recs := b.oastStore.List()
+	sessions := make([]store.OastSessionInfo, 0, len(recs))
+	for _, rec := range recs {
+		sessions = append(sessions, rec.OastSessionInfo)
 	}
 	return sessions, nil
 }
 
 func (b *InteractshBackend) DeleteSession(ctx context.Context, idOrDomain string) error {
-	sess, err := b.resolveSession(idOrDomain)
-	if err != nil {
-		return err
+	rec, ok := b.oastStore.Resolve(idOrDomain)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrNotFound, idOrDomain)
 	}
 
-	return b.deleteSession(sess)
+	return b.deleteSession(rec.ID, rec.Domain)
 }
 
-func (b *InteractshBackend) deleteSession(sess *oastSession) error {
-	sess.mu.Lock()
-	if sess.stopped {
-		sess.mu.Unlock()
-		return nil
-	}
-	sess.stopped = true
-	close(sess.notify) // wake any waiters
-	sess.mu.Unlock()
-
+func (b *InteractshBackend) deleteSession(id, domain string) error {
 	b.mu.Lock()
-	delete(b.sessions, sess.info.Domain)
-	delete(b.byID, sess.info.ID)
-	if sess.info.Label != "" {
-		delete(b.byLabel, sess.info.Label)
-	}
+	sess := b.sessions[domain]
+	delete(b.sessions, domain)
 	b.mu.Unlock()
 
-	return nil
+	if sess != nil {
+		sess.mu.Lock()
+		if !sess.stopped {
+			sess.stopped = true
+			close(sess.notify) // wake any waiters
+		}
+		sess.mu.Unlock()
+	}
+
+	return b.oastStore.Delete(id)
 }
 
 func (b *InteractshBackend) Close(ctx context.Context) error {
@@ -585,8 +584,6 @@ func (b *InteractshBackend) Close(ctx context.Context) error {
 	}
 
 	b.sessions = nil
-	b.byID = nil
-	b.byLabel = nil
 	b.clients = nil
 	b.mu.Unlock()
 
@@ -599,7 +596,7 @@ func (b *InteractshBackend) Close(ctx context.Context) error {
 		log.Printf("oast: timeout closing clients")
 	}
 
-	return nil
+	return b.oastStore.Close()
 }
 
 // cleanupIdleClients removes clients with no active sessions from the map.
@@ -623,29 +620,21 @@ func (b *InteractshBackend) cleanupIdleClients() []*oobclient.Client {
 	return stale
 }
 
-// resolveSession finds a session by ID, label, or domain.
+// resolveSession finds the live runtime session for an ID, label, or domain.
+// Persisted sessions without a live handle report not running; live collection
+// cannot resume for them.
 func (b *InteractshBackend) resolveSession(identifier string) (*oastSession, error) {
+	rec, ok := b.oastStore.Resolve(identifier)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, identifier)
+	}
+
 	b.mu.RLock()
-	defer b.mu.RUnlock()
+	sess := b.sessions[rec.Domain]
+	b.mu.RUnlock()
 
-	// Try as ID first
-	if domain, ok := b.byID[identifier]; ok {
-		if sess, ok := b.sessions[domain]; ok {
-			return sess, nil
-		}
+	if sess == nil {
+		return nil, fmt.Errorf("%w: session %s (not running in this process)", ErrNotFound, rec.ID)
 	}
-
-	// Try as label
-	if domain, ok := b.byLabel[identifier]; ok {
-		if sess, ok := b.sessions[domain]; ok {
-			return sess, nil
-		}
-	}
-
-	// Try as domain directly
-	if sess, ok := b.sessions[identifier]; ok {
-		return sess, nil
-	}
-
-	return nil, fmt.Errorf("%w: %s", ErrNotFound, identifier)
+	return sess, nil
 }

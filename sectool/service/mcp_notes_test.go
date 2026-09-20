@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
 // setupNotesEnabledServer creates an MCP server with notes enabled for testing.
@@ -213,7 +214,7 @@ func TestMCP_NotesInCrawlFlowListing(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, mockCrawler.AddFlow(sess.ID, CrawlFlow{
+	require.NoError(t, mockCrawler.AddFlow(sess.ID, store.CrawlFlow{
 		ID:             "crawl-f1",
 		SessionID:      sess.ID,
 		Method:         "GET",

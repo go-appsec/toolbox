@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
 func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
@@ -26,7 +27,7 @@ func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
 	sid := createResp.SessionID
 
 	// Deterministic fixture: 5 flows (/, /page/0..2, /missing), one form, one error.
-	require.NoError(t, mockCrawler.AddFlow(sid, CrawlFlow{
+	require.NoError(t, mockCrawler.AddFlow(sid, store.CrawlFlow{
 		ID: "flow-1", SessionID: sid, URL: "https://example.com/", Host: "example.com", Path: "/",
 		Method: "GET", StatusCode: 200, ResponseLength: 2,
 		Request:  []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"),
@@ -34,7 +35,7 @@ func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
 		Duration: 10 * time.Millisecond, DiscoveredAt: time.Now(),
 	}))
 	for i := range 3 {
-		require.NoError(t, mockCrawler.AddFlow(sid, CrawlFlow{
+		require.NoError(t, mockCrawler.AddFlow(sid, store.CrawlFlow{
 			ID: fmt.Sprintf("flow-page-%d", i), SessionID: sid,
 			URL: fmt.Sprintf("https://example.com/page/%d", i), Host: "example.com",
 			Path: fmt.Sprintf("/page/%d", i), Method: "GET", StatusCode: 200,
@@ -42,7 +43,7 @@ func TestMCP_CrawlLifecycleWithMock(t *testing.T) {
 			Response: []byte("HTTP/1.1 200 OK\r\n\r\nok"),
 		}))
 	}
-	require.NoError(t, mockCrawler.AddFlow(sid, CrawlFlow{
+	require.NoError(t, mockCrawler.AddFlow(sid, store.CrawlFlow{
 		ID: "flow-404", SessionID: sid, URL: "https://example.com/missing", Host: "example.com",
 		Path: "/missing", Method: "GET", StatusCode: 404,
 		Request:  []byte("GET /missing HTTP/1.1\r\nHost: example.com\r\n\r\n"),
@@ -385,7 +386,7 @@ func TestMCP_CrawlPollSearch(t *testing.T) {
 	})
 
 	// Add a flow with searchable content
-	require.NoError(t, mockCrawler.AddFlow(createResp.SessionID, CrawlFlow{
+	require.NoError(t, mockCrawler.AddFlow(createResp.SessionID, store.CrawlFlow{
 		ID:         "search-flow",
 		SessionID:  createResp.SessionID,
 		URL:        "https://example.com/api",

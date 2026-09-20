@@ -32,7 +32,7 @@ const (
 	caKeyFile  = "ca-key.pem"
 )
 
-// certCacheEntry is the serializable form of a tls.Certificate for SpillStore.
+// certCacheEntry is the serializable form of a tls.Certificate for Storage.
 type certCacheEntry struct {
 	CertChain  [][]byte `msgpack:"c"`
 	PrivateKey []byte   `msgpack:"k"` // PKCS8 DER
@@ -49,22 +49,15 @@ type CertManager struct {
 	cache store.Storage
 }
 
-// newCertManager loads or generates a CA certificate.
-// configDir is the directory for CA files (typically ~/.sectool).
-func newCertManager(configDir string) (*CertManager, error) {
-	cache, err := store.NewSpillStore(store.DefaultSpillStoreConfig())
-	if err != nil {
-		return nil, fmt.Errorf("create cert cache: %w", err)
-	}
+// newCertManager loads or generates a CA certificate and caches leaves in the
+// provided store. configDir is the directory for CA files (typically ~/.sectool).
+func newCertManager(configDir string, cache store.Storage) (*CertManager, error) {
 	m := &CertManager{
 		cache: cache,
 	}
-
 	if err := m.loadOrGenerateCA(configDir); err != nil {
-		_ = cache.Close()
 		return nil, err
 	}
-
 	return m, nil
 }
 
@@ -145,7 +138,7 @@ func (m *CertManager) Close() error {
 	return m.cache.Close()
 }
 
-// getCachedCert retrieves a certificate from the SpillStore cache by cache key.
+// getCachedCert retrieves a certificate from the Storage cache by cache key.
 func (m *CertManager) getCachedCert(key string) (*tls.Certificate, error) {
 	data, found, err := m.cache.Get(key)
 	if err != nil {
@@ -156,7 +149,7 @@ func (m *CertManager) getCachedCert(key string) (*tls.Certificate, error) {
 	return deserializeCert(data)
 }
 
-// storeCert serializes and stores a certificate in the SpillStore cache by cache key.
+// storeCert serializes and stores a certificate in the Storage cache by cache key.
 func (m *CertManager) storeCert(key string, cert *tls.Certificate) error {
 	data, err := serializeCert(cert)
 	if err != nil {

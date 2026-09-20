@@ -21,7 +21,8 @@ func TestInteractshBackend_EnsureClientForRedirectTarget(t *testing.T) {
 	}
 	t.Parallel()
 
-	backend := NewInteractshBackend("", "")
+	backend, err := NewInteractshBackend("", "", store.MemProvider)
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
@@ -56,10 +57,11 @@ func TestInteractshBackend_EnsureClientForRedirectTarget(t *testing.T) {
 	})
 
 	t.Run("closed_backend_returns_error", func(t *testing.T) {
-		b := NewInteractshBackend("", "")
+		b, err := NewInteractshBackend("", "", store.MemProvider)
+		require.NoError(t, err)
 		require.NoError(t, b.Close(ctx))
 
-		_, err := b.ensureClientForRedirectTarget(ctx, "")
+		_, err = b.ensureClientForRedirectTarget(ctx, "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "closed")
 	})
@@ -72,7 +74,8 @@ func TestInteractshBackend_ProbeRedirectSupport(t *testing.T) {
 	t.Parallel()
 
 	t.Run("oast_pro_unsupported", func(t *testing.T) {
-		backend := NewInteractshBackend("https://oast.pro", "")
+		backend, err := NewInteractshBackend("https://oast.pro", "", store.MemProvider)
+		require.NoError(t, err)
 		t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -83,7 +86,8 @@ func TestInteractshBackend_ProbeRedirectSupport(t *testing.T) {
 	})
 
 	t.Run("oastsrv_supported", func(t *testing.T) {
-		backend := NewInteractshBackend("https://alpha.oastsrv.net", "")
+		backend, err := NewInteractshBackend("https://alpha.oastsrv.net", "", store.MemProvider)
+		require.NoError(t, err)
 		t.Cleanup(func() { _ = backend.Close(context.Background()) })
 
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

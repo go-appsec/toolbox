@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
 func TestNewCertManager(t *testing.T) {
@@ -29,7 +30,7 @@ func TestNewCertManager(t *testing.T) {
 
 		tempDir := t.TempDir()
 
-		cm, err := newCertManager(tempDir)
+		cm, err := newCertManager(tempDir, store.NewMemStorage())
 		require.NoError(t, err)
 		require.NotNil(t, cm)
 		t.Cleanup(func() { _ = cm.Close() })
@@ -52,12 +53,12 @@ func TestNewCertManager(t *testing.T) {
 
 		tempDir := t.TempDir()
 
-		cm1, err := newCertManager(tempDir)
+		cm1, err := newCertManager(tempDir, store.NewMemStorage())
 		require.NoError(t, err)
 		caCert1 := cm1.CACert()
 		require.NoError(t, cm1.Close())
 
-		cm2, err := newCertManager(tempDir)
+		cm2, err := newCertManager(tempDir, store.NewMemStorage())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = cm2.Close() })
 		caCert2 := cm2.CACert()
@@ -73,7 +74,7 @@ func TestNewCertManager(t *testing.T) {
 		err := os.WriteFile(filepath.Join(tempDir, "ca.pem"), []byte("dummy"), 0644)
 		require.NoError(t, err)
 
-		_, err = newCertManager(tempDir)
+		_, err = newCertManager(tempDir, store.NewMemStorage())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key is missing")
 	})
@@ -86,7 +87,7 @@ func TestNewCertManager(t *testing.T) {
 		err := os.WriteFile(filepath.Join(tempDir, "ca-key.pem"), []byte("dummy"), 0600)
 		require.NoError(t, err)
 
-		_, err = newCertManager(tempDir)
+		_, err = newCertManager(tempDir, store.NewMemStorage())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "certificate is missing")
 	})
@@ -102,7 +103,7 @@ func TestNewCertManager(t *testing.T) {
 		err = os.WriteFile(filepath.Join(tempDir, "ca-key.pem"), []byte("dummy key"), 0600)
 		require.NoError(t, err)
 
-		_, err = newCertManager(tempDir)
+		_, err = newCertManager(tempDir, store.NewMemStorage())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "parse CA certificate PEM")
 	})
@@ -113,7 +114,7 @@ func TestNewCertManager(t *testing.T) {
 		tempDir := t.TempDir()
 
 		// First generate valid CA to get a valid cert
-		cm, err := newCertManager(tempDir)
+		cm, err := newCertManager(tempDir, store.NewMemStorage())
 		require.NoError(t, err)
 		require.NoError(t, cm.Close())
 
@@ -121,7 +122,7 @@ func TestNewCertManager(t *testing.T) {
 		err = os.WriteFile(filepath.Join(tempDir, "ca-key.pem"), []byte("not a valid pem"), 0600)
 		require.NoError(t, err)
 
-		_, err = newCertManager(tempDir)
+		_, err = newCertManager(tempDir, store.NewMemStorage())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "parse CA key PEM")
 	})
@@ -140,7 +141,7 @@ func TestNewCertManager(t *testing.T) {
 		err = os.WriteFile(filepath.Join(tempDir, "ca-key.pem"), []byte(invalidKeyPEM), 0600)
 		require.NoError(t, err)
 
-		_, err = newCertManager(tempDir)
+		_, err = newCertManager(tempDir, store.NewMemStorage())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "parse CA certificate")
 	})
@@ -151,7 +152,7 @@ func TestNewCertManager(t *testing.T) {
 		tempDir := t.TempDir()
 
 		// Generate valid CA first
-		cm, err := newCertManager(tempDir)
+		cm, err := newCertManager(tempDir, store.NewMemStorage())
 		require.NoError(t, err)
 
 		// Generate a leaf certificate (not CA)
@@ -164,7 +165,7 @@ func TestNewCertManager(t *testing.T) {
 		err = os.WriteFile(filepath.Join(tempDir, "ca.pem"), leafCertPEM, 0644)
 		require.NoError(t, err)
 
-		_, err = newCertManager(tempDir)
+		_, err = newCertManager(tempDir, store.NewMemStorage())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not a CA certificate")
 	})
@@ -175,7 +176,7 @@ func TestNewCertManager(t *testing.T) {
 		tempDir := t.TempDir()
 
 		// Generate valid CA first to get a valid key
-		cm, err := newCertManager(tempDir)
+		cm, err := newCertManager(tempDir, store.NewMemStorage())
 		require.NoError(t, err)
 
 		// Create an expired certificate
@@ -197,7 +198,7 @@ func TestNewCertManager(t *testing.T) {
 		err = os.WriteFile(filepath.Join(tempDir, "ca.pem"), expiredCertPEM, 0644)
 		require.NoError(t, err)
 
-		_, err = newCertManager(tempDir)
+		_, err = newCertManager(tempDir, store.NewMemStorage())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "expired")
 	})
@@ -208,7 +209,7 @@ func TestNewCertManager(t *testing.T) {
 		tempDir := t.TempDir()
 
 		// Generate valid CA first to get a valid key
-		cm, err := newCertManager(tempDir)
+		cm, err := newCertManager(tempDir, store.NewMemStorage())
 		require.NoError(t, err)
 
 		// Create a CA cert missing KeyUsageCertSign
@@ -230,7 +231,7 @@ func TestNewCertManager(t *testing.T) {
 		err = os.WriteFile(filepath.Join(tempDir, "ca.pem"), badCertPEM, 0644)
 		require.NoError(t, err)
 
-		_, err = newCertManager(tempDir)
+		_, err = newCertManager(tempDir, store.NewMemStorage())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "lacks KeyUsageCertSign")
 	})
@@ -240,7 +241,7 @@ func TestGetCertificate(t *testing.T) {
 	t.Parallel()
 
 	tempDir := t.TempDir()
-	cm, err := newCertManager(tempDir)
+	cm, err := newCertManager(tempDir, store.NewMemStorage())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cm.Close() })
 
@@ -499,7 +500,7 @@ func TestGetCertificate(t *testing.T) {
 func TestGetCertificateSpec(t *testing.T) {
 	t.Parallel()
 
-	cm, err := newCertManager(t.TempDir())
+	cm, err := newCertManager(t.TempDir(), store.NewMemStorage())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cm.Close() })
 
@@ -567,6 +568,35 @@ func TestGetCertificateSpec(t *testing.T) {
 	})
 }
 
+// TestGetCertificateUsesInjectedStorage verifies generated leaves are persisted
+// through the provided Storage and served without regeneration.
+func TestGetCertificateUsesInjectedStorage(t *testing.T) {
+	t.Parallel()
+
+	cache := store.NewMemStorage()
+	cm, err := newCertManager(t.TempDir(), cache)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cm.Close() })
+
+	const hostname = "storage.example.com"
+	cert1, err := cm.GetCertificate(hostname, nil)
+	require.NoError(t, err)
+
+	// Leaf must be readable back through the injected store.
+	data, found, err := cache.Get(certCacheKey(hostname, nil))
+	require.NoError(t, err)
+	require.True(t, found)
+
+	cachedCert, err := deserializeCert(data)
+	require.NoError(t, err)
+	assert.Equal(t, cert1.Certificate, cachedCert.Certificate)
+
+	// Second lookup is served from cache without regeneration.
+	cert2, err := cm.GetCertificate(hostname, nil)
+	require.NoError(t, err)
+	assert.Equal(t, cert1.Certificate, cert2.Certificate)
+}
+
 // verifyLeafHostname parses the leaf and checks it verifies for name against pool.
 func verifyLeafHostname(t *testing.T, cert *tls.Certificate, pool *x509.CertPool, name string) error {
 	t.Helper()
@@ -580,7 +610,7 @@ func TestCACert(t *testing.T) {
 	t.Parallel()
 
 	tempDir := t.TempDir()
-	cm, err := newCertManager(tempDir)
+	cm, err := newCertManager(tempDir, store.NewMemStorage())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cm.Close() })
 
@@ -609,7 +639,7 @@ func TestCACertConcurrentReads(t *testing.T) {
 	t.Parallel()
 
 	tempDir := t.TempDir()
-	cm, err := newCertManager(tempDir)
+	cm, err := newCertManager(tempDir, store.NewMemStorage())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cm.Close() })
 

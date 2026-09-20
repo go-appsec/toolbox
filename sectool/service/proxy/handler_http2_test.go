@@ -641,7 +641,7 @@ func newHTTP2TestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server
 func newTestHTTP2Proxy(t *testing.T) (*ProxyServer, *http.Client) {
 	t.Helper()
 
-	proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
+	proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), store.NewMemStorage(), TimeoutConfig{}, false)
 	require.NoError(t, err)
 	go func() { _ = proxy.Serve() }()
 	t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })

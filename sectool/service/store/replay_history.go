@@ -46,36 +46,12 @@ type ReplayHistoryPayload struct {
 	RespBody        []byte `msgpack:"rb"`
 }
 
-// ReplayHistoryEntry stores a replay request/response with positioning info.
+// ReplayHistoryEntry stores a replay request/response. The meta and payload
+// halves are embedded so each serializes independently: the meta key keeps
+// summary/list paths from deserializing request/response bodies.
 type ReplayHistoryEntry struct {
-	FlowID    string
-	CreatedAt time.Time // When replay was executed
-
-	// Request data (for display and export)
-	RawRequest      []byte // pre-rule request (base for replay)
-	ModifiedRequest []byte // post-rule request (what was sent); nil if no rules applied
-	Method          string
-	Host            string
-	Path            string
-	Scheme          string // "http" or "https"
-	Port            int    // original port (0 = infer from scheme)
-	Protocol        string // "http/1.1" or "http/2"
-
-	// Response data
-	RespHeaders []byte
-	RespBody    []byte
-	RespStatus  int
-	CompletedAt time.Time // zero until the response is recorded
-
-	// Lineage
-	SourceFlowID string // Original flow_id that was replayed (empty for request_send)
-
-	// Annotations carries sidecar-authored flow metadata; nil for native sends.
-	Annotations map[string]any
-	// InvokedBy names the sidecar that originated a native send via invoke_adapter.
-	InvokedBy string
-	// Adapter names the sidecar that performed a replay; empty for native sends.
-	Adapter string
+	ReplayHistoryMeta
+	ReplayHistoryPayload
 }
 
 // Duration reports the replay round-trip time, or zero if not yet completed.
@@ -156,37 +132,16 @@ func (s *ReplayHistoryStore) SetInvokedBy(flowID, invokedBy string) bool {
 	return s.persistLocked(entry)
 }
 
-// persistLocked writes an entry to storage, returning false on failure.
-// Caller must hold mu.
+// persistLocked writes the meta and payload halves to storage, returning false
+// on failure. Caller must hold mu.
 func (s *ReplayHistoryStore) persistLocked(entry *ReplayHistoryEntry) bool {
-	meta := ReplayHistoryMeta{
-		FlowID:       entry.FlowID,
-		Method:       entry.Method,
-		Host:         entry.Host,
-		Path:         entry.Path,
-		Scheme:       entry.Scheme,
-		Port:         entry.Port,
-		Protocol:     entry.Protocol,
-		SourceFlowID: entry.SourceFlowID,
-		CreatedAt:    entry.CreatedAt,
-		CompletedAt:  entry.CompletedAt,
-		RespStatus:   entry.RespStatus,
-		RespLen:      len(entry.RespBody),
-		Annotations:  entry.Annotations,
-		InvokedBy:    entry.InvokedBy,
-		Adapter:      entry.Adapter,
-	}
-	payload := ReplayHistoryPayload{
-		RawRequest:      entry.RawRequest,
-		ModifiedRequest: entry.ModifiedRequest,
-		RespHeaders:     entry.RespHeaders,
-		RespBody:        entry.RespBody,
-	}
+	meta := entry.ReplayHistoryMeta
+	meta.RespLen = len(entry.RespBody)
 
 	if metaData, err := Serialize(&meta); err != nil {
 		log.Printf("replay history store serialize meta error: %v", err)
 		return false
-	} else if payloadData, err := Serialize(&payload); err != nil {
+	} else if payloadData, err := Serialize(&entry.ReplayHistoryPayload); err != nil {
 		log.Printf("replay history store serialize payload error: %v", err)
 		return false
 	} else if err := s.storage.Set(entry.FlowID, metaData); err != nil {
@@ -237,24 +192,8 @@ func (s *ReplayHistoryStore) getLocked(flowID string) (*ReplayHistoryEntry, bool
 	}
 
 	return &ReplayHistoryEntry{
-		FlowID:          meta.FlowID,
-		CreatedAt:       meta.CreatedAt,
-		RawRequest:      payload.RawRequest,
-		ModifiedRequest: payload.ModifiedRequest,
-		Method:          meta.Method,
-		Host:            meta.Host,
-		Path:            meta.Path,
-		Scheme:          meta.Scheme,
-		Port:            meta.Port,
-		Protocol:        meta.Protocol,
-		RespHeaders:     payload.RespHeaders,
-		RespBody:        payload.RespBody,
-		RespStatus:      meta.RespStatus,
-		CompletedAt:     meta.CompletedAt,
-		SourceFlowID:    meta.SourceFlowID,
-		Annotations:     meta.Annotations,
-		InvokedBy:       meta.InvokedBy,
-		Adapter:         meta.Adapter,
+		ReplayHistoryMeta:    meta,
+		ReplayHistoryPayload: payload,
 	}, true
 }
 

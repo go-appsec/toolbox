@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
@@ -770,7 +771,7 @@ func TestHandleFlowGet(t *testing.T) {
 		})
 		const originalBody = "This is the decompressed crawl response"
 		compressedBody := compressGzip(t, []byte(originalBody))
-		require.NoError(t, mockCrawler.AddFlow(createResp.SessionID, CrawlFlow{
+		require.NoError(t, mockCrawler.AddFlow(createResp.SessionID, store.CrawlFlow{
 			ID: "crawl-compressed-flow", SessionID: createResp.SessionID, URL: "https://example.com/compressed",
 			Host: "example.com", Path: "/compressed", Method: "GET", StatusCode: 200, ResponseLength: len(compressedBody),
 			Request:  []byte("GET /compressed HTTP/1.1\r\nHost: example.com\r\n\r\n"),
@@ -793,7 +794,7 @@ func TestHandleFlowGet(t *testing.T) {
 		createResp := CallMCPToolJSONOK[protocol.CrawlCreateResponse](t, mcpClient, "crawl_create", map[string]interface{}{
 			"seed_urls": "https://example.com",
 		})
-		require.NoError(t, mockCrawler.AddFlow(createResp.SessionID, CrawlFlow{
+		require.NoError(t, mockCrawler.AddFlow(createResp.SessionID, store.CrawlFlow{
 			ID: "scope-flow", SessionID: createResp.SessionID, URL: "https://example.com/scoped",
 			Host: "example.com", Path: "/scoped", Method: "GET", StatusCode: 200,
 			Request:  []byte("GET /scoped HTTP/1.1\r\nHost: example.com\r\n\r\nreq body"),

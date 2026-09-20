@@ -175,6 +175,8 @@ Shared JSON-RPC 2.0 contract types imported by both the SDK and the service side
 - `sectool/service/store/serialize.go` - Msgpack serialization helpers
 - `sectool/service/store/replay_history.go` - Replay request/response storage with meta/payload split
 - `sectool/service/store/notes.go` - Note storage with reverse flow index
+- `sectool/service/store/oast.go` - OAST session storage with per-event keys and reverse indices
+- `sectool/service/store/crawl.go` - Crawl session/result storage with write-through mirror
 - `sectool/service/ids/ids.go` - Base62 random IDs using crypto/rand
 
 ### CLI Commands
@@ -288,6 +290,8 @@ Bundles at `./sectool-requests/<flow_id>/`: `request.http` (headers + body place
 - `Storage` - key-value blob interface (`memStorage`, `SpillStore` disk-paging)
 - `ReplayHistoryStore` - replay storage with meta/payload split
 - `NoteStore` - note storage with reverse flow_id index
+- `OastStore` - OAST session/event storage with reverse indices
+- `CrawlStore` - crawl session/result storage with write-through mirror
 
 ## MCP Tools
 

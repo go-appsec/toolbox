@@ -20,6 +20,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/ids"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
 // Unit tests for MCP server functionality using mock backends.
@@ -605,16 +606,16 @@ func (b *mockHttpBackend) LastSendInput() SendRequestInput {
 
 type mockOastBackend struct {
 	redirectSupported bool
-	sessions          map[string]*OastSessionInfo
+	sessions          map[string]*store.OastSessionInfo
 	byLabel           map[string]string
-	events            map[string][]OastEventInfo
+	events            map[string][]store.OastEvent
 }
 
 func newMockOastBackend() *mockOastBackend {
 	return &mockOastBackend{
-		sessions: make(map[string]*OastSessionInfo),
+		sessions: make(map[string]*store.OastSessionInfo),
 		byLabel:  make(map[string]string),
-		events:   make(map[string][]OastEventInfo),
+		events:   make(map[string][]store.OastEvent),
 	}
 }
 
@@ -622,7 +623,7 @@ func (b *mockOastBackend) SupportsRedirect() bool {
 	return b.redirectSupported
 }
 
-func (b *mockOastBackend) CreateSession(ctx context.Context, label, redirectTarget string) (*OastSessionInfo, error) {
+func (b *mockOastBackend) CreateSession(ctx context.Context, label, redirectTarget string) (*store.OastSessionInfo, error) {
 	if redirectTarget != "" && !b.redirectSupported {
 		return nil, errors.New("OAST server does not support redirect responses")
 	}
@@ -632,7 +633,7 @@ func (b *mockOastBackend) CreateSession(ctx context.Context, label, redirectTarg
 		}
 	}
 	id := "oast-test-" + time.Now().UTC().Format("150405.000000000")
-	info := &OastSessionInfo{
+	info := &store.OastSessionInfo{
 		ID:             id,
 		Domain:         id + ".test.invalid",
 		Label:          label,
@@ -666,7 +667,7 @@ func (b *mockOastBackend) PollSession(ctx context.Context, idOrDomain string, si
 		}
 	}
 
-	filtered := make([]OastEventInfo, 0, len(events))
+	filtered := make([]store.OastEvent, 0, len(events))
 	for i := start; i < len(events); i++ {
 		ev := events[i]
 		if eventType != "" && ev.Type != eventType {
@@ -682,7 +683,7 @@ func (b *mockOastBackend) PollSession(ctx context.Context, idOrDomain string, si
 	return &OastPollResultInfo{Events: filtered}, nil
 }
 
-func (b *mockOastBackend) GetEvent(_ context.Context, eventID string) (*OastEventInfo, error) {
+func (b *mockOastBackend) GetEvent(_ context.Context, eventID string) (*store.OastEvent, error) {
 	for _, events := range b.events {
 		for _, ev := range events {
 			if ev.ID == eventID {
@@ -694,8 +695,8 @@ func (b *mockOastBackend) GetEvent(_ context.Context, eventID string) (*OastEven
 	return nil, ErrNotFound
 }
 
-func (b *mockOastBackend) ListSessions(ctx context.Context) ([]OastSessionInfo, error) {
-	sessions := make([]OastSessionInfo, 0, len(b.sessions))
+func (b *mockOastBackend) ListSessions(ctx context.Context) ([]store.OastSessionInfo, error) {
+	sessions := make([]store.OastSessionInfo, 0, len(b.sessions))
 	for _, sess := range b.sessions {
 		sessions = append(sessions, *sess)
 	}
@@ -717,9 +718,9 @@ func (b *mockOastBackend) DeleteSession(ctx context.Context, idOrDomain string) 
 }
 
 func (b *mockOastBackend) Close(_ context.Context) error {
-	b.sessions = make(map[string]*OastSessionInfo)
+	b.sessions = make(map[string]*store.OastSessionInfo)
 	b.byLabel = make(map[string]string)
-	b.events = make(map[string][]OastEventInfo)
+	b.events = make(map[string][]store.OastEvent)
 	return nil
 }
 
@@ -742,10 +743,10 @@ func (b *mockOastBackend) resolveID(idOrDomain string) (string, error) {
 }
 
 type mockCrawlerBackend struct {
-	sessions   map[string]*CrawlSessionInfo
+	sessions   map[string]*store.CrawlSessionInfo
 	byLabel    map[string]string
 	status     map[string]*CrawlStatus
-	flows      map[string]*CrawlFlow
+	flows      map[string]*store.CrawlFlow
 	forms      map[string][]protocol.CrawlForm
 	errors     map[string][]protocol.CrawlError
 	getFlowErr error
@@ -754,16 +755,16 @@ type mockCrawlerBackend struct {
 
 func newMockCrawlerBackend() *mockCrawlerBackend {
 	return &mockCrawlerBackend{
-		sessions: make(map[string]*CrawlSessionInfo),
+		sessions: make(map[string]*store.CrawlSessionInfo),
 		byLabel:  make(map[string]string),
 		status:   make(map[string]*CrawlStatus),
-		flows:    make(map[string]*CrawlFlow),
+		flows:    make(map[string]*store.CrawlFlow),
 		forms:    make(map[string][]protocol.CrawlForm),
 		errors:   make(map[string][]protocol.CrawlError),
 	}
 }
 
-func (b *mockCrawlerBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*CrawlSessionInfo, error) {
+func (b *mockCrawlerBackend) CreateSession(ctx context.Context, opts CrawlOptions) (*store.CrawlSessionInfo, error) {
 	b.lastOpts = opts
 	if len(opts.Seeds) == 0 {
 		return nil, errors.New("no valid seeds")
@@ -774,7 +775,7 @@ func (b *mockCrawlerBackend) CreateSession(ctx context.Context, opts CrawlOption
 		}
 	}
 	id := "crawl-test-" + time.Now().UTC().Format("150405.000000000")
-	info := &CrawlSessionInfo{
+	info := &store.CrawlSessionInfo{
 		ID:        id,
 		Label:     opts.Label,
 		State:     "running",
@@ -821,14 +822,14 @@ func (b *mockCrawlerBackend) GetStatus(ctx context.Context, sessionID string) (*
 	return &copy, nil
 }
 
-func (b *mockCrawlerBackend) ListFlows(ctx context.Context, sessionID string, opts CrawlListOptions) ([]CrawlFlow, int, error) {
+func (b *mockCrawlerBackend) ListFlows(ctx context.Context, sessionID string, opts CrawlListOptions) ([]store.CrawlFlow, int, error) {
 	sess, err := b.resolveSession(sessionID)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	hasSearch := opts.SearchHeaderRe != nil || opts.SearchBodyRe != nil
-	flows := make([]CrawlFlow, 0, len(b.flows))
+	flows := make([]store.CrawlFlow, 0, len(b.flows))
 	for _, flow := range b.flows {
 		if flow.SessionID != sess.ID {
 			continue
@@ -877,7 +878,7 @@ func (b *mockCrawlerBackend) ListErrors(ctx context.Context, sessionID string, l
 	return errs, nil
 }
 
-func (b *mockCrawlerBackend) GetFlow(ctx context.Context, flowID string) (*CrawlFlow, error) {
+func (b *mockCrawlerBackend) GetFlow(ctx context.Context, flowID string) (*store.CrawlFlow, error) {
 	if b.getFlowErr != nil {
 		return nil, b.getFlowErr
 	}
@@ -902,8 +903,8 @@ func (b *mockCrawlerBackend) StopSession(ctx context.Context, sessionID string) 
 	return nil
 }
 
-func (b *mockCrawlerBackend) ListSessions(ctx context.Context, limit int) ([]CrawlSessionInfo, error) {
-	sessions := make([]CrawlSessionInfo, 0, len(b.sessions))
+func (b *mockCrawlerBackend) ListSessions(ctx context.Context, limit int) ([]store.CrawlSessionInfo, error) {
+	sessions := make([]store.CrawlSessionInfo, 0, len(b.sessions))
 	for _, sess := range b.sessions {
 		sessions = append(sessions, *sess)
 	}
@@ -914,16 +915,16 @@ func (b *mockCrawlerBackend) ListSessions(ctx context.Context, limit int) ([]Cra
 }
 
 func (b *mockCrawlerBackend) Close(_ context.Context) error {
-	b.sessions = make(map[string]*CrawlSessionInfo)
+	b.sessions = make(map[string]*store.CrawlSessionInfo)
 	b.byLabel = make(map[string]string)
 	b.status = make(map[string]*CrawlStatus)
-	b.flows = make(map[string]*CrawlFlow)
+	b.flows = make(map[string]*store.CrawlFlow)
 	b.forms = make(map[string][]protocol.CrawlForm)
 	b.errors = make(map[string][]protocol.CrawlError)
 	return nil
 }
 
-func (b *mockCrawlerBackend) AddFlow(sessionID string, flow CrawlFlow) error {
+func (b *mockCrawlerBackend) AddFlow(sessionID string, flow store.CrawlFlow) error {
 	sess, err := b.resolveSession(sessionID)
 	if err != nil {
 		return err
@@ -963,7 +964,7 @@ func (b *mockCrawlerBackend) AddError(sessionID string, crawlErr protocol.CrawlE
 	return nil
 }
 
-func (b *mockCrawlerBackend) resolveSession(idOrLabel string) (*CrawlSessionInfo, error) {
+func (b *mockCrawlerBackend) resolveSession(idOrLabel string) (*store.CrawlSessionInfo, error) {
 	id := idOrLabel
 	if mapped, ok := b.byLabel[idOrLabel]; ok {
 		id = mapped

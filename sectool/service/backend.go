@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
@@ -189,7 +190,7 @@ type OastBackend interface {
 	// Returns session with short ID and domain.
 	// If label is non-empty, it must be unique across all sessions.
 	// If redirectTarget is non-empty, HTTP requests to the session domain receive a 307 redirect.
-	CreateSession(ctx context.Context, label, redirectTarget string) (*OastSessionInfo, error)
+	CreateSession(ctx context.Context, label, redirectTarget string) (*store.OastSessionInfo, error)
 
 	// SupportsRedirect reports whether this backend supports redirect responses.
 	SupportsRedirect() bool
@@ -205,10 +206,10 @@ type OastBackend interface {
 
 	// GetEvent retrieves a single event by ID, searching across all sessions.
 	// Returns the full event details without truncation.
-	GetEvent(ctx context.Context, eventID string) (*OastEventInfo, error)
+	GetEvent(ctx context.Context, eventID string) (*store.OastEvent, error)
 
 	// ListSessions returns all active sessions.
-	ListSessions(ctx context.Context) ([]OastSessionInfo, error)
+	ListSessions(ctx context.Context) ([]store.OastSessionInfo, error)
 
 	// DeleteSession stops polling and deregisters from the OAST provider.
 	// idOrDomain accepts either the short ID or the full domain.
@@ -219,36 +220,17 @@ type OastBackend interface {
 	Close(ctx context.Context) error
 }
 
-// OastSessionInfo represents an active OAST session (internal domain type).
-type OastSessionInfo struct {
-	ID             string    // Short sectool ID (e.g., "a1b2c3")
-	Domain         string    // Full Interactsh domain (e.g., "xyz123.alpha.oastsrv.net")
-	Label          string    // Optional user-provided label for easier reference
-	RedirectTarget string    // URL to 307 redirect HTTP requests to (empty = no redirect)
-	CreatedAt      time.Time // When the session was created
-}
-
-// OastEventInfo represents a captured out-of-band interaction (internal domain type).
-type OastEventInfo struct {
-	ID        string                 // Short sectool ID
-	Time      time.Time              // When the interaction occurred
-	Type      string                 // "dns", "http", "smtp"
-	SourceIP  string                 // Remote address of the interaction
-	Subdomain string                 // Full subdomain that was accessed
-	Details   map[string]interface{} // Protocol-specific details
-}
-
 // OastPollResultInfo contains the result of polling for events.
 type OastPollResultInfo struct {
-	Events       []OastEventInfo // Events matching the filter
-	DroppedCount int             // Number of events dropped due to buffer limit
+	Events       []store.OastEvent // Events matching the filter
+	DroppedCount int               // Number of events dropped due to buffer limit
 }
 
 // CrawlerBackend defines the interface for web crawling operations.
 type CrawlerBackend interface {
 	// CreateSession starts a new crawl session. Returns immediately; crawling is async.
 	// Returns error if max concurrent sessions reached or no valid seeds/domains.
-	CreateSession(ctx context.Context, opts CrawlOptions) (*CrawlSessionInfo, error)
+	CreateSession(ctx context.Context, opts CrawlOptions) (*store.CrawlSessionInfo, error)
 
 	// AddSeeds adds URLs to an existing session (can be called while running).
 	// sessionID can be the ID or label. Returns error if session is not running.
@@ -260,7 +242,7 @@ type CrawlerBackend interface {
 
 	// ListFlows returns flows matching filters (page after limit/offset) and the
 	// total match count before limit/offset. sessionID can be the ID or label.
-	ListFlows(ctx context.Context, sessionID string, opts CrawlListOptions) ([]CrawlFlow, int, error)
+	ListFlows(ctx context.Context, sessionID string, opts CrawlListOptions) ([]store.CrawlFlow, int, error)
 
 	// ListForms returns forms discovered in a session.
 	// sessionID can be the ID or label.
@@ -271,7 +253,7 @@ type CrawlerBackend interface {
 	ListErrors(ctx context.Context, sessionID string, limit int) ([]protocol.CrawlError, error)
 
 	// GetFlow returns a flow by ID. Returns ErrNotFound if flow doesn't exist.
-	GetFlow(ctx context.Context, flowID string) (*CrawlFlow, error)
+	GetFlow(ctx context.Context, flowID string) (*store.CrawlFlow, error)
 
 	// StopSession immediately stops a running crawl. In-flight requests are abandoned.
 	// sessionID can be the ID or label.
@@ -279,7 +261,7 @@ type CrawlerBackend interface {
 
 	// ListSessions returns all sessions (active and completed), most recent first.
 	// limit=0 means no limit.
-	ListSessions(ctx context.Context, limit int) ([]CrawlSessionInfo, error)
+	ListSessions(ctx context.Context, limit int) ([]store.CrawlSessionInfo, error)
 
 	// Close cleans up all sessions (called on service shutdown), bounded by ctx.
 	Close(ctx context.Context) error
@@ -336,14 +318,6 @@ func (o CrawlListOptions) hasFilters() bool {
 		o.SearchHeaderRe != nil || o.SearchBodyRe != nil
 }
 
-// CrawlSessionInfo represents metadata about a crawl session.
-type CrawlSessionInfo struct {
-	ID        string    // Short sectool ID
-	Label     string    // Optional user-provided label
-	CreatedAt time.Time // When the session was created
-	State     string    // "running", "stopped", "completed", "error"
-}
-
 // CrawlStatus contains progress metrics for a crawl session.
 type CrawlStatus struct {
 	State           string        // "running", "stopped", "completed", "error"
@@ -354,26 +328,6 @@ type CrawlStatus struct {
 	Duration        time.Duration // Time since session started
 	LastActivity    time.Time     // When last request was made
 	ErrorMessage    string        // Error details if State is "error"
-}
-
-// CrawlFlow represents a single captured request/response from crawling.
-type CrawlFlow struct {
-	ID             string        // Short sectool ID
-	SessionID      string        // Parent session ID
-	URL            string        // Full URL visited
-	Host           string        // Hostname (extracted from URL)
-	Path           string        // Path with query string (extracted from URL)
-	Method         string        // HTTP method
-	FoundOn        string        // Parent URL where discovered
-	Depth          int           // Crawl depth from seed
-	StatusCode     int           // HTTP response status
-	ContentType    string        // Response content type
-	ResponseLength int           // Response body length in bytes
-	Request        []byte        // Wire-format bytes from httputil.DumpRequestOut
-	Response       []byte        // Wire-format bytes from httputil.DumpResponse
-	Truncated      bool          // True if response exceeded max_response_body_bytes
-	Duration       time.Duration // Request/response round-trip time
-	DiscoveredAt   time.Time     // When this flow was captured
 }
 
 // parseSinceTimestamp attempts to parse a string as a timestamp in multiple formats.

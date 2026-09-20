@@ -173,7 +173,7 @@ func TestHandle(t *testing.T) {
 	t.Run("connection_established", func(t *testing.T) {
 		t.Parallel()
 
-		proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
+		proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -204,7 +204,7 @@ func TestHandle(t *testing.T) {
 		}))
 		t.Cleanup(testServer.Close)
 
-		proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
+		proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -260,7 +260,7 @@ func TestHandle(t *testing.T) {
 		}))
 		t.Cleanup(testServer.Close)
 
-		proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
+		proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -298,7 +298,7 @@ func TestHandle(t *testing.T) {
 		}))
 		t.Cleanup(testServer.Close)
 
-		proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
+		proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })
@@ -394,7 +394,7 @@ func TestProbeOrConnect(t *testing.T) {
 		testServer.StartTLS()
 		t.Cleanup(testServer.Close)
 
-		proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), TimeoutConfig{}, false)
+		proxy, err := NewProxyServer(t.Context(), 0, t.TempDir(), 10*1024*1024, store.NewMemStorage(), store.NewMemStorage(), TimeoutConfig{}, false)
 		require.NoError(t, err)
 		go func() { _ = proxy.Serve() }()
 		t.Cleanup(func() { _ = proxy.Shutdown(context.Background()) })

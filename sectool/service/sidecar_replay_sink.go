@@ -96,23 +96,27 @@ func flowToReplayEntry(id string, flow *types.Flow) *store.ReplayHistoryEntry {
 	}
 
 	return &store.ReplayHistoryEntry{
-		FlowID:       id,
-		CreatedAt:    flow.StartedAt,
-		RawRequest:   rawReq,
-		Method:       method,
-		Host:         host,
-		Path:         path,
-		Scheme:       flow.Scheme,
-		Port:         flow.Port,
-		Protocol:     flow.ProtocolTag,
-		RespHeaders:  slices.Clone(respHeaders),
-		RespBody:     slices.Clone(respBody),
-		RespStatus:   status,
-		CompletedAt:  flow.CompletedAt,
-		SourceFlowID: flow.ParentFlowID,
-		Annotations:  flow.Annotations,
-		InvokedBy:    flow.InvokedBy,
-		Adapter:      flow.Adapter,
+		ReplayHistoryMeta: store.ReplayHistoryMeta{
+			FlowID:       id,
+			CreatedAt:    flow.StartedAt,
+			Method:       method,
+			Host:         host,
+			Path:         path,
+			Scheme:       flow.Scheme,
+			Port:         flow.Port,
+			Protocol:     flow.ProtocolTag,
+			RespStatus:   status,
+			CompletedAt:  flow.CompletedAt,
+			SourceFlowID: flow.ParentFlowID,
+			Annotations:  flow.Annotations,
+			InvokedBy:    flow.InvokedBy,
+			Adapter:      flow.Adapter,
+		},
+		ReplayHistoryPayload: store.ReplayHistoryPayload{
+			RawRequest:  rawReq,
+			RespHeaders: slices.Clone(respHeaders),
+			RespBody:    slices.Clone(respBody),
+		},
 	}
 }
 

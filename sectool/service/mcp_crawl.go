@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
 func (m *mcpServer) crawlCreateTool() mcp.Tool {
@@ -306,7 +307,7 @@ func (m *mcpServer) handleCrawlPoll(ctx context.Context, req mcp.CallToolRequest
 			return errorResultFromErr("failed to get flows: ", err), nil
 		}
 
-		aggregates := aggregateByTuple(flows, func(f CrawlFlow) (string, string, string, int) {
+		aggregates := aggregateByTuple(flows, func(f store.CrawlFlow) (string, string, string, int) {
 			return f.Host, f.Path, f.Method, f.StatusCode
 		})
 		totalCount := len(aggregates)

@@ -12,6 +12,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/service/proxy/types"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
 func TestHandleReplaySend(t *testing.T) {
@@ -96,7 +97,7 @@ func TestHandleReplaySend(t *testing.T) {
 		})
 
 		crawlFlowID := "crawl-flow-replay"
-		err := mockCrawler.AddFlow(createResp.SessionID, CrawlFlow{
+		err := mockCrawler.AddFlow(createResp.SessionID, store.CrawlFlow{
 			ID:         crawlFlowID,
 			SessionID:  createResp.SessionID,
 			URL:        "https://crawl.test/page",
@@ -1160,7 +1161,7 @@ func TestExecuteSend_WireFidelity(t *testing.T) {
 		request := append(make([]byte, 0, len(chunkedReq)+256), chunkedReq...)
 
 		crawlFlowID := "crawl-flow-chunked"
-		require.NoError(t, mockCrawler.AddFlow(createResp.SessionID, CrawlFlow{
+		require.NoError(t, mockCrawler.AddFlow(createResp.SessionID, store.CrawlFlow{
 			ID:         crawlFlowID,
 			SessionID:  createResp.SessionID,
 			URL:        "https://crawl.test/submit",

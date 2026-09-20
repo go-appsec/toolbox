@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
 func TestMCP_OastLifecycleWithMock(t *testing.T) {
@@ -48,7 +49,7 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 
 	t.Run("poll_with_since", func(t *testing.T) {
 		// Add an event to mock backend
-		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+		mockOast.events[oastID] = append(mockOast.events[oastID], store.OastEvent{
 			ID:       "event-1",
 			Time:     time.Now(),
 			Type:     "dns",
@@ -73,7 +74,7 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 	})
 
 	t.Run("get_valid_event", func(t *testing.T) {
-		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+		mockOast.events[oastID] = append(mockOast.events[oastID], store.OastEvent{
 			ID:        "event-get-test",
 			Time:      time.Now(),
 			Type:      "http",
@@ -96,7 +97,7 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 	})
 
 	t.Run("get_fields_target_http", func(t *testing.T) {
-		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+		mockOast.events[oastID] = append(mockOast.events[oastID], store.OastEvent{
 			ID:   "event-target-http",
 			Time: time.Now(),
 			Type: "http",
@@ -116,7 +117,7 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 	})
 
 	t.Run("get_fields_target_and_headers", func(t *testing.T) {
-		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+		mockOast.events[oastID] = append(mockOast.events[oastID], store.OastEvent{
 			ID:   "event-target-and-headers",
 			Time: time.Now(),
 			Type: "http",
@@ -136,7 +137,7 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 	})
 
 	t.Run("get_fields_headers_only", func(t *testing.T) {
-		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+		mockOast.events[oastID] = append(mockOast.events[oastID], store.OastEvent{
 			ID:   "event-headers-only",
 			Time: time.Now(),
 			Type: "http",
@@ -156,7 +157,7 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 	})
 
 	t.Run("get_fields_body_only", func(t *testing.T) {
-		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+		mockOast.events[oastID] = append(mockOast.events[oastID], store.OastEvent{
 			ID:   "event-body-only",
 			Time: time.Now(),
 			Type: "http",
@@ -175,7 +176,7 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 	})
 
 	t.Run("get_fields_smtp_target", func(t *testing.T) {
-		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+		mockOast.events[oastID] = append(mockOast.events[oastID], store.OastEvent{
 			ID:   "event-smtp-target",
 			Time: time.Now(),
 			Type: "smtp",
@@ -198,7 +199,7 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 	})
 
 	t.Run("get_smtp_default_includes_smtp_to", func(t *testing.T) {
-		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+		mockOast.events[oastID] = append(mockOast.events[oastID], store.OastEvent{
 			ID:   "event-smtp-default",
 			Time: time.Now(),
 			Type: "smtp",
@@ -220,7 +221,7 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 	})
 
 	t.Run("get_fields_dns_ignores", func(t *testing.T) {
-		mockOast.events[oastID] = append(mockOast.events[oastID], OastEventInfo{
+		mockOast.events[oastID] = append(mockOast.events[oastID], store.OastEvent{
 			ID:      "event-dns-fields",
 			Time:    time.Now(),
 			Type:    "dns",
@@ -242,14 +243,14 @@ func TestMCP_OastLifecycleWithMock(t *testing.T) {
 		})
 		// 3 dns from one source + 1 http + 1 smtp aggregate to 3 groups (dns count 3).
 		for i := range 3 {
-			mockOast.events[sess.OastID] = append(mockOast.events[sess.OastID], OastEventInfo{
+			mockOast.events[sess.OastID] = append(mockOast.events[sess.OastID], store.OastEvent{
 				ID: fmt.Sprintf("dns-event-%d", i), Time: time.Now(), Type: "dns", SourceIP: "10.0.0.1", Subdomain: "a",
 			})
 		}
-		mockOast.events[sess.OastID] = append(mockOast.events[sess.OastID], OastEventInfo{
+		mockOast.events[sess.OastID] = append(mockOast.events[sess.OastID], store.OastEvent{
 			ID: "http-event-1", Time: time.Now(), Type: "http", SourceIP: "10.0.0.2", Subdomain: "b",
 		})
-		mockOast.events[sess.OastID] = append(mockOast.events[sess.OastID], OastEventInfo{
+		mockOast.events[sess.OastID] = append(mockOast.events[sess.OastID], store.OastEvent{
 			ID: "smtp-event-1", Time: time.Now(), Type: "smtp", SourceIP: "10.0.0.3", Subdomain: "c",
 		})
 

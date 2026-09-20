@@ -95,12 +95,20 @@ func NewNativeProxyBackend(ctx context.Context, port int, configDir string, maxB
 		_ = ruleStorage.Close()
 		return nil, fmt.Errorf("responder storage: %w", err)
 	}
-
-	server, err := proxy.NewProxyServer(ctx, port, configDir, maxBodyBytes, historyStorage, timeouts, fullBuffer)
+	certCache, err := storage("cert")
 	if err != nil {
 		_ = historyStorage.Close()
 		_ = ruleStorage.Close()
 		_ = responderStorage.Close()
+		return nil, fmt.Errorf("cert cache: %w", err)
+	}
+
+	server, err := proxy.NewProxyServer(ctx, port, configDir, maxBodyBytes, historyStorage, certCache, timeouts, fullBuffer)
+	if err != nil {
+		_ = historyStorage.Close()
+		_ = ruleStorage.Close()
+		_ = responderStorage.Close()
+		_ = certCache.Close()
 		return nil, fmt.Errorf("create proxy server: %w", err)
 	}
 

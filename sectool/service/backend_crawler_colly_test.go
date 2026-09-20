@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/go-appsec/toolbox/sectool/config"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
 func TestIsTextContentType(t *testing.T) {
@@ -54,7 +55,7 @@ func TestIsTextContentType(t *testing.T) {
 func TestMatchesFlowFilters(t *testing.T) {
 	t.Parallel()
 
-	flow := &CrawlFlow{
+	flow := &store.CrawlFlow{
 		URL:        "https://example.com/api/users/123",
 		Host:       "example.com",
 		Path:       "/api/users/123",
@@ -284,27 +285,36 @@ func TestReadBodyLimited(t *testing.T) {
 
 // newTestCollySession creates a CollyBackend with a pre-populated session for unit testing.
 // Returns the backend and session ID.
-func newTestCollySession(t *testing.T, flows []*CrawlFlow) (*CollyBackend, string) {
+func newTestCollySession(t *testing.T, flows []*store.CrawlFlow) (*CollyBackend, string) {
 	t.Helper()
 
 	cfg := config.DefaultConfig()
-	b := NewCollyBackend(t.Context(), cfg, nil, nil)
+	b, err := NewCollyBackend(t.Context(), cfg, nil, nil, store.MemProvider)
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close(context.Background()) })
 
 	ctx, cancel := context.WithCancel(t.Context())
 	sessionID := "test-session"
 	sess := &crawlSession{
-		info:      CrawlSessionInfo{ID: sessionID, State: crawlStateRunning, CreatedAt: time.Now()},
-		startedAt: time.Now(),
-		flowsByID: make(map[string]*CrawlFlow),
-		urlsSeen:  make(map[string]bool),
-		ctx:       ctx,
-		cancel:    cancel,
+		info:     store.CrawlSessionInfo{ID: sessionID, State: crawlStateRunning, CreatedAt: time.Now()},
+		urlsSeen: make(map[string]bool),
+		ctx:      ctx,
+		cancel:   cancel,
 	}
+
+	err = b.crawlStore.Create(&store.CrawlSessionData{
+		CrawlSessionInfo: store.CrawlSessionInfo{
+			ID:        sessionID,
+			CreatedAt: sess.info.CreatedAt,
+			State:     crawlStateRunning,
+		},
+		StartedAt: time.Now(),
+	})
+	require.NoError(t, err)
+
 	for _, f := range flows {
 		f.SessionID = sessionID
-		sess.flowsByID[f.ID] = f
-		sess.flowsOrdered = append(sess.flowsOrdered, f)
+		require.NoError(t, b.crawlStore.AppendFlow(sessionID, f))
 	}
 
 	b.sessions[sessionID] = sess
@@ -356,7 +366,8 @@ func TestCollyBackend_resolveSeeds(t *testing.T) {
 			mockHTTP := newMockHttpBackend()
 			flowID := mockHTTP.AddProxyEntryScheme(tt.request, "HTTP/1.1 200 OK\r\n\r\n", tt.scheme, tt.port)
 
-			b := NewCollyBackend(t.Context(), config.DefaultConfig(), nil, mockHTTP)
+			b, err := NewCollyBackend(t.Context(), config.DefaultConfig(), nil, mockHTTP, store.MemProvider)
+			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close(context.Background()) })
 
 			_, seedURLs, _, err := b.resolveSeeds(t.Context(), []CrawlSeed{{FlowID: flowID}}, nil)
@@ -372,7 +383,7 @@ func TestCollyBackend_ListFlows(t *testing.T) {
 
 	t.Run("search_and_since_last", func(t *testing.T) {
 		// 4 flows: only flow-1 and flow-3 carry the X-Secret request header
-		flows := []*CrawlFlow{
+		flows := []*store.CrawlFlow{
 			{ID: "flow-0", Host: "a.com", Path: "/0", Method: "GET", StatusCode: 200,
 				Request: []byte("GET /0 HTTP/1.1\r\nHost: a.com\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nok")},
 			{ID: "flow-1", Host: "a.com", Path: "/1", Method: "GET", StatusCode: 200,
@@ -403,11 +414,10 @@ func TestCollyBackend_ListFlows(t *testing.T) {
 
 		// A flow appended after the cursor is returned by the next since=last poll
 		sess.mu.Lock()
-		newFlow := &CrawlFlow{ID: "flow-4", SessionID: sessionID, Host: "a.com", Path: "/4",
+		newFlow := &store.CrawlFlow{ID: "flow-4", SessionID: sessionID, Host: "a.com", Path: "/4",
 			Method: "GET", StatusCode: 200,
 			Request: []byte("GET /4 HTTP/1.1\r\nHost: a.com\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nnew")}
-		sess.flowsByID["flow-4"] = newFlow
-		sess.flowsOrdered = append(sess.flowsOrdered, newFlow)
+		require.NoError(t, b.crawlStore.AppendFlow(sessionID, newFlow))
 		sess.mu.Unlock()
 
 		got, total, err = b.ListFlows(t.Context(), sessionID, CrawlListOptions{Since: sinceLast})
@@ -420,7 +430,7 @@ func TestCollyBackend_ListFlows(t *testing.T) {
 	t.Run("cursor_stops_at_last_match", func(t *testing.T) {
 		// Regression: the search cursor must advance only to the last matching flow,
 		// not to the end of the full list. Only flow-1 matches.
-		flows := []*CrawlFlow{
+		flows := []*store.CrawlFlow{
 			{ID: "flow-0", Host: "a.com", Path: "/0", Method: "GET", StatusCode: 200,
 				Request: []byte("GET /0 HTTP/1.1\r\nHost: a.com\r\n\r\n"), Response: []byte("HTTP/1.1 200 OK\r\n\r\nok")},
 			{ID: "flow-1", Host: "a.com", Path: "/1", Method: "GET", StatusCode: 200,
@@ -452,13 +462,13 @@ func TestCollyBackend_ListFlows(t *testing.T) {
 
 	t.Run("search_with_limit", func(t *testing.T) {
 		// 6 flows: matches at indices 0, 2, 4 (even indices carry X-Tag)
-		flows := make([]*CrawlFlow, 6)
+		flows := make([]*store.CrawlFlow, 6)
 		for i := range flows {
 			hdr := "GET /%d HTTP/1.1\r\nHost: a.com\r\n"
 			if i%2 == 0 {
 				hdr += "X-Tag: yes\r\n"
 			}
-			flows[i] = &CrawlFlow{
+			flows[i] = &store.CrawlFlow{
 				ID: fmt.Sprintf("flow-%d", i), Host: "a.com", Path: fmt.Sprintf("/%d", i),
 				Method: "GET", StatusCode: 200,
 				Request:  []byte(fmt.Sprintf(hdr+"\r\n", i)),
@@ -574,7 +584,8 @@ func crawlTestConfig() *config.Config {
 func newCollyBackend(t *testing.T, cfg *config.Config) *CollyBackend {
 	t.Helper()
 
-	b := NewCollyBackend(t.Context(), cfg, nil, nil)
+	b, err := NewCollyBackend(t.Context(), cfg, nil, nil, store.MemProvider)
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close(context.Background()) })
 	return b
 }
@@ -774,7 +785,7 @@ func TestCollyBackend_CreateSession(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, flows, total)
 
-		byPath := make(map[string]CrawlFlow, len(flows))
+		byPath := make(map[string]store.CrawlFlow, len(flows))
 		for _, f := range flows {
 			byPath[f.Path] = f
 		}
@@ -847,4 +858,110 @@ func TestCollyBackend_addSeeds_completionRace(t *testing.T) {
 		}
 	}
 	assert.Equal(t, int(added.Load()), seedFlows)
+}
+
+// TestCollyBackend_storeReadsReflectWrites verifies backend reads are served
+// from the injected crawl store, not from runtime-only state.
+func TestCollyBackend_storeReadsReflectWrites(t *testing.T) {
+	t.Parallel()
+
+	storage := store.NewMemStorage()
+	t.Cleanup(func() { _ = storage.Close() })
+	provider := func(string) (store.Storage, error) { return storage, nil }
+
+	b, err := NewCollyBackend(t.Context(), crawlTestConfig(), nil, nil, provider)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = b.Close(context.Background()) })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		if r.URL.Path == "/form" {
+			_, _ = fmt.Fprint(w, `<html><body>
+				<form action="/submit" method="POST"><input name="q"></form>
+			</body></html>`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `<html><body>ok</body></html>`)
+	})
+	mux.HandleFunc("/boom", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		http.Error(w, "nope", http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	info, err := b.CreateSession(t.Context(), CrawlOptions{
+		Label: "store-backed",
+		Seeds: []CrawlSeed{{URL: ts.URL + "/"}},
+	})
+	require.NoError(t, err)
+
+	waitCrawlCompleted(t, b, info.ID)
+
+	// Backend reads reflect persisted flows/forms.
+	storedFlows, ok := b.crawlStore.Flows(info.ID)
+	require.True(t, ok)
+	assert.NotEmpty(t, storedFlows)
+
+	flows, total, err := b.ListFlows(t.Context(), "store-backed", CrawlListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, flows, total)
+	assert.Equal(t, len(storedFlows), total)
+
+	for _, f := range flows {
+		got, err := b.GetFlow(t.Context(), f.ID)
+		require.NoError(t, err)
+		assert.Equal(t, f.ID, got.ID)
+	}
+
+	status, err := b.GetStatus(t.Context(), info.ID)
+	require.NoError(t, err)
+	assert.Equal(t, crawlStateCompleted, status.State)
+	assert.GreaterOrEqual(t, status.URLsVisited, 1)
+
+	sessions, err := b.ListSessions(t.Context(), 0)
+	require.NoError(t, err)
+	assert.Len(t, sessions, 1)
+
+	// The store holds the completed session; a fresh backend hydrates it.
+	b2, err := NewCollyBackend(context.Background(), crawlTestConfig(), nil, nil, provider)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = b2.Close(context.Background()) })
+	sess2, ok := b2.crawlStore.GetSession("store-backed")
+	require.True(t, ok)
+	assert.Equal(t, info.ID, sess2.ID)
+	assert.Equal(t, crawlStateCompleted, sess2.State)
+}
+
+// countingStorage wraps a Storage and records Close calls.
+type countingStorage struct {
+	store.Storage
+	closeCount *atomic.Int64
+}
+
+func (c *countingStorage) Close() error {
+	c.closeCount.Add(1)
+	return c.Storage.Close()
+}
+
+// TestCollyBackend_Close verifies the backend closes its allocated crawl store.
+func TestCollyBackend_Close(t *testing.T) {
+	t.Parallel()
+
+	var closeCount atomic.Int64
+	provider := func(string) (store.Storage, error) {
+		return &countingStorage{Storage: store.NewMemStorage(), closeCount: &closeCount}, nil
+	}
+
+	b, err := NewCollyBackend(t.Context(), crawlTestConfig(), nil, nil, provider)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = b.Close(context.Background()) })
+
+	require.NoError(t, b.Close(t.Context()))
+	assert.EqualValues(t, 1, closeCount.Load())
+
+	// Close is idempotent and must not double-close the store.
+	require.NoError(t, b.Close(t.Context()))
+	assert.EqualValues(t, 1, closeCount.Load())
 }

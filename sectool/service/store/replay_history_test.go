@@ -18,11 +18,13 @@ func TestReplayHistoryStore(t *testing.T) {
 		store := NewReplayHistoryStore(storage)
 
 		entry := &ReplayHistoryEntry{
-			FlowID:     "abc123",
-			Method:     "POST",
-			Host:       "example.com",
-			Path:       "/api/test",
-			RespStatus: 200,
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:     "abc123",
+				Method:     "POST",
+				Host:       "example.com",
+				Path:       "/api/test",
+				RespStatus: 200,
+			},
 		}
 		store.Store(entry)
 
@@ -51,9 +53,24 @@ func TestReplayHistoryStore(t *testing.T) {
 		store := NewReplayHistoryStore(storage)
 
 		baseTime := time.Now()
-		store.Store(&ReplayHistoryEntry{FlowID: "first", CreatedAt: baseTime})
-		store.Store(&ReplayHistoryEntry{FlowID: "second", CreatedAt: baseTime.Add(time.Millisecond)})
-		store.Store(&ReplayHistoryEntry{FlowID: "third", CreatedAt: baseTime.Add(2 * time.Millisecond)})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:    "first",
+				CreatedAt: baseTime,
+			},
+		})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:    "second",
+				CreatedAt: baseTime.Add(time.Millisecond),
+			},
+		})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:    "third",
+				CreatedAt: baseTime.Add(2 * time.Millisecond),
+			},
+		})
 
 		list := store.List()
 		require.Len(t, list, 3)
@@ -69,10 +86,18 @@ func TestReplayHistoryStore(t *testing.T) {
 
 		assert.Equal(t, 0, store.Count())
 
-		store.Store(&ReplayHistoryEntry{FlowID: "a"})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID: "a",
+			},
+		})
 		assert.Equal(t, 1, store.Count())
 
-		store.Store(&ReplayHistoryEntry{FlowID: "b"})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID: "b",
+			},
+		})
 		assert.Equal(t, 2, store.Count())
 	})
 
@@ -81,8 +106,16 @@ func TestReplayHistoryStore(t *testing.T) {
 		t.Cleanup(func() { _ = storage.Close() })
 		store := NewReplayHistoryStore(storage)
 
-		store.Store(&ReplayHistoryEntry{FlowID: "a"})
-		store.Store(&ReplayHistoryEntry{FlowID: "b"})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID: "a",
+			},
+		})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID: "b",
+			},
+		})
 		assert.Equal(t, 2, store.Count())
 
 		store.Clear()
@@ -98,8 +131,18 @@ func TestReplayHistoryStore(t *testing.T) {
 		store := NewReplayHistoryStore(storage)
 
 		baseTime := time.Now()
-		store.Store(&ReplayHistoryEntry{FlowID: "first", CreatedAt: baseTime})
-		store.Store(&ReplayHistoryEntry{FlowID: "second", CreatedAt: baseTime.Add(time.Millisecond)})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:    "first",
+				CreatedAt: baseTime,
+			},
+		})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:    "second",
+				CreatedAt: baseTime.Add(time.Millisecond),
+			},
+		})
 
 		first, ok := store.Get("first")
 		require.True(t, ok)
@@ -113,7 +156,11 @@ func TestReplayHistoryStore(t *testing.T) {
 		t.Cleanup(func() { _ = storage.Close() })
 		store := NewReplayHistoryStore(storage)
 
-		entry := &ReplayHistoryEntry{FlowID: "auto_time"}
+		entry := &ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID: "auto_time",
+			},
+		}
 		store.Store(entry)
 
 		got, ok := store.Get("auto_time")
@@ -128,7 +175,12 @@ func TestReplayHistoryStore(t *testing.T) {
 		store := NewReplayHistoryStore(storage)
 
 		explicit := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-		entry := &ReplayHistoryEntry{FlowID: "explicit_time", CreatedAt: explicit}
+		entry := &ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:    "explicit_time",
+				CreatedAt: explicit,
+			},
+		}
 		store.Store(entry)
 
 		got, ok := store.Get("explicit_time")
@@ -146,7 +198,13 @@ func TestReplayHistoryComplete(t *testing.T) {
 		store := NewReplayHistoryStore(storage)
 
 		created := time.Now().Add(-time.Second)
-		store.Store(&ReplayHistoryEntry{FlowID: "f1", Method: "GET", CreatedAt: created})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:    "f1",
+				Method:    "GET",
+				CreatedAt: created,
+			},
+		})
 		require.Equal(t, 1, store.Count())
 
 		completedAt := created.Add(250 * time.Millisecond)
@@ -180,7 +238,12 @@ func TestReplayHistoryComplete(t *testing.T) {
 		t.Cleanup(func() { _ = storage.Close() })
 		store := NewReplayHistoryStore(storage)
 
-		store.Store(&ReplayHistoryEntry{FlowID: "f2", Method: "GET"})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID: "f2",
+				Method: "GET",
+			},
+		})
 		require.True(t, store.Complete("f2", nil, []byte("partial"), 200, time.Time{}, nil))
 
 		got, ok := store.Get("f2")
@@ -196,9 +259,11 @@ func TestReplayHistoryComplete(t *testing.T) {
 		store := NewReplayHistoryStore(storage)
 
 		store.Store(&ReplayHistoryEntry{
-			FlowID:      "f3",
-			Method:      "GET",
-			Annotations: map[string]any{"replay": true, "phase": "captured"},
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:      "f3",
+				Method:      "GET",
+				Annotations: map[string]any{"replay": true, "phase": "captured"},
+			},
 		})
 		require.True(t, store.Complete("f3", nil, nil, 200, time.Time{},
 			map[string]any{"phase": "mutated", "fired_rules": []string{"r1"}}))
@@ -223,7 +288,12 @@ func TestReplayHistorySetInvokedBy(t *testing.T) {
 		t.Cleanup(func() { _ = storage.Close() })
 		store := NewReplayHistoryStore(storage)
 
-		store.Store(&ReplayHistoryEntry{FlowID: "f1", Method: "GET"})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID: "f1",
+				Method: "GET",
+			},
+		})
 		require.True(t, store.SetInvokedBy("f1", "httpsidecar"))
 
 		got, ok := store.Get("f1")
@@ -253,25 +323,33 @@ func TestReplayHistoryListMeta(t *testing.T) {
 
 		baseTime := time.Now()
 		store.Store(&ReplayHistoryEntry{
-			FlowID:     "r1",
-			Method:     "POST",
-			Host:       "example.com",
-			Path:       "/api",
-			Protocol:   "http/1.1",
-			RespStatus: 200,
-			RespBody:   []byte("body-data"),
-			RawRequest: []byte("POST /api HTTP/1.1\r\n\r\n"),
-			CreatedAt:  baseTime,
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:     "r1",
+				Method:     "POST",
+				Host:       "example.com",
+				Path:       "/api",
+				Protocol:   "http/1.1",
+				RespStatus: 200,
+				CreatedAt:  baseTime,
+			},
+			ReplayHistoryPayload: ReplayHistoryPayload{
+				RespBody:   []byte("body-data"),
+				RawRequest: []byte("POST /api HTTP/1.1\r\n\r\n"),
+			},
 		})
 		store.Store(&ReplayHistoryEntry{
-			FlowID:       "r2",
-			Method:       "GET",
-			Host:         "other.com",
-			Path:         "/test",
-			RespStatus:   404,
-			RespBody:     []byte("not found"),
-			SourceFlowID: "p1",
-			CreatedAt:    baseTime.Add(time.Millisecond),
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:       "r2",
+				Method:       "GET",
+				Host:         "other.com",
+				Path:         "/test",
+				RespStatus:   404,
+				SourceFlowID: "p1",
+				CreatedAt:    baseTime.Add(time.Millisecond),
+			},
+			ReplayHistoryPayload: ReplayHistoryPayload{
+				RespBody: []byte("not found"),
+			},
 		})
 
 		metas := store.ListMeta()
@@ -295,8 +373,18 @@ func TestReplayHistoryListMeta(t *testing.T) {
 		store := NewReplayHistoryStore(storage)
 
 		baseTime := time.Now()
-		store.Store(&ReplayHistoryEntry{FlowID: "first", CreatedAt: baseTime})
-		store.Store(&ReplayHistoryEntry{FlowID: "second", CreatedAt: baseTime.Add(time.Millisecond)})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:    "first",
+				CreatedAt: baseTime,
+			},
+		})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:    "second",
+				CreatedAt: baseTime.Add(time.Millisecond),
+			},
+		})
 
 		metas := store.ListMeta()
 		require.Len(t, metas, 2)
@@ -322,12 +410,20 @@ func TestReplayHistoryCountExcludesPayload(t *testing.T) {
 	store := NewReplayHistoryStore(storage)
 
 	store.Store(&ReplayHistoryEntry{
-		FlowID:   "a",
-		RespBody: []byte("large body data"),
+		ReplayHistoryMeta: ReplayHistoryMeta{
+			FlowID: "a",
+		},
+		ReplayHistoryPayload: ReplayHistoryPayload{
+			RespBody: []byte("large body data"),
+		},
 	})
 	store.Store(&ReplayHistoryEntry{
-		FlowID:   "b",
-		RespBody: []byte("another body"),
+		ReplayHistoryMeta: ReplayHistoryMeta{
+			FlowID: "b",
+		},
+		ReplayHistoryPayload: ReplayHistoryPayload{
+			RespBody: []byte("another body"),
+		},
 	})
 
 	// Count should reflect 2 entries, not 4 keys (meta + payload each)
@@ -342,11 +438,15 @@ func TestReplayHistoryPayloadIsolation(t *testing.T) {
 	store := NewReplayHistoryStore(storage)
 
 	store.Store(&ReplayHistoryEntry{
-		FlowID:      "flow1",
-		Method:      "POST",
-		RawRequest:  []byte("POST /api HTTP/1.1\r\nHost: example.com\r\n\r\n"),
-		RespHeaders: []byte("HTTP/1.1 200 OK\r\n\r\n"),
-		RespBody:    []byte("response body"),
+		ReplayHistoryMeta: ReplayHistoryMeta{
+			FlowID: "flow1",
+			Method: "POST",
+		},
+		ReplayHistoryPayload: ReplayHistoryPayload{
+			RawRequest:  []byte("POST /api HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+			RespHeaders: []byte("HTTP/1.1 200 OK\r\n\r\n"),
+			RespBody:    []byte("response body"),
+		},
 	})
 
 	// ListMeta should not contain payload data
@@ -372,7 +472,11 @@ func TestReplayHistoryDelete(t *testing.T) {
 		t.Cleanup(func() { _ = storage.Close() })
 		store := NewReplayHistoryStore(storage)
 
-		store.Store(&ReplayHistoryEntry{FlowID: "a"})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID: "a",
+			},
+		})
 		assert.Equal(t, 0, store.Delete(nil))
 		assert.Equal(t, 0, store.Delete([]string{}))
 		assert.Equal(t, 1, store.Count())
@@ -383,7 +487,11 @@ func TestReplayHistoryDelete(t *testing.T) {
 		t.Cleanup(func() { _ = storage.Close() })
 		store := NewReplayHistoryStore(storage)
 
-		store.Store(&ReplayHistoryEntry{FlowID: "a"})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID: "a",
+			},
+		})
 		assert.Equal(t, 0, store.Delete([]string{"x", "y", "z"}))
 		assert.Equal(t, 1, store.Count())
 	})
@@ -393,7 +501,14 @@ func TestReplayHistoryDelete(t *testing.T) {
 		t.Cleanup(func() { _ = storage.Close() })
 		store := NewReplayHistoryStore(storage)
 
-		store.Store(&ReplayHistoryEntry{FlowID: "a", RespBody: []byte("body")})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID: "a",
+			},
+			ReplayHistoryPayload: ReplayHistoryPayload{
+				RespBody: []byte("body"),
+			},
+		})
 
 		assert.Equal(t, 1, store.Delete([]string{"a"}))
 		assert.Equal(t, 0, store.Count())
@@ -411,7 +526,11 @@ func TestReplayHistoryDelete(t *testing.T) {
 		store := NewReplayHistoryStore(storage)
 
 		for _, id := range []string{"a", "b", "c", "d", "e"} {
-			store.Store(&ReplayHistoryEntry{FlowID: id})
+			store.Store(&ReplayHistoryEntry{
+				ReplayHistoryMeta: ReplayHistoryMeta{
+					FlowID: id,
+				},
+			})
 		}
 		assert.Equal(t, 5, store.Count())
 
@@ -433,7 +552,11 @@ func TestReplayHistoryDelete(t *testing.T) {
 
 		ids := []string{"a", "b", "c"}
 		for _, id := range ids {
-			store.Store(&ReplayHistoryEntry{FlowID: id})
+			store.Store(&ReplayHistoryEntry{
+				ReplayHistoryMeta: ReplayHistoryMeta{
+					FlowID: id,
+				},
+			})
 		}
 
 		assert.Equal(t, 3, store.Delete(ids))
@@ -446,7 +569,11 @@ func TestReplayHistoryDelete(t *testing.T) {
 		t.Cleanup(func() { _ = storage.Close() })
 		store := NewReplayHistoryStore(storage)
 
-		store.Store(&ReplayHistoryEntry{FlowID: "a"})
+		store.Store(&ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID: "a",
+			},
+		})
 		assert.Equal(t, 1, store.Delete([]string{"a"}))
 		assert.Equal(t, 0, store.Delete([]string{"a"}))
 		assert.Equal(t, 0, store.Count())
@@ -467,7 +594,9 @@ func TestReplayHistoryStoreConcurrency(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			store.Store(&ReplayHistoryEntry{
-				FlowID: string(rune('a'+id%26)) + string(rune('0'+id)),
+				ReplayHistoryMeta: ReplayHistoryMeta{
+					FlowID: string(rune('a'+id%26)) + string(rune('0'+id)),
+				},
 			})
 		}(i)
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
+	"github.com/go-appsec/toolbox/sectool/service/store"
 )
 
 func (m *mcpServer) oastCreateTool() mcp.Tool {
@@ -177,7 +178,7 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 }
 
 // aggregateOastEvents aggregates OAST events by (subdomain, source_ip, type).
-func aggregateOastEvents(events []OastEventInfo) []protocol.OastSummaryEntry {
+func aggregateOastEvents(events []store.OastEvent) []protocol.OastSummaryEntry {
 	type key struct {
 		subdomain string
 		sourceIP  string
@@ -357,7 +358,7 @@ func (m *mcpServer) handleOastList(ctx context.Context, req mcp.CallToolRequest)
 	}
 
 	// Sort by creation time descending (most recent first)
-	slices.SortFunc(sessions, func(a, b OastSessionInfo) int {
+	slices.SortFunc(sessions, func(a, b store.OastSessionInfo) int {
 		return b.CreatedAt.Compare(a.CreatedAt)
 	})
 

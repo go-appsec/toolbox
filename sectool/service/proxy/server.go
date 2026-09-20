@@ -61,9 +61,10 @@ type ProxyServer struct {
 // configDir is the directory for CA certificates (e.g., ~/.sectool).
 // maxBodyBytes limits request and response body sizes stored in history.
 // historyStorage is the storage backend for proxy history entries.
+// certCache stores cached per-hostname leaf certificates.
 // fullBuffer forces whole-body buffering for response body rules instead of streaming.
-func NewProxyServer(ctx context.Context, port int, configDir string, maxBodyBytes int, historyStorage store.Storage, timeouts TimeoutConfig, fullBuffer bool) (*ProxyServer, error) {
-	certManager, err := newCertManager(configDir)
+func NewProxyServer(ctx context.Context, port int, configDir string, maxBodyBytes int, historyStorage store.Storage, certCache store.Storage, timeouts TimeoutConfig, fullBuffer bool) (*ProxyServer, error) {
+	certManager, err := newCertManager(configDir, certCache)
 	if err != nil {
 		return nil, fmt.Errorf("create cert manager: %w", err)
 	}

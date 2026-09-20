@@ -2,6 +2,7 @@ package store
 
 import (
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/go-analyze/bulk"
@@ -11,6 +12,8 @@ import (
 type Storage interface {
 	Set(key string, blob []byte) error
 	Get(key string) ([]byte, bool, error)
+	// Keys returns all keys beginning with prefix, in unspecified order.
+	Keys(prefix string) []string
 	KeySet() []string
 	Size() int
 	Delete(key string) error
@@ -54,6 +57,15 @@ func (m *memStorage) Get(key string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 	return slices.Clone(blob), true, nil
+}
+
+func (m *memStorage) Keys(prefix string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return bulk.SliceFilterInPlace(func(k string) bool {
+		return strings.HasPrefix(k, prefix)
+	}, bulk.MapKeysSlice(m.data))
 }
 
 func (m *memStorage) KeySet() []string {
