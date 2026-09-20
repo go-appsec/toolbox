@@ -36,12 +36,13 @@ func newTestEntryAt(method, path string, ts time.Time) *types.Flow {
 
 // h2Req builds a request Message with folded HTTP/2 pseudo-headers.
 func h2Req(method, authority, path string, body []byte, hdrs ...types.Header) *types.Message {
-	headers := types.Headers{
-		{Name: ":method", Value: method},
-		{Name: ":scheme", Value: "https"},
-		{Name: ":authority", Value: authority},
-		{Name: ":path", Value: path},
-	}
+	headers := make(types.Headers, 0, 4+len(hdrs))
+	headers = append(headers,
+		types.Header{Name: ":method", Value: method},
+		types.Header{Name: ":scheme", Value: "https"},
+		types.Header{Name: ":authority", Value: authority},
+		types.Header{Name: ":path", Value: path},
+	)
 	headers = append(headers, hdrs...)
 	return &types.Message{Headers: headers, Body: body}
 }

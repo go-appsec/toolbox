@@ -40,13 +40,13 @@ func TestSidecarToolResult(t *testing.T) {
 	})
 
 	t.Run("legacy_structured_content", func(t *testing.T) {
-		res := sidecarToolResult(wire.InvokeToolResult{StructuredContent: json.RawMessage(`{"legacy":true}`)})
+		res := sidecarToolResult(wire.InvokeToolResult{StructuredContent: json.RawMessage(`{"legacy":true}`)}) //nolint:staticcheck // deprecated legacy fallback
 		require.NotNil(t, res.StructuredContent)
 		assert.JSONEq(t, `{"legacy":true}`, resultText(res))
 	})
 
 	t.Run("legacy_content", func(t *testing.T) {
-		res := sidecarToolResult(wire.InvokeToolResult{Content: "plain text"})
+		res := sidecarToolResult(wire.InvokeToolResult{Content: "plain text"}) //nolint:staticcheck // deprecated legacy fallback
 		assert.Nil(t, res.StructuredContent)
 		assert.Equal(t, "plain text", resultText(res))
 	})

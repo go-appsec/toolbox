@@ -370,7 +370,7 @@ func buildRedirectRequest(originalReq *types.RawHTTP1Request, location string, c
 
 	// Build new request
 	newReq := &types.RawHTTP1Request{
-		Method:   "GET",
+		Method:   http.MethodGet,
 		Path:     PathWithoutQuery(newPath),
 		Query:    queryFromPath(newPath),
 		Version:  originalReq.Version,

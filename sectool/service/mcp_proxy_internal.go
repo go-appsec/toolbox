@@ -20,7 +20,7 @@ func (m *mcpServer) historyDeleteTool() mcp.Tool {
 		mcp.WithDescription("Internal CLI-only: delete proxy and replay history entries by the exact flow_ids provided. Flow_ids referenced by saved notes are retained and reported in skipped_noted."),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithArray("flow_ids", mcp.Required(),
-			mcp.Items(map[string]any{"type": "string"}),
+			mcp.Items(map[string]any{schemaTypeKey: schemaTypeString}),
 			mcp.Description("Flow IDs to delete")),
 	)
 }

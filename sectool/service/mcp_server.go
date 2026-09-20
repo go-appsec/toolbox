@@ -618,9 +618,9 @@ func flexUnion(branches ...any) mcp.PropertyOption {
 
 // array of "Name: Value" strings, object of string->string, or one string
 var kvBranches = []any{
-	map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-	map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
-	map[string]any{"type": "string"},
+	map[string]any{schemaTypeKey: "array", "items": map[string]any{schemaTypeKey: schemaTypeString}},
+	map[string]any{schemaTypeKey: "object", "additionalProperties": map[string]any{schemaTypeKey: schemaTypeString}},
+	map[string]any{schemaTypeKey: schemaTypeString},
 }
 
 // withFlexKV declares a string-valued key/value param (headers, set_form).
@@ -632,7 +632,7 @@ func withFlexKV(name, desc string) mcp.ToolOption {
 // also accepting a string-encoded object.
 func withFlexJSON(name, desc string) mcp.ToolOption {
 	return mcp.WithAny(name, mcp.Description(desc), flexUnion(
-		map[string]any{"type": "object"},
-		map[string]any{"type": "string"},
+		map[string]any{schemaTypeKey: "object"},
+		map[string]any{schemaTypeKey: schemaTypeString},
 	))
 }

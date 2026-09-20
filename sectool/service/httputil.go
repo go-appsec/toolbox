@@ -122,6 +122,27 @@ func aggregateByTuple[T any](entries []T, extract func(T) (host, path, method st
 const (
 	schemeHTTP  = "http"
 	schemeHTTPS = "https"
+
+	headerHost             = "host"
+	headerContentLength    = "content-length"
+	headerContentType      = "content-type"
+	headerContentEncoding  = "content-encoding"
+	headerTransferEncoding = "transfer-encoding"
+
+	// Media types recognized for JavaScript and JSON analysis.
+	mimeJSON           = "application/json"
+	mimeXML            = "application/xml"
+	mimeFormURLEncoded = "application/x-www-form-urlencoded"
+	mimeJavaScript     = "application/javascript"
+	mimeTextJavascript = "text/javascript"
+	mimeXJavaScript    = "application/x-javascript"
+	mimeEcmaScript     = "application/ecmascript"
+	mimeTextEcmaScript = "text/ecmascript"
+
+	// schemaTypeString is the JSON Schema primitive type for a scalar tool argument.
+	schemaTypeString = "string"
+	// schemaTypeKey is the JSON Schema key naming an item's value type.
+	schemaTypeKey = "type"
 )
 
 // extractRequestMeta extracts method, host, path from raw HTTP request.
@@ -159,7 +180,7 @@ func extractRequestMeta(raw string) (method, host, path string) {
 	// Host header (case-insensitive, tolerant of whitespace before colon)
 	for _, line := range strings.Split(raw, le) {
 		if idx := strings.Index(line, ":"); idx > 0 {
-			if strings.EqualFold(strings.TrimSpace(line[:idx]), "host") {
+			if strings.EqualFold(strings.TrimSpace(line[:idx]), headerHost) {
 				host = strings.TrimSpace(line[idx+1:])
 				break
 			}
@@ -269,7 +290,7 @@ func isFormEncodedContentType(ct string) bool {
 	if idx := strings.IndexByte(ct, ';'); idx >= 0 {
 		ct = ct[:idx]
 	}
-	return strings.EqualFold(strings.TrimSpace(ct), "application/x-www-form-urlencoded")
+	return strings.EqualFold(strings.TrimSpace(ct), mimeFormURLEncoded)
 }
 
 // decompressForDisplay transfer-decodes (de-chunks) then content-decodes body per the
@@ -978,7 +999,7 @@ func validateRequest(raw []byte) []protocol.ValidationIssue {
 	// Check Content-Length vs actual body length
 	if clIssue := validateContentLength(headers, body); clIssue != "" {
 		issues = append(issues, protocol.ValidationIssue{
-			Check:  "content-length",
+			Check:  headerContentLength,
 			Detail: clIssue,
 		})
 	}
@@ -1055,7 +1076,7 @@ func parseTarget(raw []byte, targetOverride string) (host string, port int, uses
 // isBodylessMethod returns true for methods that conventionally do not carry a body.
 func isBodylessMethod(method string) bool {
 	switch strings.ToUpper(method) {
-	case "GET", "HEAD":
+	case http.MethodGet, http.MethodHead:
 		return true
 	}
 	return false
@@ -1104,7 +1125,7 @@ func buildRedirectRequest(originalReq []byte, location string, currentTarget typ
 
 	method := proxy.ExtractMethod(originalReq)
 	if !preserveMethod {
-		method = "GET"
+		method = http.MethodGet
 	}
 
 	var body []byte
@@ -1182,15 +1203,15 @@ func copyHeadersForRedirect(originalReq []byte, buf *bytes.Buffer, newTarget typ
 	}
 
 	skipHeaders := map[string]bool{
-		"host":           true,
-		"content-length": true,
+		headerHost:          true,
+		headerContentLength: true,
 	}
 	if !preserveBody {
-		skipHeaders["content-type"] = true
-		skipHeaders["content-encoding"] = true
-		skipHeaders["transfer-encoding"] = true
+		skipHeaders[headerContentType] = true
+		skipHeaders[headerContentEncoding] = true
+		skipHeaders[headerTransferEncoding] = true
 	} else if dropTE {
-		skipHeaders["transfer-encoding"] = true
+		skipHeaders[headerTransferEncoding] = true
 	}
 
 	_, _ = fmt.Fprintf(buf, "Host: %s\r\n", newHost)

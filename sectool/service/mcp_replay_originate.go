@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -47,7 +48,7 @@ func (m *mcpServer) originateNative(ctx context.Context, p wire.SidecarSendParam
 
 	method := spec.Method
 	if method == "" {
-		method = "GET"
+		method = http.MethodGet
 	}
 
 	var headers []string

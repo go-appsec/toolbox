@@ -153,8 +153,8 @@ func isHTMLMediaType(mt string) bool {
 // isJSMediaType reports whether the media type denotes a JavaScript response.
 func isJSMediaType(mt string) bool {
 	switch mt {
-	case "application/javascript", "text/javascript", "application/x-javascript",
-		"application/ecmascript", "text/ecmascript":
+	case mimeJavaScript, mimeTextJavascript, mimeXJavaScript,
+		mimeEcmaScript, mimeTextEcmaScript:
 		return true
 	}
 	return false

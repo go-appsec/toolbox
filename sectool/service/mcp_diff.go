@@ -23,6 +23,7 @@ import (
 const (
 	defaultMaxDiffLinesText = 50
 	defaultMaxDiffLinesJSON = 20
+	formatJSON              = "json"
 )
 
 func (m *mcpServer) diffFlowTool() mcp.Tool {
@@ -332,7 +333,7 @@ func looksLikeJSON(data []byte) bool {
 
 func isDiffJSONContentType(ct string) bool {
 	ct = strings.ToLower(ct)
-	return strings.Contains(ct, "application/json") || strings.HasSuffix(strings.Split(ct, ";")[0], "+json")
+	return strings.Contains(ct, mimeJSON) || strings.HasSuffix(strings.Split(ct, ";")[0], "+json")
 }
 
 func isDiffTextContentType(ct string) bool {
@@ -341,10 +342,10 @@ func isDiffTextContentType(ct string) bool {
 		return true
 	}
 	textTypes := []string{
-		"application/xml",
-		"application/x-www-form-urlencoded",
-		"application/javascript",
-		"application/ecmascript",
+		mimeXML,
+		mimeFormURLEncoded,
+		mimeJavaScript,
+		mimeEcmaScript,
 	}
 	for _, t := range textTypes {
 		if strings.Contains(ct, t) {
@@ -417,7 +418,7 @@ func diffJSONBodies(bodyA, bodyB []byte, maxLines int) *protocol.BodyDiff {
 	}
 
 	return &protocol.BodyDiff{
-		Format:         "json",
+		Format:         formatJSON,
 		Added:          added,
 		Removed:        removed,
 		Changed:        changed,

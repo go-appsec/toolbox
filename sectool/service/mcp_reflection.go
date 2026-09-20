@@ -26,12 +26,15 @@ import (
 
 const minReflectionValueLen = 4
 
+// jsonToken labels JSON-sourced reflections and media-type categories.
+const jsonToken = "json"
+
 // Standard headers unlikely to represent user-controlled reflection vectors.
 // Uses lowercase keys for case-insensitive lookup (matches H2 lowercase headers directly).
 var skipReflectionHeader = map[string]bool{
-	"host":                true,
-	"content-type":        true,
-	"content-length":      true,
+	headerHost:            true,
+	headerContentType:     true,
+	headerContentLength:   true,
 	"cookie":              true,
 	"accept":              true,
 	"accept-encoding":     true,
@@ -149,7 +152,7 @@ func extractParams(rawReq []byte) []protocol.Reflection {
 		mediaType, mediaParams, _ := mime.ParseMediaType(contentType)
 
 		switch {
-		case mediaType == "application/x-www-form-urlencoded":
+		case mediaType == mimeFormURLEncoded:
 			values, _ := url.ParseQuery(string(body))
 			for name, vals := range values {
 				for _, v := range vals {
@@ -157,7 +160,7 @@ func extractParams(rawReq []byte) []protocol.Reflection {
 				}
 			}
 
-		case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
+		case mediaType == mimeJSON || strings.HasSuffix(mediaType, "+json"):
 			var data interface{}
 			if err := json.Unmarshal(body, &data); err == nil {
 				for path, val := range flattenJSON("", data) {
@@ -168,7 +171,7 @@ func extractParams(rawReq []byte) []protocol.Reflection {
 					if str == "" {
 						continue
 					}
-					params = append(params, protocol.Reflection{Name: path, Source: "json", Value: str})
+					params = append(params, protocol.Reflection{Name: path, Source: jsonToken, Value: str})
 				}
 			}
 
@@ -371,11 +374,11 @@ func inferBaseContext(respHeaderMap map[string][]string) string {
 	}
 	mediaType, _, _ := mime.ParseMediaType(ct)
 	switch {
-	case mediaType == "application/javascript" || mediaType == "text/javascript" ||
-		mediaType == "application/x-javascript":
+	case mediaType == mimeJavaScript || mediaType == mimeTextJavascript ||
+		mediaType == mimeXJavaScript:
 		return "script"
-	case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
-		return "json"
+	case mediaType == mimeJSON || strings.HasSuffix(mediaType, "+json"):
+		return jsonToken
 	case mediaType == "text/css":
 		return "css"
 	default:
@@ -433,7 +436,7 @@ func classifyReflectionContext(body string, matchStart int) string {
 	if lastBrace >= 0 {
 		segment := before[lastBrace:]
 		if strings.Contains(segment, ":") && !strings.Contains(segment, "}") {
-			return "json"
+			return jsonToken
 		}
 	}
 

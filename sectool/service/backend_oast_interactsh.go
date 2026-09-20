@@ -148,7 +148,7 @@ func (b *InteractshBackend) ProbeRedirectSupport(ctx context.Context) {
 	}
 	defer func() { _ = c.Close() }()
 
-	req, err := http.NewRequestWithContext(probeCtx, "GET", "http://"+c.Domain(), nil)
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, "http://"+c.Domain(), nil)
 	if err != nil {
 		log.Printf("oast: redirect probe failed (build request): %v", err)
 		return

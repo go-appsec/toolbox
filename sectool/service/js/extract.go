@@ -1,6 +1,7 @@
 package js
 
 import (
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -26,7 +27,8 @@ const (
 )
 
 var httpMethods = map[string]struct{}{
-	"GET": {}, "POST": {}, "PUT": {}, "DELETE": {}, "PATCH": {}, "HEAD": {}, "OPTIONS": {},
+	http.MethodGet: {}, http.MethodPost: {}, http.MethodPut: {}, http.MethodDelete: {},
+	http.MethodPatch: {}, http.MethodHead: {}, http.MethodOptions: {},
 }
 
 // Frameworks recognized for route extraction.
@@ -658,7 +660,7 @@ func (v *sinkVisitor) visitMemberCall(d *js.DotExpr, c *js.CallExpr) {
 	if objName == "navigator" && prop == "sendBeacon" && len(c.Args.List) >= 1 {
 		if u, ok := v.resolveURLArg(c.Args.List[0].Value); ok && isURLArg(u) {
 			v.addEndpoint(protocol.ExtractedEndpoint{
-				Method:  "POST",
+				Method:  http.MethodPost,
 				URL:     u,
 				Library: libBeacon,
 			}, c, c.Args.List[0].Value, detailExtras{})
@@ -703,7 +705,8 @@ func (v *sinkVisitor) visitMemberCall(d *js.DotExpr, c *js.CallExpr) {
 func (v *sinkVisitor) visitAxiosCall(method string, c *js.CallExpr) {
 	upper := strings.ToUpper(method)
 	switch upper {
-	case "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS":
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete,
+		http.MethodPatch, http.MethodHead, http.MethodOptions:
 	default:
 		return
 	}
@@ -717,7 +720,7 @@ func (v *sinkVisitor) visitAxiosCall(method string, c *js.CallExpr) {
 	// axios.post/put/patch(url, data[, config]); axios.get/delete(url[, config]).
 	var ex detailExtras
 	switch upper {
-	case "POST", "PUT", "PATCH":
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
 		if len(c.Args.List) >= 2 {
 			ex = configExtras(libAxios, objArg(c, 2))
 			ex.body = bodyFromValue(c.Args.List[1].Value)
@@ -745,10 +748,10 @@ func (v *sinkVisitor) visitJQueryCall(method string, c *js.CallExpr) {
 
 	switch strings.ToLower(method) {
 	case "get", "getjson":
-		m = "GET"
+		m = http.MethodGet
 		url, ok = v.resolveURLArg(urlArg)
 	case "post":
-		m = "POST"
+		m = http.MethodPost
 		url, ok = v.resolveURLArg(urlArg)
 		if len(c.Args.List) >= 2 {
 			ex.body = bodyFromValue(c.Args.List[1].Value)

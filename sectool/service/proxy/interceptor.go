@@ -37,7 +37,7 @@ func BuildInterceptedH1Response(intercepted *InterceptedResponse) *types.RawHTTP
 		})
 	}
 	return &types.RawHTTP1Response{
-		Version:    "HTTP/1.1",
+		Version:    versionHTTP11,
 		StatusCode: intercepted.StatusCode,
 		StatusText: http.StatusText(intercepted.StatusCode),
 		Headers:    headers,

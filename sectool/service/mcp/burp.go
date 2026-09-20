@@ -41,6 +41,43 @@ const (
 	endOfItemsMarker = "Reached end of items"
 )
 
+// Burp API JSON argument keys passed to tool calls.
+const (
+	keyCount         = "count"
+	keyOffset        = "offset"
+	keyRegex         = "regex"
+	keyContent       = "content"
+	keyTabName       = "tabName"
+	keyTargetHost    = "targetHostname"
+	keyTargetPort    = "targetPort"
+	keyUsesHTTPS     = "usesHttps"
+	keyIntercepting  = "intercepting"
+	keyRequestBody   = "requestBody"
+	keyPseudoHeaders = "pseudoHeaders"
+	keyHeaders       = "headers"
+	keyRunning       = "running"
+	keyText          = "text"
+	keyJSON          = "json"
+)
+
+// Burp MCP tool names invoked via callTool.
+const (
+	toolGetProxyHistory             = "get_proxy_http_history"
+	toolGetProxyHistoryRegex        = "get_proxy_http_history_regex"
+	toolSendHTTP1Request            = "send_http1_request"
+	toolCreateRepeaterTab           = "create_repeater_tab"
+	toolSetInterceptState           = "set_proxy_intercept_state"
+	toolSendHTTP2Request            = "send_http2_request"
+	toolSendToIntruder              = "send_to_intruder"
+	toolGetWebsocketHistory         = "get_proxy_websocket_history"
+	toolGetWebsocketHistoryRegex    = "get_proxy_websocket_history_regex"
+	toolSetTaskExecutionEngineState = "set_task_execution_engine_state"
+	toolGetActiveEditorContents     = "get_active_editor_contents"
+	toolSetActiveEditorContents     = "set_active_editor_contents"
+	toolOutputProjectOptions        = "output_project_options"
+	toolSetProjectOptions           = "set_project_options"
+)
+
 // ErrNotConnected is returned when an operation is attempted without a connection.
 var ErrNotConnected = errors.New("not connected to Burp MCP")
 
@@ -363,9 +400,9 @@ func (c *BurpClient) GetProxyHistory(ctx context.Context, count, offset int) ([]
 func (c *BurpClient) GetProxyHistoryRaw(ctx context.Context, count, offset int) (string, error) {
 	var raw string
 	err := c.withConn(ctx, func(opCtx context.Context) error {
-		result, err := c.callTool(opCtx, "get_proxy_http_history", map[string]interface{}{
-			"count":  count,
-			"offset": offset,
+		result, err := c.callTool(opCtx, toolGetProxyHistory, map[string]interface{}{
+			keyCount:  count,
+			keyOffset: offset,
 		})
 		if err != nil {
 			return err
@@ -381,10 +418,10 @@ func (c *BurpClient) GetProxyHistoryRaw(ctx context.Context, count, offset int) 
 func (c *BurpClient) GetProxyHistoryRegex(ctx context.Context, regex string, count, offset int) ([]ProxyHistoryEntry, error) {
 	var entries []ProxyHistoryEntry
 	err := c.withConn(ctx, func(opCtx context.Context) error {
-		result, err := c.callTool(opCtx, "get_proxy_http_history_regex", map[string]interface{}{
-			"regex":  regex,
-			"count":  count,
-			"offset": offset,
+		result, err := c.callTool(opCtx, toolGetProxyHistoryRegex, map[string]interface{}{
+			keyRegex:  regex,
+			keyCount:  count,
+			keyOffset: offset,
 		})
 		if err != nil {
 			return err
@@ -629,11 +666,11 @@ func decodeBurpFieldValue(raw []byte) string {
 func (c *BurpClient) SendHTTP1Request(ctx context.Context, params SendRequestParams) (string, error) {
 	var response string
 	err := c.withConn(ctx, func(opCtx context.Context) error {
-		result, err := c.callTool(opCtx, "send_http1_request", map[string]interface{}{
-			"content":        params.Content,
-			"targetHostname": params.TargetHostname,
-			"targetPort":     params.TargetPort,
-			"usesHttps":      params.UsesHTTPS,
+		result, err := c.callTool(opCtx, toolSendHTTP1Request, map[string]interface{}{
+			keyContent:    params.Content,
+			keyTargetHost: params.TargetHostname,
+			keyTargetPort: params.TargetPort,
+			keyUsesHTTPS:  params.UsesHTTPS,
 		})
 		if err != nil {
 			return err
@@ -648,16 +685,16 @@ func (c *BurpClient) SendHTTP1Request(ctx context.Context, params SendRequestPar
 func (c *BurpClient) CreateRepeaterTab(ctx context.Context, params RepeaterTabParams) error {
 	return c.withConn(ctx, func(opCtx context.Context) error {
 		args := map[string]interface{}{
-			"content":        params.Content,
-			"targetHostname": params.TargetHostname,
-			"targetPort":     params.TargetPort,
-			"usesHttps":      params.UsesHTTPS,
+			keyContent:    params.Content,
+			keyTargetHost: params.TargetHostname,
+			keyTargetPort: params.TargetPort,
+			keyUsesHTTPS:  params.UsesHTTPS,
 		}
 		if params.TabName != "" {
-			args["tabName"] = params.TabName
+			args[keyTabName] = params.TabName
 		}
 
-		_, err := c.callTool(opCtx, "create_repeater_tab", args)
+		_, err := c.callTool(opCtx, toolCreateRepeaterTab, args)
 		return err
 	})
 }
@@ -665,8 +702,8 @@ func (c *BurpClient) CreateRepeaterTab(ctx context.Context, params RepeaterTabPa
 // SetInterceptState enables or disables proxy intercept mode.
 func (c *BurpClient) SetInterceptState(ctx context.Context, intercepting bool) error {
 	return c.withConn(ctx, func(opCtx context.Context) error {
-		_, err := c.callTool(opCtx, "set_proxy_intercept_state", map[string]interface{}{
-			"intercepting": intercepting,
+		_, err := c.callTool(opCtx, toolSetInterceptState, map[string]interface{}{
+			keyIntercepting: intercepting,
 		})
 		return err
 	})
@@ -678,19 +715,19 @@ func (c *BurpClient) SendHTTP2Request(ctx context.Context, params SendHTTP2Reque
 	var response string
 	err := c.withConn(ctx, func(opCtx context.Context) error {
 		args := map[string]interface{}{
-			"targetHostname": params.TargetHostname,
-			"targetPort":     params.TargetPort,
-			"usesHttps":      params.UsesHTTPS,
-			"requestBody":    params.RequestBody,
+			keyTargetHost:  params.TargetHostname,
+			keyTargetPort:  params.TargetPort,
+			keyUsesHTTPS:   params.UsesHTTPS,
+			keyRequestBody: params.RequestBody,
 		}
 		if params.PseudoHeaders != nil {
-			args["pseudoHeaders"] = params.PseudoHeaders
+			args[keyPseudoHeaders] = params.PseudoHeaders
 		}
 		if params.Headers != nil {
-			args["headers"] = params.Headers
+			args[keyHeaders] = params.Headers
 		}
 
-		result, err := c.callTool(opCtx, "send_http2_request", args)
+		result, err := c.callTool(opCtx, toolSendHTTP2Request, args)
 		if err != nil {
 			return err
 		}
@@ -704,16 +741,16 @@ func (c *BurpClient) SendHTTP2Request(ctx context.Context, params SendHTTP2Reque
 func (c *BurpClient) SendToIntruder(ctx context.Context, params IntruderParams) error {
 	return c.withConn(ctx, func(opCtx context.Context) error {
 		args := map[string]interface{}{
-			"content":        params.Content,
-			"targetHostname": params.TargetHostname,
-			"targetPort":     params.TargetPort,
-			"usesHttps":      params.UsesHTTPS,
+			keyContent:    params.Content,
+			keyTargetHost: params.TargetHostname,
+			keyTargetPort: params.TargetPort,
+			keyUsesHTTPS:  params.UsesHTTPS,
 		}
 		if params.TabName != "" {
-			args["tabName"] = params.TabName
+			args[keyTabName] = params.TabName
 		}
 
-		_, err := c.callTool(opCtx, "send_to_intruder", args)
+		_, err := c.callTool(opCtx, toolSendToIntruder, args)
 		return err
 	})
 }
@@ -731,9 +768,9 @@ func (c *BurpClient) GetProxyWebsocketHistory(ctx context.Context, count, offset
 func (c *BurpClient) GetProxyWebsocketHistoryRaw(ctx context.Context, count, offset int) (string, error) {
 	var raw string
 	err := c.withConn(ctx, func(opCtx context.Context) error {
-		result, err := c.callTool(opCtx, "get_proxy_websocket_history", map[string]interface{}{
-			"count":  count,
-			"offset": offset,
+		result, err := c.callTool(opCtx, toolGetWebsocketHistory, map[string]interface{}{
+			keyCount:  count,
+			keyOffset: offset,
 		})
 		if err != nil {
 			return err
@@ -748,10 +785,10 @@ func (c *BurpClient) GetProxyWebsocketHistoryRaw(ctx context.Context, count, off
 func (c *BurpClient) GetProxyWebsocketHistoryRegex(ctx context.Context, regex string, count, offset int) ([]WebSocketHistoryEntry, error) {
 	var entries []WebSocketHistoryEntry
 	err := c.withConn(ctx, func(opCtx context.Context) error {
-		result, err := c.callTool(opCtx, "get_proxy_websocket_history_regex", map[string]interface{}{
-			"regex":  regex,
-			"count":  count,
-			"offset": offset,
+		result, err := c.callTool(opCtx, toolGetWebsocketHistoryRegex, map[string]interface{}{
+			keyRegex:  regex,
+			keyCount:  count,
+			keyOffset: offset,
 		})
 		if err != nil {
 			return err
@@ -802,8 +839,8 @@ func parseWebsocketHistoryNDJSON(text string) ([]WebSocketHistoryEntry, error) {
 // When running=true, tasks will execute; when running=false, tasks are paused.
 func (c *BurpClient) SetTaskExecutionEngineState(ctx context.Context, running bool) error {
 	return c.withConn(ctx, func(opCtx context.Context) error {
-		_, err := c.callTool(opCtx, "set_task_execution_engine_state", map[string]interface{}{
-			"running": running,
+		_, err := c.callTool(opCtx, toolSetTaskExecutionEngineState, map[string]interface{}{
+			keyRunning: running,
 		})
 		return err
 	})
@@ -813,7 +850,7 @@ func (c *BurpClient) SetTaskExecutionEngineState(ctx context.Context, running bo
 func (c *BurpClient) GetActiveEditorContents(ctx context.Context) (string, error) {
 	var contents string
 	err := c.withConn(ctx, func(opCtx context.Context) error {
-		result, err := c.callTool(opCtx, "get_active_editor_contents", map[string]interface{}{})
+		result, err := c.callTool(opCtx, toolGetActiveEditorContents, map[string]interface{}{})
 		if err != nil {
 			return err
 		}
@@ -826,8 +863,8 @@ func (c *BurpClient) GetActiveEditorContents(ctx context.Context) (string, error
 // SetActiveEditorContents sets the contents of the user's active message editor.
 func (c *BurpClient) SetActiveEditorContents(ctx context.Context, text string) error {
 	return c.withConn(ctx, func(opCtx context.Context) error {
-		_, err := c.callTool(opCtx, "set_active_editor_contents", map[string]interface{}{
-			"text": text,
+		_, err := c.callTool(opCtx, toolSetActiveEditorContents, map[string]interface{}{
+			keyText: text,
 		})
 		return err
 	})
@@ -859,7 +896,7 @@ func (c *BurpClient) SetWSMatchReplaceRules(ctx context.Context, rules []MatchRe
 func (c *BurpClient) getMatchReplaceRulesFromKey(ctx context.Context, key string) ([]MatchReplaceRule, error) {
 	var rules []MatchReplaceRule
 	err := c.withConn(ctx, func(opCtx context.Context) error {
-		result, err := c.callTool(opCtx, "output_project_options", map[string]interface{}{})
+		result, err := c.callTool(opCtx, toolOutputProjectOptions, map[string]interface{}{})
 		if err != nil {
 			return err
 		}
@@ -896,9 +933,9 @@ func (c *BurpClient) setMatchReplaceRulesToKey(ctx context.Context, key string, 
 
 		result, err := c.mcpClient.CallTool(opCtx, mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
-				Name: "set_project_options",
+				Name: toolSetProjectOptions,
 				Arguments: map[string]interface{}{
-					"json": string(configJSON),
+					keyJSON: string(configJSON),
 				},
 			},
 		})

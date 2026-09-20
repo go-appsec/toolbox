@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -40,15 +41,15 @@ Supports protocol-level tests (smuggling, CRLF injection) via force.`),
 		mcp.WithString("body", mcp.Description("Replace entire request body")),
 		mcp.WithString("target", mcp.Description("Override destination scheme+host[:port]; keeps original path/query")),
 		withFlexKV("set_headers", "Headers to set as an array of \"Name: Value\" strings. A single entry replaces an existing header of the same name; multiple entries with the same name create duplicates."),
-		mcp.WithArray("remove_headers", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("Header names to remove")),
+		mcp.WithArray("remove_headers", mcp.Items(map[string]interface{}{schemaTypeKey: schemaTypeString}), mcp.Description("Header names to remove")),
 		mcp.WithString("path", mcp.Description("Override request path (include leading '/')")),
 		mcp.WithString("query", mcp.Description("Override entire query string (no leading '?')")),
-		mcp.WithArray("set_query", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("Query params to set (format: 'name=value')")),
-		mcp.WithArray("remove_query", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("Query param names to remove")),
+		mcp.WithArray("set_query", mcp.Items(map[string]interface{}{schemaTypeKey: schemaTypeString}), mcp.Description("Query params to set (format: 'name=value')")),
+		mcp.WithArray("remove_query", mcp.Items(map[string]interface{}{schemaTypeKey: schemaTypeString}), mcp.Description("Query param names to remove")),
 		withFlexJSON("set_json", "JSON fields to set: {\"path\": value} using dot/bracket paths (e.g. {\"user.email\": \"x\", \"items[0].id\": 5}). Values auto-parse: null/true/false/numbers/{}/[], else string. Body must be valid JSON; for form-encoded bodies use set_form."),
-		mcp.WithArray("remove_json", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("JSON fields to remove (same dot/bracket path syntax as set_json: 'user.temp', 'items[2]')")),
+		mcp.WithArray("remove_json", mcp.Items(map[string]interface{}{schemaTypeKey: schemaTypeString}), mcp.Description("JSON fields to remove (same dot/bracket path syntax as set_json: 'user.temp', 'items[2]')")),
 		withFlexKV("set_form", "Form fields to set as object {\"field\": \"value\"} for application/x-www-form-urlencoded bodies. Keys are form-field names; values are strings. Do NOT use on JSON bodies, use set_json."),
-		mcp.WithArray("remove_form", mcp.Items(map[string]interface{}{"type": "string"}), mcp.Description("Form field names to remove (form-encoded bodies only)")),
+		mcp.WithArray("remove_form", mcp.Items(map[string]interface{}{schemaTypeKey: schemaTypeString}), mcp.Description("Form field names to remove (form-encoded bodies only)")),
 		mcp.WithBoolean("follow_redirects", mcp.Description("Follow HTTP redirects (default: false)")),
 		mcp.WithBoolean("force", mcp.Description("Skip validation for protocol-level tests (smuggling, CRLF injection)")),
 		mcp.WithString("stream_strategy", mcp.Description("For streamed flows only: 'per_chunk' (default) replays chunk-by-chunk in order; 'collapsed' merges chunks (rejected by adapters requiring ordered framing)")),
@@ -298,7 +299,7 @@ func (m *mcpServer) handleRequestSend(ctx context.Context, req mcp.CallToolReque
 		return errorResult("url is required"), nil
 	}
 
-	method := req.GetString("method", "GET")
+	method := req.GetString("method", http.MethodGet)
 
 	// Parse base headers: object {"Name":"Value"} or array ["Name: Value"]
 	var headers []string
@@ -417,7 +418,7 @@ func (m *mcpServer) executeSendFlow(ctx context.Context, rawRequest []byte, http
 		bodyModified = true
 		// Fill in Content-Type for request_send with set_form but no headers set
 		if extractHeader(string(headers), "Content-Type") == "" {
-			headers = setHeader(headers, "Content-Type", "application/x-www-form-urlencoded")
+			headers = setHeader(headers, "Content-Type", mimeFormURLEncoded)
 		}
 	}
 

@@ -10,7 +10,26 @@ import (
 	"github.com/go-appsec/toolbox/sectool/cliutil"
 )
 
-var proxySubcommands = []string{"summary", "list", "get", "cookies", "export", "rule", "clear", "help"}
+// helpSubcommand is the help subcommand name shared by proxy and rule.
+const helpSubcommand = "help"
+
+// Proxy subcommand names used in dispatch and usage listing.
+const (
+	proxySubcmdSummary = "summary"
+	proxySubcmdList    = "list"
+	proxySubcmdGet     = "get"
+	proxySubcmdCookies = "cookies"
+	proxySubcmdExport  = "export"
+	proxySubcmdRule    = "rule"
+	proxySubcmdClear   = "clear"
+
+	// Rule subcommand names.
+	ruleSubcmdList   = "list"
+	ruleSubcmdAdd    = "add"
+	ruleSubcmdDelete = "delete"
+)
+
+var proxySubcommands = []string{proxySubcmdSummary, proxySubcmdList, proxySubcmdGet, proxySubcmdCookies, proxySubcmdExport, proxySubcmdRule, proxySubcmdClear, helpSubcommand}
 
 func Parse(args []string, mcpURL string) error {
 	if len(args) < 1 {
@@ -19,21 +38,21 @@ func Parse(args []string, mcpURL string) error {
 	}
 
 	switch args[0] {
-	case "summary":
+	case proxySubcmdSummary:
 		return parseSummary(args[1:], mcpURL)
-	case "list", "poll":
+	case proxySubcmdList, "poll":
 		return parseList(args[1:], mcpURL)
-	case "get":
+	case proxySubcmdGet:
 		return parseGet(args[1:], mcpURL)
-	case "cookies":
+	case proxySubcmdCookies:
 		return parseCookies(args[1:], mcpURL)
-	case "export":
+	case proxySubcmdExport:
 		return parseExport(args[1:], mcpURL)
-	case "rule":
+	case proxySubcmdRule:
 		return parseRule(args[1:], mcpURL)
-	case "clear":
+	case proxySubcmdClear:
 		return parseClear(args[1:], mcpURL)
-	case "help", "--help", "-h":
+	case helpSubcommand, "--help", "-h":
 		printUsage()
 		return nil
 	default:
@@ -349,7 +368,7 @@ Options:
 	return export(mcpURL, fs.Args()[0])
 }
 
-var ruleSubcommands = []string{"list", "add", "delete", "help"}
+var ruleSubcommands = []string{ruleSubcmdList, ruleSubcmdAdd, ruleSubcmdDelete, helpSubcommand}
 
 func parseRule(args []string, mcpURL string) error {
 	if len(args) < 1 {
@@ -358,13 +377,13 @@ func parseRule(args []string, mcpURL string) error {
 	}
 
 	switch args[0] {
-	case "list":
+	case ruleSubcmdList:
 		return parseRuleList(args[1:], mcpURL)
-	case "add":
+	case ruleSubcmdAdd:
 		return parseRuleAdd(args[1:], mcpURL)
-	case "delete":
+	case ruleSubcmdDelete:
 		return parseRuleDelete(args[1:], mcpURL)
-	case "help", "--help", "-h":
+	case helpSubcommand, "--help", "-h":
 		printRuleUsage()
 		return nil
 	default:

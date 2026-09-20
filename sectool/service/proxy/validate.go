@@ -36,7 +36,7 @@ func validateRequest(req *types.RawHTTP1Request) error {
 	}
 
 	// Version should be HTTP/1.0 or HTTP/1.1
-	if req.Version != "HTTP/1.0" && req.Version != "HTTP/1.1" {
+	if req.Version != "HTTP/1.0" && req.Version != versionHTTP11 {
 		issues = append(issues, fmt.Sprintf("invalid HTTP version: %q (expected HTTP/1.0 or HTTP/1.1)", req.Version))
 	}
 
@@ -78,7 +78,7 @@ func validateRequest(req *types.RawHTTP1Request) error {
 
 	// Host header: required for HTTP/1.1, at most one
 	hostCount := countHeaders(req.Headers, "Host")
-	if req.Version == "HTTP/1.1" && hostCount == 0 {
+	if req.Version == versionHTTP11 && hostCount == 0 {
 		issues = append(issues, "missing Host header")
 	}
 	if hostCount > 1 {

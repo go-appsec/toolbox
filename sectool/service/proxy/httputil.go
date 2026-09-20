@@ -37,7 +37,7 @@ func ExtractMethod(raw []byte) string {
 func sendError(conn net.Conn, code int, message string) {
 	body := []byte(message + "\n")
 	resp := &types.RawHTTP1Response{
-		Version:    "HTTP/1.1",
+		Version:    versionHTTP11,
 		StatusCode: code,
 		StatusText: message,
 		Headers: []types.Header{

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -200,7 +201,7 @@ func parseResponseHead(br *bufio.Reader, requestMethod string) (resp *types.RawH
 	headBareLF = headBareLF || statusLineEnding == types.EndingBareLF
 	headBareCR = headBareCR || statusLineEnding == types.EndingBareCR
 	// HEAD and 1xx/204/304 responses have no body
-	bodyExpected = requestMethod != "HEAD" && code >= 200 && code != 204 && code != 304
+	bodyExpected = requestMethod != http.MethodHead && code >= 200 && code != 204 && code != 304
 	return resp, bodyExpected, headBareLF, headBareCR, nil
 }
 
@@ -289,7 +290,7 @@ func ParseRequestLine(line []byte) (method, path, query, version string, err err
 	if len(parts) >= 3 {
 		version = strings.TrimSpace(parts[2])
 	} else {
-		version = "HTTP/1.1" // Default if missing
+		version = versionHTTP11 // Default if missing
 	}
 
 	// Handle proxy-form URLs (absolute URIs like http://host/path)

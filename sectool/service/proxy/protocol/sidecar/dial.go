@@ -148,7 +148,7 @@ func (s *session) recordDial(rec *Record, parentFlowID, host string, port int, s
 		Request: &types.Message{
 			Method:  "DIAL",
 			Path:    addr,
-			Version: "HTTP/1.1",
+			Version: versionHTTP11,
 			Headers: types.Headers{{Name: "Host", Value: addr}},
 		},
 		StartedAt:         s.m.now(),

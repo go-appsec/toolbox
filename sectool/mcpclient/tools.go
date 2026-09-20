@@ -6,6 +6,12 @@ import (
 	"github.com/go-appsec/toolbox/sectool/protocol"
 )
 
+// MCP tool argument keys.
+const (
+	keyFlowID    = "flow_id"
+	keySessionID = "session_id"
+)
+
 // ProxyPoll calls proxy_poll and returns summary or list of flows.
 func (c *Client) ProxyPoll(ctx context.Context, opts ProxyPollOpts) (*protocol.ProxyPollResponse, error) {
 	args := make(map[string]interface{})
@@ -67,7 +73,7 @@ func (c *Client) ProxyPoll(ctx context.Context, opts ProxyPollOpts) (*protocol.P
 
 // FlowGet calls flow_get and returns full request/response data.
 func (c *Client) FlowGet(ctx context.Context, flowID string, opts FlowGetOpts) (*protocol.FlowGetResponse, error) {
-	args := map[string]interface{}{"flow_id": flowID}
+	args := map[string]interface{}{keyFlowID: flowID}
 	if opts.FullBody {
 		args["full_body"] = true
 	}
@@ -175,7 +181,7 @@ func (c *Client) CookieJar(ctx context.Context, opts CookieJarOpts) (*protocol.C
 // ReplaySend calls replay_send and returns the result.
 func (c *Client) ReplaySend(ctx context.Context, opts ReplaySendOpts) (*protocol.ReplaySendResponse, error) {
 	args := map[string]interface{}{
-		"flow_id": opts.FlowID,
+		keyFlowID: opts.FlowID,
 	}
 	if opts.Method != "" {
 		args["method"] = opts.Method
@@ -380,7 +386,7 @@ func (c *Client) CrawlCreate(ctx context.Context, opts CrawlCreateOpts) (*protoc
 // CrawlSeed calls crawl_seed to add seeds to a session.
 func (c *Client) CrawlSeed(ctx context.Context, sessionID string, seedURLs, seedFlows string) (*protocol.CrawlSeedResponse, error) {
 	args := map[string]interface{}{
-		"session_id": sessionID,
+		keySessionID: sessionID,
 	}
 	if seedURLs != "" {
 		args["seed_urls"] = seedURLs
@@ -399,7 +405,7 @@ func (c *Client) CrawlSeed(ctx context.Context, sessionID string, seedURLs, seed
 // CrawlStatus calls crawl_status and returns session status.
 func (c *Client) CrawlStatus(ctx context.Context, sessionID string) (*protocol.CrawlStatusResponse, error) {
 	var resp protocol.CrawlStatusResponse
-	if err := c.CallToolJSON(ctx, "crawl_status", map[string]interface{}{"session_id": sessionID}, &resp); err != nil {
+	if err := c.CallToolJSON(ctx, "crawl_status", map[string]interface{}{keySessionID: sessionID}, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -408,7 +414,7 @@ func (c *Client) CrawlStatus(ctx context.Context, sessionID string) (*protocol.C
 // CrawlPoll calls crawl_poll and returns summary, flows, forms, or errors.
 func (c *Client) CrawlPoll(ctx context.Context, sessionID string, opts CrawlPollOpts) (*protocol.CrawlPollResponse, error) {
 	args := map[string]interface{}{
-		"session_id": sessionID,
+		keySessionID: sessionID,
 	}
 	if opts.OutputMode != "" {
 		args["output_mode"] = opts.OutputMode
@@ -470,7 +476,7 @@ func (c *Client) CrawlSessions(ctx context.Context, limit int) (*protocol.CrawlS
 
 // CrawlStop calls crawl_stop to stop a session.
 func (c *Client) CrawlStop(ctx context.Context, sessionID string) error {
-	_, err := c.CallTool(ctx, "crawl_stop", map[string]interface{}{"session_id": sessionID})
+	_, err := c.CallTool(ctx, "crawl_stop", map[string]interface{}{keySessionID: sessionID})
 	return err
 }
 
@@ -494,7 +500,7 @@ func (c *Client) DiffFlow(ctx context.Context, opts DiffFlowOpts) (*protocol.Dif
 
 // FindReflected calls find_reflected and returns detected reflections.
 func (c *Client) FindReflected(ctx context.Context, flowID string) (*protocol.FindReflectedResponse, error) {
-	args := map[string]interface{}{"flow_id": flowID}
+	args := map[string]interface{}{keyFlowID: flowID}
 	var resp protocol.FindReflectedResponse
 	if err := c.CallToolJSON(ctx, "find_reflected", args, &resp); err != nil {
 		return nil, err
@@ -506,7 +512,7 @@ func (c *Client) FindReflected(ctx context.Context, flowID string) (*protocol.Fi
 // the endpoint scope ("same-origin" (default), "summary", "full", or a host set).
 // includeAssets keeps static-asset references that are otherwise dropped as noise.
 func (c *Client) JSAnalyze(ctx context.Context, flowID, origin string, includeAssets bool) (*protocol.JSAnalyzeResponse, error) {
-	args := map[string]interface{}{"flow_id": flowID}
+	args := map[string]interface{}{keyFlowID: flowID}
 	if origin != "" {
 		args["origin"] = origin
 	}

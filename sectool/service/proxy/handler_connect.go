@@ -89,7 +89,7 @@ func (h *connectHandler) Handle(ctx context.Context, clientConn net.Conn, client
 		Req: &types.RawHTTP1Request{
 			Method:  "CONNECT",
 			Path:    hostPort,
-			Version: "HTTP/1.1",
+			Version: versionHTTP11,
 			Headers: []types.Header{{Name: "Host", Value: hostPort}},
 		},
 		Target: target,

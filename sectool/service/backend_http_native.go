@@ -740,7 +740,7 @@ func (b *NativeProxyBackend) ApplyRequestBodyOnlyRules(body []byte, headers type
 		}
 	}
 
-	encoding := headers.Get("content-encoding")
+	encoding := headers.Get(headerContentEncoding)
 	result := applyBodyRulesWithCompression(body, encoding, bodyRules)
 
 	if result.err != nil {
@@ -766,7 +766,7 @@ func (b *NativeProxyBackend) ApplyResponseBodyOnlyRules(body []byte, headers typ
 		}
 	}
 
-	encoding := headers.Get("content-encoding")
+	encoding := headers.Get(headerContentEncoding)
 	result := applyBodyRulesWithCompression(body, encoding, bodyRules)
 
 	if result.err != nil {

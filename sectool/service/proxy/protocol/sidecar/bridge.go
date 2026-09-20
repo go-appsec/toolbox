@@ -15,6 +15,9 @@ import (
 // probeTimeout bounds a claim_probe round-trip during connection claiming.
 const probeTimeout = 5 * time.Second
 
+// versionHTTP11 is the HTTP/1.1 protocol token used when synthesizing messages.
+const versionHTTP11 = "HTTP/1.1"
+
 // bridge fronts a registered sidecar as an in-process adapter, routing matching
 // proxy connections to the sidecar through its claim seams.
 type bridge struct {
@@ -156,10 +159,10 @@ func (b *bridge) runProbe(c *protocol.EarlyClaimCtx, ec *earlyClaim) bool {
 // a 200 for a connect tunnel.
 func upgradeResponse(c *protocol.UpgradeClaimCtx) *types.RawHTTP1Response {
 	if c.Signal == signalConnect {
-		return &types.RawHTTP1Response{Version: "HTTP/1.1", StatusCode: 200, StatusText: "Connection Established"}
+		return &types.RawHTTP1Response{Version: versionHTTP11, StatusCode: 200, StatusText: "Connection Established"}
 	}
 	return &types.RawHTTP1Response{
-		Version:    "HTTP/1.1",
+		Version:    versionHTTP11,
 		StatusCode: 101,
 		StatusText: "Switching Protocols",
 		Headers: types.Headers{

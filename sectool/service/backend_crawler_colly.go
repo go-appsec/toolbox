@@ -1010,7 +1010,7 @@ func (b *CollyBackend) resolveSeeds(ctx context.Context, seeds []CrawlSeed, expl
 				if idx := strings.Index(line, ":"); idx > 0 {
 					name := strings.TrimSpace(line[:idx])
 					// Skip headers set / replaced by Colly
-					if nameLower := strings.ToLower(name); nameLower != "host" && nameLower != "content-length" {
+					if nameLower := strings.ToLower(name); nameLower != headerHost && nameLower != headerContentLength {
 						seedHeaders[name] = strings.TrimSpace(line[idx+1:])
 					}
 				}
@@ -1145,10 +1145,10 @@ func isTextContentType(ct string) bool {
 	ct = strings.ToLower(ct)
 	return slices.ContainsFunc([]string{
 		"text/",
-		"application/json",
-		"application/xml",
-		"application/javascript",
-		"application/x-javascript",
+		mimeJSON,
+		mimeXML,
+		mimeJavaScript,
+		mimeXJavaScript,
 	}, func(allowed string) bool {
 		return strings.HasPrefix(ct, allowed)
 	})
@@ -1212,7 +1212,7 @@ func extractForm(e *colly.HTMLElement) protocol.CrawlForm {
 
 	method := strings.ToUpper(e.Attr("method"))
 	if method == "" {
-		method = "GET"
+		method = http.MethodGet
 	}
 
 	form := protocol.CrawlForm{

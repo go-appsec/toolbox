@@ -179,7 +179,7 @@ func flowMessageToMessage(m *wire.FlowMessage) *types.Message {
 		Method:     m.Method,
 		Path:       m.Path,
 		Query:      m.Query,
-		Version:    "HTTP/1.1",
+		Version:    versionHTTP11,
 		StatusCode: m.StatusCode,
 		StatusText: m.StatusText,
 		Body:       m.Body,
