@@ -374,3 +374,19 @@ func TestNoteStoreSplitReferencedFlows(t *testing.T) {
 		assert.Empty(t, other)
 	})
 }
+
+func TestNoteStore_ResumeCounts(t *testing.T) {
+	t.Parallel()
+
+	storage := NewMemStorage()
+	t.Cleanup(func() { _ = storage.Close() })
+
+	first := NewNoteStore(storage)
+	require.NoError(t, first.Create(&NoteMeta{Type: "finding", Content: "one"}))
+	require.NoError(t, first.Create(&NoteMeta{Type: "finding", Content: "two"}))
+	require.NoError(t, first.Delete(first.List(NoteListOptions{})[0].NoteID))
+
+	// A fresh store over the same storage simulates a restart
+	second := NewNoteStore(storage)
+	assert.Equal(t, 1, second.Count())
+}

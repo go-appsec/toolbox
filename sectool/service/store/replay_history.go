@@ -13,7 +13,12 @@ import (
 	"github.com/go-analyze/bulk"
 )
 
-const replayPayloadSuffix = ":p"
+const (
+	replayPayloadSuffix = ":p"
+	// replayCursorKey holds the proxy_poll "since=last" flow cursor; '_'
+	// prefixes are reserved for store metadata and excluded from entry keys.
+	replayCursorKey = "_cursor:flow"
+)
 
 // ReplayHistoryMeta holds lightweight metadata for a replay entry.
 // Used by summary/list paths to avoid deserializing full request/response bodies.
@@ -68,7 +73,6 @@ func (e *ReplayHistoryEntry) Duration() time.Duration {
 type ReplayHistoryStore struct {
 	storage Storage
 	mu      sync.RWMutex
-	count   int
 }
 
 // NewReplayHistoryStore creates a new ReplayHistoryStore backed by the given storage.
@@ -86,9 +90,7 @@ func (s *ReplayHistoryStore) Store(entry *ReplayHistoryEntry) {
 	if entry.CreatedAt.IsZero() {
 		entry.CreatedAt = time.Now()
 	}
-	if s.persistLocked(entry) {
-		s.count++
-	}
+	s.persistLocked(entry)
 }
 
 // Complete attaches a response to an already-stored replay entry: the two-phase
@@ -197,10 +199,11 @@ func (s *ReplayHistoryStore) getLocked(flowID string) (*ReplayHistoryEntry, bool
 	}, true
 }
 
-// metaKeys returns all meta keys (excluding payload keys). Caller must hold mu.
+// metaKeys returns all entry meta keys, excluding payload keys and '_'-prefixed
+// store metadata. Caller must hold mu.
 func (s *ReplayHistoryStore) metaKeys() []string {
 	return bulk.SliceFilterInPlace(func(k string) bool {
-		return !strings.HasSuffix(k, replayPayloadSuffix)
+		return !strings.HasSuffix(k, replayPayloadSuffix) && !strings.HasPrefix(k, "_")
 	}, s.storage.KeySet())
 }
 
@@ -251,12 +254,32 @@ func (s *ReplayHistoryStore) ListMeta() []ReplayHistoryMeta {
 	return result
 }
 
+// LastFlowID returns the persisted proxy_poll "since=last" flow cursor.
+func (s *ReplayHistoryStore) LastFlowID() (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	data, found, err := s.storage.Get(replayCursorKey)
+	if err != nil || !found {
+		return "", false
+	}
+	return string(data), true
+}
+
+// SetLastFlowID persists the proxy_poll "since=last" flow cursor.
+func (s *ReplayHistoryStore) SetLastFlowID(flowID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.storage.Set(replayCursorKey, []byte(flowID))
+}
+
 // Count returns the number of stored replay entries.
 func (s *ReplayHistoryStore) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.count
+	return len(s.metaKeys())
 }
 
 // Clear removes all entries.
@@ -264,7 +287,6 @@ func (s *ReplayHistoryStore) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.count = 0
 	if err := s.storage.DeleteAll(); err != nil {
 		log.Printf("replay history store clear error: %v", err)
 	}
@@ -294,7 +316,6 @@ func (s *ReplayHistoryStore) Delete(flowIDs []string) int {
 		if err := s.storage.Delete(fid + replayPayloadSuffix); err != nil {
 			log.Printf("replay history store delete payload %s: %v", fid, err)
 		}
-		s.count--
 		deleted++
 	}
 	return deleted

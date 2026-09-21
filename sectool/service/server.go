@@ -149,6 +149,11 @@ func newServer(flags MCPServerFlags, storageDir string, storageProvider store.Pr
 		crawlerBackend:     cb,
 	}
 
+	// Resume the proxy_poll "since=last" cursor from a prior run, if any
+	if flowID, ok := s.replayHistoryStore.LastFlowID(); ok {
+		s.lastFlowID.Store(flowID)
+	}
+
 	return s, nil
 }
 

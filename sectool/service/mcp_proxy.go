@@ -368,7 +368,11 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 		log.Printf("proxy/poll: %d flows (host=%q path=%q method=%q status=%q)", len(flows), listReq.Host, listReq.Path, listReq.Method, listReq.Status)
 
 		if len(flows) > 0 {
-			m.service.lastFlowID.Store(flows[len(flows)-1].FlowID)
+			flowID := flows[len(flows)-1].FlowID
+			m.service.lastFlowID.Store(flowID)
+			if err := m.service.replayHistoryStore.SetLastFlowID(flowID); err != nil {
+				log.Printf("proxy/poll: persist flow cursor: %v", err)
+			}
 		}
 
 		noteStr := strings.Join(notes, "; ")

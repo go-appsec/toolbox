@@ -30,11 +30,12 @@ type CrawlSessionInfo struct {
 // session. Flow bodies live under per-flow keys; this record keeps discovery order.
 type CrawlSessionData struct {
 	CrawlSessionInfo
-	StartedAt    time.Time             `msgpack:"sa"`
-	LastActivity time.Time             `msgpack:"la"`
-	FlowIDs      []string              `msgpack:"fids"` // discovery order
-	Forms        []protocol.CrawlForm  `msgpack:"fm"`
-	Errors       []protocol.CrawlError `msgpack:"er"`
+	StartedAt       time.Time             `msgpack:"sa"`
+	LastActivity    time.Time             `msgpack:"la"`
+	FlowIDs         []string              `msgpack:"fids"` // discovery order
+	Forms           []protocol.CrawlForm  `msgpack:"fm"`
+	Errors          []protocol.CrawlError `msgpack:"er"`
+	LastReturnedIdx int                   `msgpack:"lri,omitempty"` // "since last" list cursor
 }
 
 // CrawlFlow is a single captured request/response from crawling; the canonical
@@ -130,6 +131,25 @@ func (s *CrawlStore) UpdateState(sessionID string, state string) error {
 	if err := s.persistLocked(entry); err != nil {
 		entry.data.State = prevState
 		entry.data.LastActivity = prevActivity
+		return err
+	}
+	return nil
+}
+
+// UpdateCursor persists a session's "since last" list cursor without touching
+// LastActivity.
+func (s *CrawlStore) UpdateCursor(sessionID string, idx int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry := s.lookupLocked(sessionID)
+	if entry == nil {
+		return fmt.Errorf("crawl session %q not found", sessionID)
+	}
+	prevIdx := entry.data.LastReturnedIdx
+	entry.data.LastReturnedIdx = idx
+	if err := s.persistLocked(entry); err != nil {
+		entry.data.LastReturnedIdx = prevIdx
 		return err
 	}
 	return nil

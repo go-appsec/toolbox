@@ -209,3 +209,23 @@ func TestOastStore_ListExcludesReverseIndices(t *testing.T) {
 	list := s.List()
 	assert.Len(t, list, 2)
 }
+
+func TestOastStore_UpdatePollCursor(t *testing.T) {
+	t.Parallel()
+
+	s, storage := newTestOastStore(t)
+	require.NoError(t, s.CreateSession(testInfo("sess1")))
+
+	require.NoError(t, s.UpdatePollCursor("sess1", 7))
+	rec, ok := s.Get("sess1")
+	require.True(t, ok)
+	assert.Equal(t, 7, rec.LastPollIdx)
+
+	// A fresh store over the same storage simulates a restart
+	restarted := NewOastStore(storage)
+	rec, ok = restarted.Get("sess1")
+	require.True(t, ok)
+	assert.Equal(t, 7, rec.LastPollIdx)
+
+	assert.ErrorIs(t, s.UpdatePollCursor("missing", 1), ErrOastNotFound)
+}

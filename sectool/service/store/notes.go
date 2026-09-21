@@ -38,7 +38,6 @@ type NoteListOptions struct {
 type NoteStore struct {
 	storage Storage
 	mu      sync.RWMutex
-	count   int
 }
 
 // NewNoteStore creates a new NoteStore backed by the given storage.
@@ -66,7 +65,6 @@ func (s *NoteStore) Save(note *NoteMeta) error {
 			oldFlowIDs = existing.FlowIDs
 		} else {
 			// note_id provided but not found - treat as new
-			isNew = true
 			note.CreatedAt = now
 		}
 	}
@@ -75,9 +73,6 @@ func (s *NoteStore) Save(note *NoteMeta) error {
 		return err
 	}
 
-	if isNew {
-		s.count++
-	}
 	return nil
 }
 
@@ -96,7 +91,6 @@ func (s *NoteStore) Create(note *NoteMeta) error {
 		return err
 	}
 
-	s.count++
 	return nil
 }
 
@@ -165,7 +159,6 @@ func (s *NoteStore) Delete(noteID string) error {
 
 	// Remove from reverse index
 	s.updateReverseIndex(noteID, existing.FlowIDs, nil)
-	s.count--
 	return nil
 }
 
@@ -287,7 +280,7 @@ func (s *NoteStore) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.count
+	return len(s.noteKeys())
 }
 
 func (s *NoteStore) Close(_ context.Context) error {

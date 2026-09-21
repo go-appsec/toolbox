@@ -68,7 +68,7 @@ type crawlSession struct {
 	urlsSeen        map[string]bool
 	urlsQueued      int
 	requestCount    int // for MaxRequests enforcement
-	lastReturnedIdx int // for --since last feature
+	lastReturnedIdx int // "since last" list cursor; persisted via CrawlStore for restart resume
 
 	// seedHeaders from resolved seed flows (auth cookies, tokens, etc.)
 	// Applied to all requests; can be extended via AddSeeds
@@ -834,6 +834,9 @@ func (b *CollyBackend) ListFlows(ctx context.Context, sessionID string, opts Cra
 		maxIdx := filtered[len(filtered)-1].idx + 1
 		if maxIdx > sess.lastReturnedIdx {
 			sess.lastReturnedIdx = maxIdx
+			if err := b.crawlStore.UpdateCursor(sessionID, sess.lastReturnedIdx); err != nil {
+				log.Printf("crawl: session %s persist list cursor: %v", sessionID, err)
+			}
 		}
 	}
 

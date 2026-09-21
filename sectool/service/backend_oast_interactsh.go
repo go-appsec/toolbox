@@ -64,7 +64,7 @@ type oastSession struct {
 
 	mu          sync.Mutex
 	notify      chan struct{} // closed when new events arrive, then replaced
-	lastPollIdx int           // index after last poll (for "last" filter), not persisted
+	lastPollIdx int           // index after last poll; persisted via OastStore for restart resume
 	stopped     bool
 }
 
@@ -307,6 +307,9 @@ func (b *InteractshBackend) persistEventLocked(sess *oastSession, ev store.OastE
 	}
 	if dropped && sess.lastPollIdx > 0 {
 		sess.lastPollIdx--
+		if err := b.oastStore.UpdatePollCursor(sess.info.ID, sess.lastPollIdx); err != nil {
+			log.Printf("oast: session %s persist poll cursor: %v", sess.info.ID, err)
+		}
 	}
 	close(sess.notify)
 	sess.notify = make(chan struct{})
@@ -411,6 +414,9 @@ func (b *InteractshBackend) PollSession(ctx context.Context, idOrDomain string, 
 			}
 			if len(events) > 0 {
 				sess.lastPollIdx = advanceLastPollIdx(events, rec.Events)
+				if err := b.oastStore.UpdatePollCursor(sess.info.ID, sess.lastPollIdx); err != nil {
+					log.Printf("oast: session %s persist poll cursor: %v", sess.info.ID, err)
+				}
 			}
 			result := &OastPollResultInfo{
 				Events:       events,

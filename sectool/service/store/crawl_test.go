@@ -252,3 +252,25 @@ func TestCrawlStore_HydrateFromStorage(t *testing.T) {
 		assert.Equal(t, "f1", flows[0].ID)
 	})
 }
+
+func TestCrawlStore_UpdateCursor(t *testing.T) {
+	t.Parallel()
+
+	storage := NewMemStorage()
+	t.Cleanup(func() { _ = storage.Close() })
+	s := NewCrawlStore(storage)
+	require.NoError(t, s.Create(testSession("s1", "")))
+
+	require.NoError(t, s.UpdateCursor("s1", 5))
+	got, ok := s.GetSession("s1")
+	require.True(t, ok)
+	assert.Equal(t, 5, got.LastReturnedIdx)
+
+	// A fresh store over the same storage simulates a restart
+	restarted := NewCrawlStore(storage)
+	got, ok = restarted.GetSession("s1")
+	require.True(t, ok)
+	assert.Equal(t, 5, got.LastReturnedIdx)
+
+	assert.ErrorContains(t, s.UpdateCursor("missing", 1), "not found")
+}

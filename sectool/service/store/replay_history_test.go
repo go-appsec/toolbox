@@ -615,3 +615,58 @@ func TestReplayHistoryStoreConcurrency(t *testing.T) {
 
 	assert.Equal(t, 100, store.Count())
 }
+
+func TestReplayHistoryStore_ResumeFromStorage(t *testing.T) {
+	t.Parallel()
+
+	storage := NewMemStorage()
+	t.Cleanup(func() { _ = storage.Close() })
+
+	first := NewReplayHistoryStore(storage)
+	first.Store(&ReplayHistoryEntry{ReplayHistoryMeta: ReplayHistoryMeta{
+		FlowID: "f1", Method: "GET", Host: "example.com", Path: "/a", RespStatus: 200,
+	}})
+	first.Store(&ReplayHistoryEntry{ReplayHistoryMeta: ReplayHistoryMeta{
+		FlowID: "f2", Method: "POST", Host: "example.com", Path: "/b", RespStatus: 404,
+	}})
+	require.NoError(t, first.SetLastFlowID("f2"))
+
+	// A fresh store over the same storage simulates a restart
+	second := NewReplayHistoryStore(storage)
+	assert.Equal(t, 2, second.Count())
+	assert.Len(t, second.List(), 2)
+	_, ok := second.Get("f1")
+	assert.True(t, ok)
+
+	flowID, ok := second.LastFlowID()
+	require.True(t, ok)
+	assert.Equal(t, "f2", flowID)
+}
+
+func TestReplayHistoryStore_FlowCursor(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing_returns_false", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		_, ok := store.LastFlowID()
+		assert.False(t, ok)
+	})
+
+	t.Run("cursor_not_counted_and_cleared", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		store.Store(&ReplayHistoryEntry{ReplayHistoryMeta: ReplayHistoryMeta{FlowID: "f1"}})
+		require.NoError(t, store.SetLastFlowID("f1"))
+		assert.Equal(t, 1, store.Count())
+
+		store.Clear()
+		assert.Equal(t, 0, store.Count())
+		_, ok := store.LastFlowID()
+		assert.False(t, ok)
+	})
+}

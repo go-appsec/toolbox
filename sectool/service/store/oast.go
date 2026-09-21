@@ -54,6 +54,7 @@ type OastSessionData struct {
 	FirstEventSeq int         `msgpack:"fes"`
 	EventCount    int         `msgpack:"ec"`
 	DroppedCount  int         `msgpack:"dropped,omitempty"`
+	LastPollIdx   int         `msgpack:"lpi,omitempty"` // "since last" poll cursor
 }
 
 // OastStore persists OAST sessions and their events through one Storage.
@@ -167,6 +168,19 @@ func (s *OastStore) AppendEvent(id string, ev OastEvent, maxEvents int) (bool, e
 		log.Printf("oast store trim event %s/%d: %v", id, trimSeq, err)
 	}
 	return true, nil
+}
+
+// UpdatePollCursor persists a session's "since last" poll cursor.
+func (s *OastStore) UpdatePollCursor(id string, idx int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rec, ok := s.getLocked(id)
+	if !ok {
+		return ErrOastNotFound
+	}
+	rec.LastPollIdx = idx
+	return s.persistLocked(rec)
 }
 
 // FindEvent locates an event by ID across all sessions. Events are keyed by
