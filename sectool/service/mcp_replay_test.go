@@ -1,7 +1,9 @@
 package service
 
 import (
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 
@@ -521,10 +523,15 @@ func TestHandleReplaySend(t *testing.T) {
 		sentRequest := mockHTTP.LastSentRequest()
 		parts := strings.SplitN(sentRequest, "\r\n\r\n", 2)
 		require.Len(t, parts, 2)
-		sentBody := parts[1]
+		assert.NotEqual(t, originalJSON, parts[1])
+		assert.Contains(t, parts[0], "Content-Encoding: gzip")
 
-		assert.NotEqual(t, originalJSON, sentBody)
-		assert.NotContains(t, sentBody, `"key"`)
+		// flate may emit stored blocks for tiny bodies; decode rather than sniff raw bytes
+		gr, err := gzip.NewReader(strings.NewReader(parts[1]))
+		require.NoError(t, err)
+		decoded, err := io.ReadAll(gr)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"key":"modified"}`, string(decoded))
 	})
 }
 
