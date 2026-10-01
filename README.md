@@ -116,7 +116,7 @@ sectool crawl create --url https://example.com
 sectool crawl summary <session_id>
 
 # Replay a captured request with modifications
-sectool replay send --flow <flow_id> --add-header "X-Test: value"
+sectool replay send --flow <flow_id> --set-header "X-Test: value"
 
 # Set up out-of-band interaction testing and check for callbacks
 sectool oast create
