@@ -130,3 +130,16 @@ type OastPollOpts struct {
 	Wait       string
 	Limit      int
 }
+
+// =============================================================================
+// Notes Options
+// =============================================================================
+
+// NotesListOpts are options for NotesList.
+type NotesListOpts struct {
+	Type     string
+	FlowIDs  []string
+	Contains string
+	AfterID  string // paging cursor
+	Limit    int
+}

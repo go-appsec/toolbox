@@ -19,6 +19,7 @@ import (
 	"github.com/go-appsec/toolbox/sectool/hash"
 	"github.com/go-appsec/toolbox/sectool/js"
 	"github.com/go-appsec/toolbox/sectool/jwt"
+	"github.com/go-appsec/toolbox/sectool/notes"
 	"github.com/go-appsec/toolbox/sectool/oast"
 	"github.com/go-appsec/toolbox/sectool/proxy"
 	"github.com/go-appsec/toolbox/sectool/reflected"
@@ -65,7 +66,7 @@ func main() {
 		return
 
 	// Commands that need MCP client
-	case "proxy", "replay", "oast", "crawl", "diff", "reflected", "js":
+	case "proxy", "replay", "oast", "crawl", "diff", "reflected", "js", "notes":
 		var mcpURL string
 		mcpURL, err = getMCPURL(globalFlags)
 		if err != nil {
@@ -87,6 +88,8 @@ func main() {
 			err = reflected.Parse(args[1:], mcpURL)
 		case "js":
 			err = js.Parse(args[1:], mcpURL)
+		case "notes":
+			err = notes.Parse(args[1:], mcpURL)
 		}
 
 	default:

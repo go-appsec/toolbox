@@ -2,6 +2,8 @@ package mcpclient
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/go-appsec/toolbox/sectool/protocol"
 )
@@ -535,4 +537,49 @@ func (c *Client) JSEndpoint(ctx context.Context, flowID, endpointID string) (*pr
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// NotesList calls notes_list and returns saved notes.
+func (c *Client) NotesList(ctx context.Context, opts NotesListOpts) (*protocol.NotesListResponse, error) {
+	args := make(map[string]interface{})
+	if opts.Type != "" {
+		args["type"] = opts.Type
+	}
+	if len(opts.FlowIDs) > 0 {
+		args["flow_ids"] = strings.Join(opts.FlowIDs, ",")
+	}
+	if opts.Contains != "" {
+		args["contains"] = opts.Contains
+	}
+	if opts.AfterID != "" {
+		args["after_id"] = opts.AfterID
+	}
+	if opts.Limit > 0 {
+		args["limit"] = opts.Limit
+	}
+
+	var resp protocol.NotesListResponse
+	if err := c.CallToolJSON(ctx, "notes_list", args, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// NotesGet returns a single note by ID, or an error when the ID is unknown.
+func (c *Client) NotesGet(ctx context.Context, noteID string) (*protocol.NoteEntry, error) {
+	resp, err := c.NotesList(ctx, NotesListOpts{AfterID: noteID, Limit: 1})
+	if err != nil {
+		return nil, err
+	}
+	// Unknown after_id falls through to the first note instead of an empty page
+	if len(resp.Notes) == 0 || resp.Notes[0].NoteID != noteID {
+		return nil, fmt.Errorf("note not found: %s", noteID)
+	}
+	return &resp.Notes[0], nil
+}
+
+// NotesDelete deletes a note by ID.
+func (c *Client) NotesDelete(ctx context.Context, noteID string) error {
+	_, err := c.CallTool(ctx, "notes_save", map[string]interface{}{"note_id": noteID})
+	return err
 }
