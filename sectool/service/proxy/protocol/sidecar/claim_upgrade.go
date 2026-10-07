@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/go-appsec/toolbox/sectool/service/proxy/protocol"
 	"github.com/go-appsec/toolbox/sidecar/wire"
@@ -22,6 +23,10 @@ const (
 	rankLiteral
 )
 
+// re2Metachars other than '.' force regex semantics; a pattern of plain text
+// and dots is quoted and matched literally instead.
+const re2Metachars = `\+*?()|[]{}^$`
+
 // pattern is a compiled claim matcher: an RE2 pattern anchored to the whole value.
 type pattern struct {
 	src string
@@ -30,16 +35,23 @@ type pattern struct {
 	lit string
 }
 
-// compilePattern compiles a claim pattern; an empty pattern matches any value.
+// compilePattern compiles a claim pattern; an empty pattern matches any value. A
+// pattern holding no RE2 metacharacters beyond '.' is quoted first, so a raw
+// hostname or path claims exactly itself and ranks literal.
 func compilePattern(p string) (pattern, error) {
 	if p == "" {
 		return pattern{}, nil
 	}
+	src := p
+	// dots match literally; any other metachar opts into full RE2
+	if !strings.ContainsAny(strings.ReplaceAll(p, ".", ""), re2Metachars) {
+		p = regexp.QuoteMeta(p)
+	}
 	re, err := regexp.Compile("^(?:" + p + ")$")
 	if err != nil {
-		return pattern{}, fmt.Errorf("invalid pattern %q: %w", p, err)
+		return pattern{}, fmt.Errorf("invalid pattern %q: %w", src, err)
 	}
-	out := pattern{src: p, re: re}
+	out := pattern{src: src, re: re}
 	if lit, complete := re.LiteralPrefix(); complete {
 		out.lit = lit
 	}

@@ -130,6 +130,17 @@ func TestConflictUpgradeClaim(t *testing.T) {
 		b.Capabilities.UpgradeClaims = []wire.UpgradeClaim{{HostPattern: `app\.example\.com`, PathPattern: "/ws"}}
 		require.Nil(t, registerErr(t, m, b))
 	})
+
+	t.Run("raw_host_literal_dominates", func(t *testing.T) {
+		m := testManager(Config{})
+		a := baseParams("a")
+		a.Capabilities.UpgradeClaims = []wire.UpgradeClaim{{HostPattern: `.*\.example\.com`, PathPattern: "/ws"}}
+		mustRegister(t, m, a)
+
+		b := baseParams("b")
+		b.Capabilities.UpgradeClaims = []wire.UpgradeClaim{{HostPattern: "ctrl.example.com", PathPattern: "/ws"}}
+		require.Nil(t, registerErr(t, m, b))
+	})
 }
 
 func TestConflictSelfOverlap(t *testing.T) {

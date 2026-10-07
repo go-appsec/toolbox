@@ -32,6 +32,10 @@ func TestCompileUpgradeClaims(t *testing.T) {
 		_, err := compileUpgradeClaims([]wire.UpgradeClaim{{HostPattern: "*.example.com"}})
 		assert.Error(t, err)
 	})
+	t.Run("raw_host_src_preserved", func(t *testing.T) {
+		uc := mustCompileUpgrade(t, wire.UpgradeClaim{HostPattern: "ctrl.example.com"})
+		assert.Equal(t, "ctrl.example.com", uc.host.src)
+	})
 }
 
 func TestPatternMatch(t *testing.T) {
@@ -46,6 +50,10 @@ func TestPatternMatch(t *testing.T) {
 		{name: "empty_matches_any", pattern: "", value: "anything", match: true},
 		{name: "literal_exact", pattern: `app\.example\.com`, value: "app.example.com", match: true},
 		{name: "literal_anchored", pattern: `app\.example\.com`, value: "app.example.com.evil.test", match: false},
+		{name: "raw_dot_literal_exact", pattern: "app.example.com", value: "app.example.com", match: true},
+		{name: "raw_dot_no_wildcard", pattern: "app.example.com", value: "appXexampleYcom", match: false},
+		{name: "raw_path_literal_exact", pattern: "/api/v1.2/status", value: "/api/v1.2/status", match: true},
+		{name: "raw_path_no_wildcard", pattern: "/api/v1.2/status", value: "/api/v1x2/status", match: false},
 		{name: "regex_wildcard", pattern: `.*\.example\.com`, value: "app.example.com", match: true},
 		{name: "regex_alternation", pattern: "/ws/(chat|feed)", value: "/ws/feed", match: true},
 		{name: "regex_anchored_both_ends", pattern: "/ws", value: "/ws/chat", match: false},
@@ -72,6 +80,9 @@ func TestPatternRank(t *testing.T) {
 		{pattern: "", rank: rankCatchAll},
 		{pattern: `app\.example\.com`, rank: rankLiteral},
 		{pattern: "/ws", rank: rankLiteral},
+		{pattern: "ctrl.example.com", rank: rankLiteral},
+		{pattern: "/api/v1.2/status", rank: rankLiteral},
+		{pattern: ".", rank: rankLiteral},
 		{pattern: `.*\.example\.com`, rank: rankRegex},
 		{pattern: ".*", rank: rankRegex},
 	}
@@ -131,6 +142,12 @@ func TestUpgradeClaimConflict(t *testing.T) {
 			name:     "one_claim_dominates",
 			a:        wire.UpgradeClaim{HostPattern: `.*\.example\.com`, PathPattern: "/ws/.*"},
 			b:        wire.UpgradeClaim{HostPattern: `app\.example\.com`, PathPattern: "/ws"},
+			conflict: false,
+		},
+		{
+			name:     "literal_dominates_regex_host",
+			a:        wire.UpgradeClaim{HostPattern: `.*\.example\.com`, PathPattern: "/ws"},
+			b:        wire.UpgradeClaim{HostPattern: "ctrl.example.com", PathPattern: "/ws"},
 			conflict: false,
 		},
 		{

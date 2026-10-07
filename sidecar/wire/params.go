@@ -59,9 +59,11 @@ type EarlyClaim struct {
 
 // UpgradeClaim claims a byte stream after an HTTP upgrade signal.
 type UpgradeClaim struct {
-	// HostPattern is an RE2 pattern matched against the whole host; empty matches any.
+	// HostPattern is matched against the whole host; a pattern with no RE2
+	// metacharacters beyond '.' matches literally; empty matches any.
 	HostPattern string `json:"host_pattern,omitempty"`
-	// PathPattern is an RE2 pattern matched against the whole path; empty matches any.
+	// PathPattern is matched against the whole path (query removed) under the
+	// same literal rule; empty matches any.
 	PathPattern string `json:"path_pattern,omitempty"`
 	// UpgradeSignal is http_101 or connect; empty defaults to http_101.
 	UpgradeSignal string `json:"upgrade_signal,omitempty"`

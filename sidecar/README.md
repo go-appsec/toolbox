@@ -92,7 +92,7 @@ A raw claim and a `tls.terminate` claim occupy separate seams, so one registrati
 
 #### Upgrade claim matching
 
-`host_pattern` and `path_pattern` are RE2 patterns matched against the whole value (compiled as `^(?:pattern)$`), so `app\.example\.com` matches only that host while `app.example.com` also matches `appXexample!com` — escape metacharacters for an exact match. An empty pattern matches anything, and `path_pattern` is matched against the path with any query string removed. An empty `upgrade_signal` means `http_101`, which additionally requires an `Upgrade` header on the request.
+`host_pattern` and `path_pattern` are matched against the whole value (compiled as `^(?:pattern)$`). A pattern containing no RE2 metacharacters beyond `.` — a plain hostname or path — is treated as a literal: it matches exactly itself and ranks as a literal for specificity. Any other metacharacter (`\`, `*`, `(`, …) switches the pattern to full RE2, where `.` matches any character and metacharacters must be escaped (`app\.example\.com`); use `sidecar.QuotePattern` to embed a literal inside a larger regex. An empty pattern matches anything, and `path_pattern` is matched against the path with any query string removed. An empty `upgrade_signal` means `http_101`, which additionally requires an `Upgrade` header on the request.
 
 When two claims can match the same request, the more specific one wins: a literal pattern outranks a regex, which outranks an empty pattern. Two overlapping claims where neither is strictly more specific are rejected at registration.
 
@@ -792,14 +792,14 @@ Timestamps are RFC 3339 strings. An empty `flow_id` is first emission (sectool a
     "probe": false, "probe_max_bytes": 0
   }],
   "upgrade_claims": [{
-    "host_pattern": "example\\.com", "path_pattern": "/ws/custom",
+    "host_pattern": "ws.example.com", "path_pattern": "/ws/custom",
     "upgrade_signal": "http_101", "method_set": ["GET"]
   }],
   "injection_targets": [{ "target_schema": { /* JSON Schema */ } }]
 }
 ```
 
-`upgrade_signal` ∈ `http_101`, `connect`; empty means `http_101`. Each seam is a list; omit or leave empty the ones you don't claim, and declare more than one entry to claim multiple entry points. `magic_bytes_prefix` is standard-alphabet padded base64, and `port_range` `{ "low": 0, "high": 0 }` matches any port. `host_pattern` and `path_pattern` are whole-value RE2 patterns; see [Early claim matching](#early-claim-matching) and [Upgrade claim matching](#upgrade-claim-matching) for how each matcher applies per seam.
+`upgrade_signal` ∈ `http_101`, `connect`; empty means `http_101`. Each seam is a list; omit or leave empty the ones you don't claim, and declare more than one entry to claim multiple entry points. `magic_bytes_prefix` is standard-alphabet padded base64, and `port_range` `{ "low": 0, "high": 0 }` matches any port. `host_pattern` and `path_pattern` are whole-value patterns: plain text and dots match literally, any other RE2 metacharacter switches to regex (see [Upgrade claim matching](#upgrade-claim-matching)); see [Early claim matching](#early-claim-matching) for how each matcher applies per seam.
 
 #### Mutation
 
