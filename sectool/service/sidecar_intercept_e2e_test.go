@@ -45,7 +45,7 @@ func (h *echoHandler) OnStreamOpen(p wire.StreamOpenParams) ([]wire.StreamWrite,
 }
 
 func (h *echoHandler) OnStreamDeliver(p wire.StreamWriteParams) ([]wire.StreamWrite, error) {
-	_, _ = h.conn.PushFlow(h.t.Context(), wire.Flow{
+	_, _, _ = h.conn.PushFlow(h.t.Context(), wire.Flow{
 		ProtocolTag: "echo/1",
 		Direction:   "client_to_server",
 		Request:     &wire.FlowMessage{Method: "MSG", Path: "/echo", Body: p.Data},

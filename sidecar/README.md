@@ -54,6 +54,7 @@ A **Flow** is one logical exchange. It MAY carry a `request` side and a `respons
 - **Request/response** protocols populate both sides under one `flow_id`.
 - **One-way messages** (tunnel envelopes, stream chunks, pub/sub frames) populate a single side and rely on `direction` (`client_to_server` | `server_to_client` | `bidirectional`).
 - **Two-phase completion** — emit the request side first (sectool returns a `flow_id`), attach the response later by re-emitting with the same `flow_id`.
+- **Not captured** (SDK `captured == false`): a flow the operator's capture filter excludes is never stored, and the `push_flow` result carries an empty `flow_id`.
 - **Streams and sessions** — a parent flow plus child flows that set `parent_flow_id`. Children are stored and replayed in emission order; sectool never reorders, so there is no per-chunk sequence number. A `direction=bidirectional`, `method=TUNNEL` parent is a session/tunnel envelope; its `flow_id` is the grouping key.
 - **Non-decodable bodies** — when the wire form is not natively decodable by sectool (protobuf, custom framing), supply the logical `body` plus `body_raw` (verbatim wire bytes) and `body_codec` (the transform chain and content-type). Unmutated replay resends `body_raw`; a mutated body is re-encoded through `body_codec`.
 
@@ -306,7 +307,7 @@ defer up.Close()
 Emit a captured exchange. Leave `flow_id` empty on first emission; sectool assigns it:
 
 ```go
-flowID, err := conn.PushFlow(ctx, wire.Flow{
+flowID, captured, err := conn.PushFlow(ctx, wire.Flow{
     ProtocolTag: "mqtt/3.1.1",
     Direction:   "client_to_server",
     Request: &wire.FlowMessage{
@@ -318,15 +319,23 @@ flowID, err := conn.PushFlow(ctx, wire.Flow{
 })
 ```
 
+On success with `captured == false`, the operator's capture filter excluded the flow: nothing was
+stored and `flowID` is empty. Never pass that empty id onward, not as a `parent_flow_id`, a
+`CompleteFlow` target, or a state key. Gate any flow bookkeeping on `captured`.
+
 #### Two-phase completion
 
 Emit the request side first, then attach the response with the returned `flow_id` (see [Flow model](#flow-model)):
 
 ```go
-flowID, _ := conn.PushFlow(ctx, wire.Flow{Request: req})
+flowID, captured, _ := conn.PushFlow(ctx, wire.Flow{Request: req})
 // Later:
 conn.CompleteFlow(ctx, flowID, resp, time.Now())
 ```
+
+There is nothing to complete when the push was not captured: `flowID` is empty and `CompleteFlow`
+rejects it locally (`ErrEmptyFlowID`) instead of silently storing a new flow. Sectool never stored
+the flow, so no teardown is owed.
 
 #### Rule mutations
 
@@ -338,7 +347,7 @@ Use parent-child flows for long-lived exchanges (see [Flow model](#flow-model)):
 
 ```go
 // Open stream (parent), returns the stream's flow_id
-streamID, _ := conn.PushFlow(ctx, wire.Flow{
+streamID, captured, _ := conn.PushFlow(ctx, wire.Flow{
     ProtocolTag: "myproto/stream",
     Request:     &wire.FlowMessage{Method: "STREAM_OPEN"},
 })
@@ -353,6 +362,11 @@ conn.PushFlow(ctx, wire.Flow{
 // Close (two-phase re-emit of the parent)
 conn.CompleteFlow(ctx, streamID, nil, time.Now())
 ```
+
+If the parent was not captured (`captured == false`) it has no `flow_id`, so children cannot
+reference it. Each adapter chooses per protocol shape: skip the exchange, or emit the children as
+standalone flows (empty `parent_flow_id`). Every pushed flow is capture-filtered on its own
+merits, so children of a filtered parent may still be worth storing.
 
 Session/tunnel envelopes follow the same pattern with `Direction: "bidirectional"` and `Method: "TUNNEL"`.
 
@@ -619,7 +633,7 @@ Rejected with `-33001` when the major differs (any direction) or the sidecar's m
 
 **params:** a bare `Flow` object (not wrapped). Empty `flow_id` is first emission; set `flow_id` to target an existing flow for two-phase completion or teardown. See [Flow model](#flow-model).
 
-**result:** `{ "flow_id": string }`.
+**result:** `{ "flow_id": string }`. An empty `flow_id` means the capture filter excluded the flow: nothing was stored, and the id must not be used onward.
 
 #### core_invoke (sidecar → sectool)
 
@@ -728,7 +742,7 @@ A `ping` request (has `id`) is answered with an empty `{}` result. A `ping` noti
 
 All fields `omitempty`. `annotations` is a free-form object the sidecar owns; sectool stores it verbatim. Replay classification is not annotation-driven: sectool files a pushed flow into replay history when its `parent_flow_id` is the source of an in-flight replay (see [Replay and origination](#replay-and-origination-onsidecarsend)).
 
-Timestamps are RFC 3339 strings. An empty `flow_id` is first emission (sectool assigns); set `flow_id` to re-target an existing flow for two-phase completion or teardown.
+Timestamps are RFC 3339 strings. An empty `flow_id` is first emission (sectool assigns); set `flow_id` to re-target an existing flow for two-phase completion or teardown. A `push_flow` result with an empty `flow_id` means the flow was not captured (operator capture filter), so it cannot be re-targeted or referenced.
 
 #### FlowMessage
 

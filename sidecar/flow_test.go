@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,15 +44,22 @@ func (f *flowCapture) handle(method string, params json.RawMessage) (any, *wire.
 func TestPushFlow(t *testing.T) {
 	t.Parallel()
 
-	pushOne := func(t *testing.T, flow wire.Flow) wire.Flow {
+	// dialCapture dials a fake sectool whose first push_flow returns firstID
+	// ("" simulates a capture-filtered flow).
+	dialCapture := func(t *testing.T, firstID string) (*Conn, *flowCapture) {
 		t.Helper()
-		cap := &flowCapture{firstID: "f1"}
+		cap := &flowCapture{firstID: firstID}
 		addr, _ := fakeServer(t, cap.handle)
 		conn, err := Dial(t.Context(), addr, Registration{Name: "alpha"})
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = conn.Close() })
+		return conn, cap
+	}
 
-		_, err = conn.PushFlow(t.Context(), flow)
+	pushOne := func(t *testing.T, flow wire.Flow) wire.Flow {
+		t.Helper()
+		conn, cap := dialCapture(t, "f1")
+		_, _, err := conn.PushFlow(t.Context(), flow)
 		require.NoError(t, err)
 
 		cap.mu.Lock()
@@ -76,5 +84,27 @@ func TestPushFlow(t *testing.T) {
 	t.Run("two_phase_completion_not_synthesized", func(t *testing.T) {
 		got := pushOne(t, wire.Flow{FlowID: "existing"})
 		assert.Nil(t, got.Response)
+	})
+
+	t.Run("not_captured_reports_false", func(t *testing.T) {
+		conn, cap := dialCapture(t, "")
+		id, captured, err := conn.PushFlow(t.Context(), wire.Flow{Request: &wire.FlowMessage{Method: "GET", Path: "/"}})
+		require.NoError(t, err)
+		assert.Empty(t, id)
+		assert.False(t, captured)
+
+		cap.mu.Lock()
+		defer cap.mu.Unlock()
+		require.Len(t, cap.pushed, 1) // host saw the flow, its filter dropped it
+	})
+
+	t.Run("complete_empty_flow_id_rejected", func(t *testing.T) {
+		conn, cap := dialCapture(t, "f1")
+		err := conn.CompleteFlow(t.Context(), "", &wire.FlowMessage{StatusCode: 200}, time.Now())
+		require.ErrorIs(t, err, ErrEmptyFlowID)
+
+		cap.mu.Lock()
+		defer cap.mu.Unlock()
+		assert.Empty(t, cap.pushed) // rejected before the RPC leaves
 	})
 }

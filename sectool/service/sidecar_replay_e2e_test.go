@@ -26,7 +26,7 @@ type replaySendHandler struct {
 
 func (h *replaySendHandler) OnSidecarSend(p wire.SidecarSendParams) (wire.SidecarSendResult, error) {
 	h.got <- p
-	id, err := h.conn.PushFlow(h.t.Context(), wire.Flow{
+	id, _, err := h.conn.PushFlow(h.t.Context(), wire.Flow{
 		ParentFlowID: p.FlowID,
 		ProtocolTag:  "mqtt/3.publish",
 		Request:      &wire.FlowMessage{Method: "PUBLISH", Path: "/topic"},
@@ -63,7 +63,7 @@ func TestSidecarReplaySendE2E(t *testing.T) {
 	go func() { _ = conn.Serve(t.Context(), h) }()
 
 	// The adapter owns a flow in history.
-	flowID, err := conn.PushFlow(t.Context(), wire.Flow{
+	flowID, _, err := conn.PushFlow(t.Context(), wire.Flow{
 		ProtocolTag: "mqtt/3.publish",
 		Request: &wire.FlowMessage{
 			Method:  "PUBLISH",

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-appsec/toolbox/sectool/config"
 	"github.com/go-appsec/toolbox/sectool/mcpclient"
 	"github.com/go-appsec/toolbox/sectool/protocol"
 	scsidecar "github.com/go-appsec/toolbox/sectool/service/proxy/protocol/sidecar"
@@ -25,6 +26,15 @@ func flowIDs(flows []protocol.FlowEntry) []string {
 		out[i] = f.FlowID
 	}
 	return out
+}
+
+// mustPush emits flow via the SDK conn, asserting it was captured, and returns the flow_id.
+func mustPush(t *testing.T, conn *sidecar.Conn, flow wire.Flow) string {
+	t.Helper()
+	id, captured, err := conn.PushFlow(t.Context(), flow)
+	require.NoError(t, err)
+	require.True(t, captured)
+	return id
 }
 
 // TestSidecarFlowEmissionE2E drives the sidecar SDK against a live native backend
@@ -48,58 +58,51 @@ func TestSidecarFlowEmissionE2E(t *testing.T) {
 	host := []wire.Header{{Name: "Host", Value: "unit.test"}}
 
 	// 1. Plain request/response.
-	plainID, err := conn.PushFlow(t.Context(), wire.Flow{
+	plainID := mustPush(t, conn, wire.Flow{
 		ProtocolTag: "custom/1.req",
 		Request:     &wire.FlowMessage{Method: "GET", Path: "/thing", Headers: host},
 		Response:    &wire.FlowMessage{StatusCode: 200, Headers: []wire.Header{{Name: "Content-Type", Value: "application/json"}}, Body: []byte(`{"ok":true}`)},
 	})
-	require.NoError(t, err)
 
 	// 2. Two-phase: request first, response attached later under the same id.
-	twoPhaseID, err := conn.PushFlow(t.Context(), wire.Flow{
+	twoPhaseID := mustPush(t, conn, wire.Flow{
 		ProtocolTag: "custom/1.req",
 		Request:     &wire.FlowMessage{Method: "POST", Path: "/submit", Headers: host},
 	})
-	require.NoError(t, err)
 	require.NoError(t, conn.CompleteFlow(t.Context(), twoPhaseID, &wire.FlowMessage{StatusCode: 201}, time.Now()))
 
 	// 3. Stream: parent + ordered children + close.
-	streamID, err := conn.PushFlow(t.Context(), wire.Flow{
+	streamID := mustPush(t, conn, wire.Flow{
 		ProtocolTag: "custom/1.stream",
 		Request:     &wire.FlowMessage{Method: "STREAM", Path: "/events", Headers: host},
 	})
-	require.NoError(t, err)
 	childPayloads := []string{"one", "two", "three"}
 	childIDs := make([]string, 0, len(childPayloads))
 	for _, payload := range childPayloads {
-		cid, cerr := conn.PushFlow(t.Context(), wire.Flow{
+		childIDs = append(childIDs, mustPush(t, conn, wire.Flow{
 			ProtocolTag:  "custom/1.chunk",
 			ParentFlowID: streamID,
 			Direction:    "server_to_client",
 			Request:      &wire.FlowMessage{Method: "CHUNK", Body: []byte(payload)},
-		})
-		require.NoError(t, cerr)
-		childIDs = append(childIDs, cid)
+		}))
 	}
 	require.NoError(t, conn.CompleteFlow(t.Context(), streamID, &wire.FlowMessage{StatusCode: 200}, time.Now()))
 
 	// 4. Session/tunnel envelope with a nested child.
-	tunnelID, err := conn.PushFlow(t.Context(), wire.Flow{
+	tunnelID := mustPush(t, conn, wire.Flow{
 		ProtocolTag: "custom.tunnel",
 		Direction:   "bidirectional",
 		Request:     &wire.FlowMessage{Method: "TUNNEL", Path: "/custom/tunnel/1", Headers: []wire.Header{{Name: "Peer", Value: "abcd"}}},
 	})
-	require.NoError(t, err)
-	_, err = conn.PushFlow(t.Context(), wire.Flow{
+	mustPush(t, conn, wire.Flow{
 		ProtocolTag:  "custom.tunnel.msg",
 		ParentFlowID: tunnelID,
 		Direction:    "client_to_server",
 		Request:      &wire.FlowMessage{Method: "MSG", Body: []byte("inner")},
 	})
-	require.NoError(t, err)
 
 	// 5. Flow carrying body_raw/body_codec (logical Body differs from the wire form).
-	rawID, err := conn.PushFlow(t.Context(), wire.Flow{
+	rawID := mustPush(t, conn, wire.Flow{
 		ProtocolTag: "custom/1.bin",
 		Request:     &wire.FlowMessage{Method: "GET", Path: "/bin", Headers: host},
 		Response: &wire.FlowMessage{
@@ -110,24 +113,21 @@ func TestSidecarFlowEmissionE2E(t *testing.T) {
 			BodyCodec:  &wire.BodyCodec{Transforms: []string{"protobuf"}, ContentType: "application/json"},
 		},
 	})
-	require.NoError(t, err)
 
 	// 6. Flow whose request parameter is reflected in the response body.
-	reflectID, err := conn.PushFlow(t.Context(), wire.Flow{
+	reflectID := mustPush(t, conn, wire.Flow{
 		ProtocolTag: "custom/1.req",
 		Request:     &wire.FlowMessage{Method: "GET", Path: "/search?q=reflectme123", Headers: host},
 		Response:    &wire.FlowMessage{StatusCode: 200, Headers: []wire.Header{{Name: "Content-Type", Value: "text/html"}}, Body: []byte("<p>results for reflectme123</p>")},
 	})
-	require.NoError(t, err)
 
 	// 7. Mutated flow carrying sidecar-authored audit annotations (captured/mutated pairing).
-	mutatedID, err := conn.PushFlow(t.Context(), wire.Flow{
+	mutatedID := mustPush(t, conn, wire.Flow{
 		ProtocolTag: "custom/1.mutated",
 		Request:     &wire.FlowMessage{Method: "POST", Path: "/mutated", Headers: host},
 		Response:    &wire.FlowMessage{StatusCode: 200},
 		Annotations: map[string]any{"phase": "mutated", "fired_rules": []any{"r1"}, "parent_flow_id": plainID},
 	})
-	require.NoError(t, err)
 
 	t.Run("top_level_flows_filtered_by_adapter", func(t *testing.T) {
 		resp, perr := mcpClient.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{OutputMode: "flows", Adapter: adapterName, Limit: 100})
@@ -259,4 +259,44 @@ func mustChildBody(t *testing.T, backend *NativeProxyBackend, flowID string) []b
 	require.True(t, ok)
 	require.NotNil(t, flow.Request)
 	return flow.Request.Body
+}
+
+// TestSidecarPushFlowNotCapturedE2E drives a capture-filtered push through a real
+// backend, asserting the SDK reports captured=false with an empty flow_id, the flow
+// never reaches history, and CompleteFlow on the empty id is rejected locally.
+func TestSidecarPushFlowNotCapturedE2E(t *testing.T) {
+	t.Parallel()
+
+	sb := startSidecarBackend(t, scsidecar.Config{})
+	// the harness injects its backend, skipping the server's filter setup, so
+	// install the default exclude-extensions filter directly
+	filter, ferr := BuildCaptureFilter(config.DefaultConfig().Proxy)
+	require.NoError(t, ferr)
+	require.NotNil(t, filter)
+	sb.backend.SetCaptureFilter(filter)
+
+	conn := sb.dial(t, sidecar.Registration{Name: "filtered-sidecar"})
+
+	filteredID, captured, err := conn.PushFlow(t.Context(), wire.Flow{
+		ProtocolTag: "custom/1.img",
+		Request:     &wire.FlowMessage{Method: "GET", Path: "/img.png", Headers: []wire.Header{{Name: "Host", Value: "unit.test"}}},
+	})
+	require.NoError(t, err)
+	assert.False(t, captured)
+	assert.Empty(t, filteredID)
+
+	// CompleteFlow on the not-captured id must fail locally, not store a junk flow
+	err = conn.CompleteFlow(t.Context(), filteredID, &wire.FlowMessage{StatusCode: 200}, time.Now())
+	require.ErrorIs(t, err, sidecar.ErrEmptyFlowID)
+
+	// a non-excluded path under the same backend is still captured normally
+	keptID := mustPush(t, conn, wire.Flow{
+		ProtocolTag: "custom/1.img",
+		Request:     &wire.FlowMessage{Method: "GET", Path: "/page", Headers: []wire.Header{{Name: "Host", Value: "unit.test"}}},
+	})
+	_, ok := sb.backend.server.History().Get(keptID)
+	require.True(t, ok)
+
+	_, ok = sb.backend.server.History().Get(filteredID)
+	assert.False(t, ok)
 }

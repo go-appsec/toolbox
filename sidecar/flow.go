@@ -3,26 +3,36 @@ package sidecar
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/go-appsec/toolbox/sidecar/wire"
 )
 
+// ErrEmptyFlowID is returned by CompleteFlow for an empty flowID.
+var ErrEmptyFlowID = errors.New("sidecar: CompleteFlow requires a non-empty flow_id")
+
 // PushFlow emits a captured flow and returns the flow_id sectool assigned. Leave flow.FlowID empty to
-// store a new flow, or set it to re-target an existing flow. A returned empty flow_id with no error
-// means the operator's capture filter excluded the flow; it was not stored and cannot be re-targeted.
-func (c *Conn) PushFlow(ctx context.Context, flow wire.Flow) (string, error) {
+// store a new flow, or set it to re-target an existing flow. On success with captured false the
+// operator's capture filter excluded the flow: nothing was stored and flowID is empty. Never pass
+// that empty id onward as a parent_flow_id, CompleteFlow target, or state key.
+func (c *Conn) PushFlow(ctx context.Context, flow wire.Flow) (flowID string, captured bool, err error) {
 	var res wire.PushFlowResult
 	if rpcErr := c.peer.Call(ctx, wire.MethodPushFlow, flow, &res); rpcErr != nil {
-		return "", rpcErr
+		return "", false, rpcErr
 	}
-	return res.FlowID, nil
+	return res.FlowID, res.FlowID != "", nil
 }
 
 // CompleteFlow attaches a late response and/or completion to flowID: the
-// two-phase form for deferred responses and session/stream teardown.
+// two-phase form for deferred responses and session/stream teardown. flowID must
+// be a non-empty id from a captured PushFlow. An empty one errors with
+// ErrEmptyFlowID instead of storing a junk flow.
 func (c *Conn) CompleteFlow(ctx context.Context, flowID string, resp *wire.FlowMessage, completedAt time.Time) error {
-	_, err := c.PushFlow(ctx, wire.Flow{FlowID: flowID, Response: resp, CompletedAt: completedAt})
+	if flowID == "" {
+		return ErrEmptyFlowID
+	}
+	_, _, err := c.PushFlow(ctx, wire.Flow{FlowID: flowID, Response: resp, CompletedAt: completedAt})
 	return err
 }
 

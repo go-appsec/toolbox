@@ -40,7 +40,7 @@ func (h *toolSidecar) OnInvokeTool(p wire.InvokeToolParams) (wire.InvokeToolResu
 	if _, err := h.conn.CoreInvoke(ctx, "proxy_poll", map[string]any{"output_mode": "summary"}); err != nil {
 		return wire.InvokeToolResult{}, err
 	}
-	if _, err := h.conn.PushFlow(ctx, wire.Flow{
+	if _, _, err := h.conn.PushFlow(ctx, wire.Flow{
 		ProtocolTag: "custom/1.tool",
 		Request:     &wire.FlowMessage{Method: "TOOL", Path: "/invoked", Headers: []wire.Header{{Name: "Host", Value: "unit.test"}}},
 	}); err != nil {

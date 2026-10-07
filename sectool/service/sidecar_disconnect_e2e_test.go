@@ -33,7 +33,7 @@ func TestSidecarDisconnectFinalizeE2E(t *testing.T) {
 		})
 		require.NoError(t, derr)
 
-		flowID, perr := conn.PushFlow(t.Context(), wire.Flow{
+		flowID, _, perr := conn.PushFlow(t.Context(), wire.Flow{
 			ProtocolTag: "custom/1.req",
 			Request:     &wire.FlowMessage{Method: "GET", Path: "/open", Headers: host},
 		})
@@ -62,7 +62,7 @@ func TestSidecarDisconnectFinalizeE2E(t *testing.T) {
 		conn, derr := sidecar.Dial(t.Context(), socket, reg)
 		require.NoError(t, derr)
 
-		flowID, perr := conn.PushFlow(t.Context(), wire.Flow{
+		flowID, _, perr := conn.PushFlow(t.Context(), wire.Flow{
 			ProtocolTag: "custom/1.req",
 			Request:     &wire.FlowMessage{Method: "GET", Path: "/resumable", Headers: host},
 		})

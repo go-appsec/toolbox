@@ -54,7 +54,7 @@ func (s *session) handlePushFlow(p *wire.Flow) (any, *wire.Error) {
 
 	flow := wireFlowToFlow(rec, p, s.m.now())
 	if !s.m.flows.ShouldCapture(flow) {
-		// excluded by capture filter: empty flow_id signals "not captured"
+		// not captured: empty result flow_id, the SDK surfaces this as captured=false
 		return wire.PushFlowResult{}, nil
 	}
 	flowID := s.m.flows.Store(flow)

@@ -256,7 +256,7 @@ func TestSidecarDialUpstreamDefaultDest(t *testing.T) {
 	h := startForward(t, "fwd-default",
 		wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{MagicBytesPrefix: magic("FWD")}}}, nil,
 		func(fh *forwardHandler, _ wire.StreamOpenParams) (wire.DialUpstreamParams, error) {
-			fid, perr := fh.conn.PushFlow(fh.t.Context(), wire.Flow{
+			fid, _, perr := fh.conn.PushFlow(fh.t.Context(), wire.Flow{
 				ProtocolTag: "session/1",
 				Direction:   "bidirectional",
 				Scheme:      "http",
