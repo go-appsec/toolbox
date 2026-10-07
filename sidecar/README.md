@@ -191,7 +191,16 @@ if errors.Is(err, sidecar.ErrVersionUnsupported) {
 err := conn.Serve(ctx, &myHandler{})
 ```
 
-`Serve` blocks until context cancellation or remote close. Returns `ctx.Err()` on cancellation, `nil` on clean shutdown.
+`Serve` blocks until context cancellation or remote close, returning `ctx.Err()` or `nil` respectively. Once `Serve` has returned, RPCs are impossible. Put cleanup RPCs (deregister responders, delete rules, complete flows) in `OnClose`, never deferred past `Serve`:
+
+```go
+func (h *myHandler) OnClose(ctx context.Context) {
+    // ctx is fresh, bounded by sidecar.CleanupTimeout; the Serve ctx is already cancelled
+    _, _ = h.conn.CoreInvoke(ctx, "proxy_respond_delete", map[string]any{"id": h.responderID})
+}
+```
+
+The SDK invokes `OnClose` at most once, on `Serve` cancellation, a sectool `shutdown` request, or `Close`. It does not run after a crash or kill, so keep setup RPCs idempotent (replace-on-add) to repair leftover state on the next registration.
 
 ### Handler interface
 
@@ -200,6 +209,7 @@ Implement `sidecar.Handler` to receive inbound events. Embed `BaseHandler` for n
 | Method | When called | Return |
 |--------|-------------|--------|
 | `OnShutdown(drainSeconds int)` | Sectool requests graceful close | — |
+| `OnClose(ctx)` | Cleanup window before an orderly close; run cleanup RPCs here | — |
 | `OnStreamOpen(params)` | A claimed stream opens (early or upgrade claim) | `[]wire.StreamWrite` for initial response bytes |
 | `OnStreamDeliver(params)` | Inbound bytes arrive on a stream | `[]wire.StreamWrite` to write back (possibly to a different stream) |
 | `OnStreamEnded(params)` | A stream closes (peer disconnect, scope policy, shutdown) | — |

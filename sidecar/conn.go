@@ -19,14 +19,18 @@ var ErrVersionUnsupported = errors.New("sidecar: protocol version unsupported")
 // registerTimeout bounds the registration handshake.
 const registerTimeout = 10 * time.Second
 
+// CleanupTimeout bounds the fresh context handed to Handler.OnClose.
+const CleanupTimeout = 10 * time.Second
+
 // Conn is a registered connection to sectool.
 type Conn struct {
 	peer  *wire.Peer
 	name  string
 	rules *RuleCache
 
-	mu      sync.Mutex
-	handler Handler
+	mu        sync.Mutex
+	handler   Handler
+	closeOnce sync.Once // OnClose runs at most once per connection
 }
 
 // Dial connects to sectool at addr, performs the register handshake, and returns the established connection.
@@ -70,13 +74,18 @@ func (c *Conn) SetHandler(h Handler) {
 	c.mu.Unlock()
 }
 
-// Serve installs the inbound handler and blocks until ctx is cancelled or the connection closes
-// (e.g. after sectool shutdown). Returns ctx.Err() on cancellation, nil on a clean remote close.
+// Serve installs the inbound handler and blocks until ctx is cancelled or the connection
+// closes (e.g. after sectool shutdown). On cancellation Handler.OnClose runs first, the
+// last chance for cleanup RPCs on the live peer. Returns ctx.Err() on cancellation, nil
+// on a clean remote close. Once Serve has returned, RPCs are impossible.
 func (c *Conn) Serve(ctx context.Context, h Handler) error {
 	c.SetHandler(h)
 
 	select {
 	case <-ctx.Done():
+		cctx, cancel := cleanupContext(ctx)
+		defer cancel()
+		c.runOnClose(cctx)
 		_ = c.peer.Close()
 		return ctx.Err()
 	case <-c.peer.Done():
@@ -87,8 +96,26 @@ func (c *Conn) Serve(ctx context.Context, h Handler) error {
 // Rules returns the hot-path rule cache, kept current by sectool's sync_rules pushes.
 func (c *Conn) Rules() *RuleCache { return c.rules }
 
-// Close terminates the connection.
-func (c *Conn) Close() error { return c.peer.Close() }
+// Close runs Handler.OnClose, the cleanup window, then terminates the
+// connection. It blocks until OnClose returns, bounded by CleanupTimeout.
+func (c *Conn) Close() error {
+	cctx, cancel := cleanupContext(context.Background())
+	defer cancel()
+	c.runOnClose(cctx)
+	return c.peer.Close()
+}
+
+// runOnClose invokes Handler.OnClose at most once; ctx is the fresh cleanup
+// context derived by the trigger.
+func (c *Conn) runOnClose(ctx context.Context) {
+	c.closeOnce.Do(func() { c.currentHandler().OnClose(ctx) })
+}
+
+// cleanupContext derives the fresh bounded context handed to Handler.OnClose.
+// The trigger ctx is typically already cancelled, so its cancellation is dropped.
+func cleanupContext(trigger context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(trigger), CleanupTimeout)
+}
 
 func (c *Conn) currentHandler() Handler {
 	c.mu.Lock()
@@ -99,13 +126,16 @@ func (c *Conn) currentHandler() Handler {
 // connHandler routes inbound traffic to the user handler.
 type connHandler struct{ c *Conn }
 
-func (h connHandler) HandleRequest(_ context.Context, method string, params json.RawMessage) (any, *wire.Error) {
+func (h connHandler) HandleRequest(ctx context.Context, method string, params json.RawMessage) (any, *wire.Error) {
 	handler := h.c.currentHandler()
 	switch method {
 	case wire.MethodShutdown:
 		var p wire.ShutdownParams
 		_ = json.Unmarshal(params, &p)
 		handler.OnShutdown(p.DrainSeconds)
+		cctx, cancel := cleanupContext(ctx) // cleanup window before the ack; the host closes after it
+		defer cancel()
+		h.c.runOnClose(cctx)
 		return wire.ShutdownResult{Ack: true}, nil
 	case wire.MethodStreamOpen:
 		var p wire.StreamOpenParams

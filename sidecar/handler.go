@@ -1,6 +1,7 @@
 package sidecar
 
 import (
+	"context"
 	"errors"
 
 	"github.com/go-appsec/toolbox/sidecar/wire"
@@ -45,6 +46,14 @@ type Handler interface {
 	// finish in-flight work here before returning.
 	OnShutdown(drainSeconds int)
 
+	// OnClose is the cleanup window before an orderly close, invoked at most
+	// once on Serve cancellation, a sectool shutdown request, or Close, while
+	// RPCs still work. Run deregister/cleanup RPCs here, not deferred past
+	// Serve. ctx is fresh and bounded by CleanupTimeout, since the Serve ctx is
+	// already cancelled by then; keep it prompt. It does not run after a crash,
+	// so make setup RPCs idempotent (replace-on-add).
+	OnClose(ctx context.Context)
+
 	// --- Byte stream (early_claim adapters) ---
 
 	// OnStreamOpen and OnStreamDeliver receive the claimed stream's events and
@@ -78,6 +87,8 @@ type Handler interface {
 type BaseHandler struct{}
 
 func (BaseHandler) OnShutdown(int) {}
+
+func (BaseHandler) OnClose(context.Context) {}
 
 func (BaseHandler) OnStreamOpen(wire.StreamOpenParams) ([]wire.StreamWrite, error) {
 	return nil, nil

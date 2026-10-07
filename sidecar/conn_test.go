@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,6 +53,181 @@ func registerOK(method string, _ json.RawMessage) (any, *wire.Error) {
 		}, nil
 	}
 	return nil, wire.NewError(-32601, "no")
+}
+
+// dialTest dials a fakeServer that answers register, delegating non-register
+// requests to req (nil replies method-not-found). Returns the conn and server peer.
+func dialTest(t *testing.T, req func(method string, params json.RawMessage) (any, *wire.Error)) (*Conn, *wire.Peer) {
+	t.Helper()
+	addr, peerCh := fakeServer(t, func(method string, params json.RawMessage) (any, *wire.Error) {
+		if method == wire.MethodRegister {
+			return registerOK(method, params)
+		}
+		if req == nil {
+			return nil, wire.NewError(-32601, "no")
+		}
+		return req(method, params)
+	})
+	conn, err := Dial(t.Context(), addr, Registration{Name: "demo"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn, <-peerCh
+}
+
+// cleanupOK answers CoreInvoke of the "cleanup" tool.
+func cleanupOK(method string, params json.RawMessage) (any, *wire.Error) {
+	if method == wire.MethodCoreInvoke {
+		var p wire.CoreInvokeParams
+		_ = json.Unmarshal(params, &p)
+		if p.Tool == "cleanup" {
+			return wire.CoreInvokeResult{Content: "cleaned"}, nil
+		}
+	}
+	return nil, wire.NewError(-32601, "no")
+}
+
+// closeHandler is an OnClose-only handler; other callbacks use BaseHandler defaults.
+type closeHandler struct {
+	BaseHandler
+	fn func(context.Context)
+}
+
+func (h closeHandler) OnClose(ctx context.Context) {
+	if h.fn != nil {
+		h.fn(ctx)
+	}
+}
+
+func TestServeOnClose(t *testing.T) {
+	t.Parallel()
+
+	t.Run("cancel_runs_onclose", func(t *testing.T) {
+		conn, _ := dialTest(t, cleanupOK)
+		var ran atomic.Bool
+		h := closeHandler{fn: func(ctx context.Context) {
+			ran.Store(true)
+			// fresh bounded context, not the cancelled Serve ctx
+			require.NoError(t, ctx.Err())
+			_, ok := ctx.Deadline()
+			assert.True(t, ok)
+			// RPCs still work over the live peer
+			res, err := conn.CoreInvoke(ctx, "cleanup", nil)
+			require.NoError(t, err)
+			assert.Equal(t, "cleaned", res.Content)
+		}}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		errCh := make(chan error, 1)
+		go func() { errCh <- conn.Serve(ctx, h) }()
+		cancel()
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(2 * time.Second):
+			t.Fatal("Serve did not return")
+		}
+		assert.True(t, ran.Load())
+	})
+
+	t.Run("shutdown_runs_onclose", func(t *testing.T) {
+		conn, srv := dialTest(t, cleanupOK)
+		var ran atomic.Bool
+		h := closeHandler{fn: func(ctx context.Context) {
+			ran.Store(true)
+			res, err := conn.CoreInvoke(ctx, "cleanup", nil)
+			require.NoError(t, err)
+			assert.Equal(t, "cleaned", res.Content)
+		}}
+		conn.SetHandler(h)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		t.Cleanup(cancel)
+		var res wire.ShutdownResult
+		require.Nil(t, srv.Call(ctx, wire.MethodShutdown, wire.ShutdownParams{DrainSeconds: 5}, &res))
+		// OnClose completed before the ack reached the server
+		assert.True(t, ran.Load())
+	})
+
+	t.Run("onclose_runs_once", func(t *testing.T) {
+		conn, srv := dialTest(t, cleanupOK)
+		var count atomic.Int32
+		h := closeHandler{fn: func(context.Context) { count.Add(1) }}
+		conn.SetHandler(h)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		t.Cleanup(cancel)
+		var res wire.ShutdownResult
+		require.Nil(t, srv.Call(ctx, wire.MethodShutdown, wire.ShutdownParams{DrainSeconds: 1}, &res))
+
+		srvCtx, srvCancel := context.WithCancel(t.Context())
+		errCh := make(chan error, 1)
+		go func() { errCh <- conn.Serve(srvCtx, h) }()
+		srvCancel()
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(2 * time.Second):
+			t.Fatal("Serve did not return")
+		}
+		assert.Equal(t, int32(1), count.Load())
+	})
+
+	t.Run("remote_close_skips_onclose", func(t *testing.T) {
+		conn, srv := dialTest(t, cleanupOK)
+		var ran atomic.Bool
+		h := closeHandler{fn: func(context.Context) { ran.Store(true) }}
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- conn.Serve(t.Context(), h) }()
+		require.NoError(t, srv.Close())
+		select {
+		case err := <-errCh:
+			require.NoError(t, err)
+		case <-time.After(2 * time.Second):
+			t.Fatal("Serve did not return")
+		}
+		assert.False(t, ran.Load())
+	})
+}
+
+func TestConnCloseOnClose(t *testing.T) {
+	t.Parallel()
+
+	t.Run("close_runs_onclose", func(t *testing.T) {
+		conn, _ := dialTest(t, cleanupOK)
+		var ran atomic.Bool
+		conn.SetHandler(closeHandler{fn: func(ctx context.Context) {
+			ran.Store(true)
+			res, err := conn.CoreInvoke(ctx, "cleanup", nil)
+			require.NoError(t, err)
+			assert.Equal(t, "cleaned", res.Content)
+		}})
+
+		require.NoError(t, conn.Close())
+		assert.True(t, ran.Load())
+		assert.True(t, conn.peer.Closed())
+	})
+
+	t.Run("close_after_serve_once", func(t *testing.T) {
+		conn, _ := dialTest(t, cleanupOK)
+		var count atomic.Int32
+		h := closeHandler{fn: func(context.Context) { count.Add(1) }}
+		conn.SetHandler(h)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		errCh := make(chan error, 1)
+		go func() { errCh <- conn.Serve(ctx, h) }()
+		cancel()
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(2 * time.Second):
+			t.Fatal("Serve did not return")
+		}
+
+		require.NoError(t, conn.Close())
+		assert.Equal(t, int32(1), count.Load())
+	})
 }
 
 func TestDial(t *testing.T) {
