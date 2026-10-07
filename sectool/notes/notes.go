@@ -6,14 +6,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jedib0t/go-pretty/v6/table"
-
 	"github.com/go-appsec/toolbox/sectool/cliutil"
 	"github.com/go-appsec/toolbox/sectool/mcpclient"
+	"github.com/go-appsec/toolbox/sectool/protocol"
 	"github.com/go-appsec/toolbox/sectool/util"
 )
 
-// contentCellMaxLen bounds note content shown in list rows.
+// contentCellMaxLen bounds note content shown in list blocks.
 const contentCellMaxLen = 60
 
 // listFilters carries the notes list command's filter selections.
@@ -48,12 +47,10 @@ func list(mcpURL string, f listFilters) error {
 		return nil
 	}
 
-	t := cliutil.NewTable(os.Stdout)
-	t.AppendHeader(table.Row{"Note ID", "Type", "Flows", "Content"})
 	for _, n := range resp.Notes {
-		t.AppendRow(table.Row{n.NoteID, n.Type, strings.Join(n.FlowIDs, ","), contentCell(n.Content)})
+		printNoteBrief(n)
+		fmt.Println()
 	}
-	t.Render()
 	cliutil.Summary(os.Stdout, len(resp.Notes), "note", "notes")
 
 	cliutil.HintCommand(os.Stdout, "To view note details", "sectool notes get <note_id>")
@@ -75,13 +72,7 @@ func get(mcpURL, noteID string) error {
 		return fmt.Errorf("notes get failed: %w", err)
 	}
 
-	fmt.Printf("%s\n", cliutil.Bold("Note "+note.NoteID))
-	fmt.Printf("Type: %s\n", note.Type)
-	if len(note.FlowIDs) > 0 {
-		fmt.Printf("Flows: %s\n", strings.Join(note.FlowIDs, ", "))
-	}
-	fmt.Println()
-	fmt.Println(note.Content)
+	printNote(*note)
 
 	return nil
 }
@@ -104,7 +95,29 @@ func del(mcpURL, noteID string) error {
 	return nil
 }
 
-// contentCell collapses whitespace and truncates content for single-row display.
+// printNoteHeader renders the id, type, and flows lines shared by note views.
+func printNoteHeader(n protocol.NoteEntry) {
+	fmt.Printf("%s %s\n", cliutil.Bold("Note id:"), cliutil.ID(n.NoteID))
+	fmt.Printf("Type: %s\n", n.Type)
+	if len(n.FlowIDs) > 0 {
+		fmt.Printf("Flows: %s\n", strings.Join(n.FlowIDs, ", "))
+	}
+	fmt.Println("Description:")
+}
+
+// printNote renders one note as a stacked block with full content.
+func printNote(n protocol.NoteEntry) {
+	printNoteHeader(n)
+	fmt.Println(strings.TrimRight(n.Content, "\n"))
+}
+
+// printNoteBrief renders a note with collapsed, truncated content for list view.
+func printNoteBrief(n protocol.NoteEntry) {
+	printNoteHeader(n)
+	fmt.Println(contentCell(n.Content))
+}
+
+// contentCell collapses whitespace and truncates content for single-line display.
 func contentCell(s string) string {
 	return util.TruncateString(strings.Join(strings.Fields(s), " "), contentCellMaxLen)
 }
