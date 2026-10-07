@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -22,6 +23,10 @@ const registerTimeout = 10 * time.Second
 // CleanupTimeout bounds the fresh context handed to Handler.OnClose.
 const CleanupTimeout = 10 * time.Second
 
+// handlerWaitTimeout bounds the stream_open hold before the first handler install
+// (Serve or SetHandler), past it BaseHandler declines. A var so tests can shorten it.
+var handlerWaitTimeout = 10 * time.Second
+
 // Conn is a registered connection to sectool.
 type Conn struct {
 	peer  *wire.Peer
@@ -31,10 +36,16 @@ type Conn struct {
 	mu        sync.Mutex
 	handler   Handler
 	closeOnce sync.Once // OnClose runs at most once per connection
+	// handlerReady closes on the first SetHandler so pre-Serve stream_open calls
+	// can wait for the real handler instead of declining it
+	handlerReady chan struct{}
+	installOnce  sync.Once
 }
 
 // Dial connects to sectool at addr, performs the register handshake, and returns the established connection.
-// The connect and handshake are bounded by ctx, capped at registerTimeout.
+// The connect and handshake are bounded by ctx, capped at registerTimeout. Claims match traffic as soon as
+// the handshake completes. Streams opened before the first handler install are held for Serve or
+// SetHandler, then declined past the bound.
 func Dial(ctx context.Context, addr string, reg Registration) (*Conn, error) {
 	network := networkFor(addr)
 	var d net.Dialer
@@ -43,7 +54,7 @@ func Dial(ctx context.Context, addr string, reg Registration) (*Conn, error) {
 		return nil, fmt.Errorf("sidecar: dial %s %s: %w", network, addr, err)
 	}
 
-	c := &Conn{handler: BaseHandler{}, name: reg.Name, rules: &RuleCache{adapter: reg.Name}}
+	c := &Conn{handler: BaseHandler{}, handlerReady: make(chan struct{}), name: reg.Name, rules: &RuleCache{adapter: reg.Name}}
 	c.peer = wire.NewPeer(raw, connHandler{c})
 	// reader outlives the dial ctx; cancellation is Close/Serve's job
 	readerCtx := context.WithoutCancel(ctx)
@@ -64,7 +75,9 @@ func Dial(ctx context.Context, addr string, reg Registration) (*Conn, error) {
 }
 
 // SetHandler installs the inbound handler synchronously. Serve calls this before it blocks;
-// call it directly when the handler must be active before Serve starts. A nil handler installs the no-op BaseHandler.
+// call it directly when the handler must be active before Serve starts. A nil handler installs
+// BaseHandler, which declines stream callbacks and errors on the unimplemented RPCs. The first
+// install releases stream_open calls held since Dial.
 func (c *Conn) SetHandler(h Handler) {
 	if h == nil {
 		h = BaseHandler{}
@@ -72,6 +85,7 @@ func (c *Conn) SetHandler(h Handler) {
 	c.mu.Lock()
 	c.handler = h
 	c.mu.Unlock()
+	c.installOnce.Do(func() { close(c.handlerReady) })
 }
 
 // Serve installs the inbound handler and blocks until ctx is cancelled or the connection
@@ -123,6 +137,40 @@ func (c *Conn) currentHandler() Handler {
 	return c.handler
 }
 
+// awaitHandler returns the inbound handler once Serve or SetHandler has installed one.
+// Past handlerWaitTimeout, on ctx cancellation, or on a closed peer it returns
+// BaseHandler, whose decline resets the client instead of hanging it.
+func (c *Conn) awaitHandler(ctx context.Context) Handler {
+	select {
+	case <-c.handlerReady:
+		return c.currentHandler()
+	default:
+	}
+	timer := time.NewTimer(handlerWaitTimeout)
+	defer timer.Stop()
+	select {
+	case <-c.handlerReady:
+		return c.currentHandler()
+	case <-ctx.Done():
+		return BaseHandler{}
+	case <-c.peer.Done():
+		return BaseHandler{}
+	case <-timer.C:
+		log.Printf("sidecar[%s]: stream_open refused, no handler installed after %s", c.name, handlerWaitTimeout)
+		return BaseHandler{}
+	}
+}
+
+// handlerError maps a handler error to its wire reply: a not-implemented
+// decline carries CodeNotImplemented, everything else is a handler fault.
+func handlerError(msg string, err error) *wire.Error {
+	code := wire.CodeTransportInternal
+	if errors.Is(err, ErrNotImplemented) {
+		code = wire.CodeNotImplemented
+	}
+	return wire.NewError(code, msg)
+}
+
 // connHandler routes inbound traffic to the user handler.
 type connHandler struct{ c *Conn }
 
@@ -140,9 +188,9 @@ func (h connHandler) HandleRequest(ctx context.Context, method string, params js
 	case wire.MethodStreamOpen:
 		var p wire.StreamOpenParams
 		_ = json.Unmarshal(params, &p)
-		writes, err := handler.OnStreamOpen(p)
+		writes, err := h.c.awaitHandler(ctx).OnStreamOpen(p)
 		if err != nil {
-			return nil, wire.NewError(wire.CodeTransportInternal, err.Error())
+			return nil, handlerError(err.Error(), err)
 		}
 		return h.c.sendWrites(writes)
 	case wire.MethodStreamDeliver:
@@ -175,7 +223,7 @@ func (h connHandler) HandleRequest(ctx context.Context, method string, params js
 		_ = json.Unmarshal(params, &p)
 		res, err := handler.OnSidecarSend(p)
 		if err != nil {
-			return nil, wire.NewError(wire.CodeTransportInternal, "sidecar_send: "+err.Error())
+			return nil, handlerError("sidecar_send: "+err.Error(), err)
 		}
 		return res, nil
 	case wire.MethodInvokeTool:
@@ -183,7 +231,7 @@ func (h connHandler) HandleRequest(ctx context.Context, method string, params js
 		_ = json.Unmarshal(params, &p)
 		res, err := handler.OnInvokeTool(p)
 		if err != nil {
-			return nil, wire.NewError(wire.CodeTransportInternal, "invoke_tool: "+err.Error())
+			return nil, handlerError("invoke_tool: "+err.Error(), err)
 		}
 		return res, nil
 	case wire.MethodPing:

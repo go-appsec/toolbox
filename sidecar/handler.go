@@ -3,6 +3,7 @@ package sidecar
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/go-appsec/toolbox/sidecar/wire"
 )
@@ -37,7 +38,7 @@ func (r Registration) toParams() wire.RegisterParams {
 }
 
 // Handler is the sidecar's inbound callback surface. Embed BaseHandler to get
-// no-op defaults and override only the callbacks the adapter implements.
+// no-op/decline defaults and override only the callbacks the adapter implements.
 type Handler interface {
 	// --- Lifecycle ---
 
@@ -60,7 +61,9 @@ type Handler interface {
 	// return bytes for sectool to write back (possibly to a different stream_id).
 	// Inbound chunks are raw transport bytes, not aligned to protocol frames; use
 	// Reassembler to accumulate complete frames. OnStreamEnded reports teardown and
-	// runs concurrently, unordered against other stream events.
+	// runs concurrently, unordered against other stream events. The BaseHandler
+	// default declines OnStreamOpen, so a claimed stream is refused until an
+	// override accepts it.
 	OnStreamOpen(wire.StreamOpenParams) ([]wire.StreamWrite, error)
 	OnStreamDeliver(wire.StreamWriteParams) ([]wire.StreamWrite, error)
 	OnStreamEnded(wire.StreamEndedParams)
@@ -82,6 +85,11 @@ type Handler interface {
 	OnInvokeTool(wire.InvokeToolParams) (wire.InvokeToolResult, error)
 }
 
+// ErrNotImplemented is the decline error behind BaseHandler's unimplemented
+// callbacks. The wire reply carries CodeNotImplemented so the host can tell a
+// deliberate refusal from a handler fault.
+var ErrNotImplemented = errors.New("not implemented")
+
 // BaseHandler provides no-op/decline defaults for every Handler callback. Embed
 // it and override only the callbacks the adapter supports.
 type BaseHandler struct{}
@@ -90,8 +98,10 @@ func (BaseHandler) OnShutdown(int) {}
 
 func (BaseHandler) OnClose(context.Context) {}
 
+// OnStreamOpen declines by default, reached past the pre-Serve hold in
+// awaitHandler: an unhandled stream resets the client instead of hanging it.
 func (BaseHandler) OnStreamOpen(wire.StreamOpenParams) ([]wire.StreamWrite, error) {
-	return nil, nil
+	return nil, fmt.Errorf("stream_open: %w", ErrNotImplemented)
 }
 
 func (BaseHandler) OnStreamDeliver(wire.StreamWriteParams) ([]wire.StreamWrite, error) {
@@ -103,9 +113,9 @@ func (BaseHandler) OnStreamEnded(wire.StreamEndedParams) {}
 func (BaseHandler) OnClaimProbe(wire.ClaimProbeParams) (bool, error) { return false, nil }
 
 func (BaseHandler) OnSidecarSend(wire.SidecarSendParams) (wire.SidecarSendResult, error) {
-	return wire.SidecarSendResult{}, errors.New("sidecar_send: not implemented")
+	return wire.SidecarSendResult{}, ErrNotImplemented
 }
 
 func (BaseHandler) OnInvokeTool(wire.InvokeToolParams) (wire.InvokeToolResult, error) {
-	return wire.InvokeToolResult{}, errors.New("invoke_tool: not implemented")
+	return wire.InvokeToolResult{}, ErrNotImplemented
 }

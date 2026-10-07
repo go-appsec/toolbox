@@ -231,6 +231,12 @@ func (ss *streamSet) serveUpgrade(ctx context.Context, rec *Record, conns protoc
 func (ss *streamSet) runClient(ctx context.Context, rec *Record, id string, r io.Reader, open wire.StreamOpenParams) {
 	var res wire.StreamResult
 	if err := rec.peer.Call(ctx, wire.MethodStreamOpen, open, &res); err != nil {
+		// the serve* defer closes the client socket on any open failure
+		if err.Code == wire.CodeNotImplemented {
+			log.Printf("sidecar[%s]: stream_open refused stream_id=%s: streams not implemented", rec.Name, id)
+		} else {
+			log.Printf("sidecar[%s]: stream_open fault stream_id=%s: %v", rec.Name, id, err)
+		}
 		return
 	}
 	// release the sidecar's per-stream state on any loop exit (RPC error or EOF)

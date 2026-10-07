@@ -3,6 +3,7 @@ package sidecar
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -230,6 +231,80 @@ func TestConnCloseOnClose(t *testing.T) {
 	})
 }
 
+// acceptingHandler accepts every stream, for asserting the pre-Serve stream_open hold.
+type acceptingHandler struct{ BaseHandler }
+
+func (acceptingHandler) OnStreamOpen(wire.StreamOpenParams) ([]wire.StreamWrite, error) {
+	return nil, nil
+}
+
+// faultHandler errors on open, standing in for a handler crash mid-event.
+type faultHandler struct{ BaseHandler }
+
+func (faultHandler) OnStreamOpen(wire.StreamOpenParams) ([]wire.StreamWrite, error) {
+	return nil, errors.New("boom")
+}
+
+func TestStreamOpenHandlerWait(t *testing.T) {
+	t.Parallel()
+
+	t.Run("holds_until_first_install", func(t *testing.T) {
+		conn, srv := dialTest(t, nil)
+
+		errCh := make(chan *wire.Error, 1)
+		var res wire.StreamResult
+		go func() {
+			errCh <- srv.Call(t.Context(), wire.MethodStreamOpen, wire.StreamOpenParams{StreamID: "s1"}, &res)
+		}()
+		// no handler yet, the call must stay open rather than refuse
+		require.Never(t, func() bool {
+			select {
+			case <-errCh:
+				return true
+			default:
+				return false
+			}
+		}, 150*time.Millisecond, 25*time.Millisecond)
+
+		conn.SetHandler(acceptingHandler{})
+		require.Nil(t, <-errCh)
+	})
+
+	t.Run("refuses_after_bound", func(t *testing.T) {
+		old := handlerWaitTimeout
+		handlerWaitTimeout = 50 * time.Millisecond
+		t.Cleanup(func() { handlerWaitTimeout = old })
+
+		_, srv := dialTest(t, nil)
+		var res wire.StreamResult
+		rpcErr := srv.Call(t.Context(), wire.MethodStreamOpen, wire.StreamOpenParams{StreamID: "s1"}, &res)
+		require.NotNil(t, rpcErr)
+		assert.Equal(t, wire.CodeNotImplemented, rpcErr.Code)
+	})
+
+	t.Run("installed_refusal_immediate", func(t *testing.T) {
+		conn, srv := dialTest(t, nil)
+		conn.SetHandler(BaseHandler{})
+
+		start := time.Now()
+		var res wire.StreamResult
+		rpcErr := srv.Call(t.Context(), wire.MethodStreamOpen, wire.StreamOpenParams{StreamID: "s1"}, &res)
+		require.NotNil(t, rpcErr)
+		assert.Equal(t, wire.CodeNotImplemented, rpcErr.Code)
+		assert.Less(t, time.Since(start), handlerWaitTimeout)
+	})
+
+	t.Run("handler_fault_stays_internal", func(t *testing.T) {
+		conn, srv := dialTest(t, nil)
+		conn.SetHandler(faultHandler{})
+
+		var res wire.StreamResult
+		rpcErr := srv.Call(t.Context(), wire.MethodStreamOpen, wire.StreamOpenParams{StreamID: "s1"}, &res)
+		require.NotNil(t, rpcErr)
+		assert.Equal(t, wire.CodeTransportInternal, rpcErr.Code)
+	})
+}
+
 func TestDial(t *testing.T) {
 	t.Parallel()
 
@@ -343,7 +418,7 @@ func TestConnInvokeTool(t *testing.T) {
 		var res wire.InvokeToolResult
 		rpcErr := srv.Call(ctx, wire.MethodInvokeTool, wire.InvokeToolParams{Name: "x"}, &res)
 		require.NotNil(t, rpcErr)
-		assert.Equal(t, wire.CodeTransportInternal, rpcErr.Code)
+		assert.Equal(t, wire.CodeNotImplemented, rpcErr.Code)
 	})
 }
 

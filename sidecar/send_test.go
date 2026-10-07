@@ -103,6 +103,6 @@ func TestSidecarSendDispatch(t *testing.T) {
 		var res wire.SidecarSendResult
 		rpcErr := srv.Call(ctx, wire.MethodSidecarSend, wire.SidecarSendParams{}, &res)
 		require.NotNil(t, rpcErr)
-		assert.Equal(t, wire.CodeTransportInternal, rpcErr.Code)
+		assert.Equal(t, wire.CodeNotImplemented, rpcErr.Code)
 	})
 }

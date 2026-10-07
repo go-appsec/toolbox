@@ -28,6 +28,7 @@ const (
 	CodeOversizedMessage  = -33201
 	CodeUnknownStream     = -33202
 	CodeClaimProbeFault   = -33203
+	CodeNotImplemented    = -33204
 	CodeTransportInternal = -33299
 )
 

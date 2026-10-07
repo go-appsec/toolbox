@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net"
 	"slices"
@@ -96,6 +97,37 @@ func roundTrip(t *testing.T, conn net.Conn, msg []byte) []byte {
 
 // magic returns the base64 of a magic-byte prefix, as the wire form expects.
 func magic(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+
+// refusalHandler declines every stream, standing in for BaseHandler refusal or a fault.
+type refusalHandler struct {
+	sidecar.BaseHandler
+}
+
+func (refusalHandler) OnStreamOpen(wire.StreamOpenParams) ([]wire.StreamWrite, error) {
+	return nil, errors.New("refused by test")
+}
+
+func TestSidecarStreamOpenRefusalE2E(t *testing.T) {
+	t.Parallel()
+
+	sb := startSidecarBackend(t, scsidecar.Config{})
+	sc := sb.dial(t, sidecar.Registration{
+		Name:         "echo-refuse",
+		Protocols:    []string{"echo/1"},
+		Capabilities: wire.Capabilities{EarlyClaims: []wire.EarlyClaim{{MagicBytesPrefix: magic("ECHO")}}},
+	})
+	go func() { _ = sc.Serve(t.Context(), refusalHandler{}) }()
+
+	var d net.Dialer
+	conn, err := d.DialContext(t.Context(), "tcp", sb.proxyAddr())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	// a claimed stream whose stream_open errors must reset the client, not hang it
+	_, err = conn.Write([]byte("ECHO hello"))
+	require.NoError(t, err)
+	assertClientClosed(t, conn)
+}
 
 func TestSidecarRawEarlyClaimE2E(t *testing.T) {
 	t.Parallel()

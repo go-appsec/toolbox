@@ -139,7 +139,7 @@ Go client library for building out-of-process protocol adapters; see `sidecar/RE
 
 - `sidecar/conn.go` - `Conn`, `Dial` (register handshake, `ErrVersionUnsupported`), `Serve`, inbound request/notification routing
 - `sidecar/dial.go` - `Conn.DialUpstream`
-- `sidecar/handler.go` - `Registration`, `Handler` callback interface, `BaseHandler` no-op defaults
+- `sidecar/handler.go` - `Registration`, `Handler` callback interface, `BaseHandler` no-op/decline defaults
 - `sidecar/pattern.go` - `QuotePattern` helper for embedding literals in claim regex
 - `sidecar/flow.go` - Flow emission (`PushFlow`, `CompleteFlow`), `Log`, `ReportMetrics`, `CoreInvoke`
 - `sidecar/send.go` - Send surface: `ApplyMutations` (ordered §3.4 ops via `pkg/mutate`) and `Conn.InvokeAdapter`

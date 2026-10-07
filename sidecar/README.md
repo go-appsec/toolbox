@@ -130,6 +130,11 @@ import (
 
 type myHandler struct{ sidecar.BaseHandler }
 
+// accept claimed streams, replies go out via OnStreamDeliver
+func (h *myHandler) OnStreamOpen(wire.StreamOpenParams) ([]wire.StreamWrite, error) {
+    return nil, nil
+}
+
 func (h *myHandler) OnStreamDeliver(p wire.StreamWriteParams) ([]wire.StreamWrite, error) {
     // Parse protocol frames from p.Data and emit flows...
     return nil, nil
@@ -194,6 +199,8 @@ err := conn.Serve(ctx, &myHandler{})
 
 `Serve` blocks until context cancellation or remote close, returning `ctx.Err()` or `nil` respectively. Once `Serve` has returned, RPCs are impossible. Put cleanup RPCs (deregister responders, delete rules, complete flows) in `OnClose`, never deferred past `Serve`:
 
+Claims match traffic as soon as `Dial` returns, which can precede `Serve` installing the handler. The SDK holds `stream_open` for those until the first handler installs, so setup-time traffic buffers on the client connection instead of dropping or needing a reconnect. Past a bounded wait (10s) with no handler, or on an error from an installed `OnStreamOpen`, the stream is refused and sectool resets the client.
+
 ```go
 func (h *myHandler) OnClose(ctx context.Context) {
     // ctx is fresh, bounded by sidecar.CleanupTimeout; the Serve ctx is already cancelled
@@ -205,13 +212,13 @@ The SDK invokes `OnClose` at most once, on `Serve` cancellation, a sectool `shut
 
 ### Handler interface
 
-Implement `sidecar.Handler` to receive inbound events. Embed `BaseHandler` for no-op defaults and override only what you need:
+Implement `sidecar.Handler` to receive inbound events. Embed `BaseHandler` for no-op/decline defaults and override only what you need:
 
 | Method | When called | Return |
 |--------|-------------|--------|
 | `OnShutdown(drainSeconds int)` | Sectool requests graceful close | — |
 | `OnClose(ctx)` | Cleanup window before an orderly close; run cleanup RPCs here | — |
-| `OnStreamOpen(params)` | A claimed stream opens (early or upgrade claim) | `[]wire.StreamWrite` for initial response bytes |
+| `OnStreamOpen(params)` | A claimed stream opens (early or upgrade claim) | `[]wire.StreamWrite` for initial response bytes, the default refuses the stream |
 | `OnStreamDeliver(params)` | Inbound bytes arrive on a stream | `[]wire.StreamWrite` to write back (possibly to a different stream) |
 | `OnStreamEnded(params)` | A stream closes (peer disconnect, scope policy, shutdown) | — |
 | `OnClaimProbe(params)` | Probe-based early claim asks if the connection is this protocol | `(bool, error)`, true claims it |
@@ -578,6 +585,7 @@ Standard JSON-RPC codes `-32601` (method not found) and `-32603` (internal) appl
 | `-33201` | Oversized message |
 | `-33202` | Unknown `stream_id` |
 | `-33203` | `claim_probe` fault (probe errored) |
+| `-33204` | Not implemented (adapter decline) |
 | `-33299` | Transport internal |
 | `-33300` | `dial_upstream` scope rejection |
 | `-33301` | `dial_upstream` dial failed |
@@ -698,7 +706,7 @@ The method behind agent `replay_send` and the destination side of `invoke_adapte
 
 **params:** `stream_id` (string), `host`, `path`, `peer_addr` (strings, optional), plus `request_flow_id` (string) and `request_headers` (`[Header]`), present only for an `upgrade_claim`, absent for `early_claim`.
 
-**result:** `{ "wrote_to": [string] }` (usually empty; the client speaks first).
+**result:** `{ "wrote_to": [string] }` (usually empty; the client speaks first). An error result refuses the stream and sectool closes the client connection.
 
 #### stream_deliver (sectool → sidecar)
 
