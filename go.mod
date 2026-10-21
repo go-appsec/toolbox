@@ -3,7 +3,7 @@ module github.com/go-appsec/toolbox
 go 1.25.5
 
 require (
-	github.com/agnivade/levenshtein v1.2.1
+	github.com/agnivade/levenshtein v1.2.2
 	github.com/andybalholm/brotli v1.2.6
 	github.com/go-analyze/bulk v0.1.6
 	github.com/go-appsec/interactsh-lite v0.3.10
