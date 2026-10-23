@@ -539,8 +539,8 @@ func TestServeContextCancellation(t *testing.T) {
 
 	// Serve should complete
 	select {
-	case <-serveDone:
-		// OK
+	case err := <-serveDone:
+		require.NoError(t, err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("Serve did not complete after shutdown")
 	}

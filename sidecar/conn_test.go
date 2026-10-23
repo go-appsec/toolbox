@@ -258,12 +258,7 @@ func TestStreamOpenHandlerWait(t *testing.T) {
 		}()
 		// no handler yet, the call must stay open rather than refuse
 		require.Never(t, func() bool {
-			select {
-			case <-errCh:
-				return true
-			default:
-				return false
-			}
+			return len(errCh) > 0
 		}, 150*time.Millisecond, 25*time.Millisecond)
 
 		conn.SetHandler(acceptingHandler{})
