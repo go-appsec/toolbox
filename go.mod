@@ -10,7 +10,7 @@ require (
 	github.com/go-appsec/scout v0.1.1
 	github.com/gocolly/colly/v2 v2.3.0
 	github.com/google/uuid v1.6.0
-	github.com/jedib0t/go-pretty/v6 v6.9.1
+	github.com/jedib0t/go-pretty/v6 v6.9.2
 	github.com/klauspost/compress v1.20.4
 	github.com/mark3labs/mcp-go v1.5.0
 	github.com/pmezard/go-difflib v1.0.0
