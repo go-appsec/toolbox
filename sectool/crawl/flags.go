@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/go-appsec/toolbox/sectool/cliutil"
+	"github.com/go-appsec/toolbox/sectool/mcpclient"
 )
 
 const (
@@ -285,16 +286,16 @@ Options:
 func parseSummary(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("crawl summary", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
-	var host, path, method, status, searchHeader, searchBody, excludeHost, excludePath string
+	var opts mcpclient.CrawlPollOpts
 
-	fs.StringVar(&host, "host", "", "filter by host pattern (glob: *, ?)")
-	fs.StringVar(&path, "path", "", "filter by path pattern (glob: *, ?)")
-	fs.StringVar(&method, "method", "", "filter by HTTP method (comma-separated)")
-	fs.StringVar(&status, "status", "", "filter by status code (e.g., 200,4XX)")
-	fs.StringVar(&searchHeader, "search-header", "", "regex search in request/response headers (RE2)")
-	fs.StringVar(&searchBody, "search-body", "", "regex search in request/response body (RE2)")
-	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")
-	fs.StringVar(&excludePath, "exclude-path", "", "exclude paths matching pattern")
+	fs.StringVar(&opts.Host, "host", "", "filter by host pattern (glob: *, ?)")
+	fs.StringVar(&opts.Path, "path", "", "filter by path pattern (glob: *, ?)")
+	fs.StringVar(&opts.Method, "method", "", "filter by HTTP method (comma-separated)")
+	fs.StringVar(&opts.Status, "status", "", "filter by status code (e.g., 200,4XX)")
+	fs.StringVar(&opts.SearchHeader, "search-header", "", "regex search in request/response headers (RE2)")
+	fs.StringVar(&opts.SearchBody, "search-body", "", "regex search in request/response body (RE2)")
+	fs.StringVar(&opts.ExcludeHost, "exclude-host", "", "exclude hosts matching pattern")
+	fs.StringVar(&opts.ExcludePath, "exclude-path", "", "exclude paths matching pattern")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool crawl summary <session_id> [options]
@@ -313,26 +314,27 @@ Options:
 		return errors.New("session_id required")
 	}
 
-	return summary(mcpURL, fs.Args()[0], host, path, method, status, searchHeader, searchBody, excludeHost, excludePath)
+	return summary(mcpURL, fs.Args()[0], opts)
 }
 
 func parseList(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("crawl list", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
-	var host, path, method, status, searchHeader, searchBody, excludeHost, excludePath, since string
-	var limit, offset int
+	var opts mcpclient.CrawlPollOpts
 
-	fs.StringVar(&host, "host", "", "filter by host pattern (glob: *, ?)")
-	fs.StringVar(&path, "path", "", "filter by path pattern (glob: *, ?)")
-	fs.StringVar(&method, "method", "", "filter by HTTP method (comma-separated)")
-	fs.StringVar(&status, "status", "", "filter by status codes (e.g., 200,4XX)")
-	fs.StringVar(&searchHeader, "search-header", "", "regex search in request/response headers (RE2)")
-	fs.StringVar(&searchBody, "search-body", "", "regex search in request/response body (RE2)")
-	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")
-	fs.StringVar(&excludePath, "exclude-path", "", "exclude paths matching pattern")
-	fs.StringVar(&since, "since", "", "flows after flow_id or timestamp")
-	fs.IntVar(&limit, "limit", 0, "maximum result count")
-	fs.IntVar(&offset, "offset", 0, "skip first N results")
+	opts.OutputMode = "flows"
+
+	fs.StringVar(&opts.Host, "host", "", "filter by host pattern (glob: *, ?)")
+	fs.StringVar(&opts.Path, "path", "", "filter by path pattern (glob: *, ?)")
+	fs.StringVar(&opts.Method, "method", "", "filter by HTTP method (comma-separated)")
+	fs.StringVar(&opts.Status, "status", "", "filter by status codes (e.g., 200,4XX)")
+	fs.StringVar(&opts.SearchHeader, "search-header", "", "regex search in request/response headers (RE2)")
+	fs.StringVar(&opts.SearchBody, "search-body", "", "regex search in request/response body (RE2)")
+	fs.StringVar(&opts.ExcludeHost, "exclude-host", "", "exclude hosts matching pattern")
+	fs.StringVar(&opts.ExcludePath, "exclude-path", "", "exclude paths matching pattern")
+	fs.StringVar(&opts.Since, "since", "", "flows after flow_id or timestamp")
+	fs.IntVar(&opts.Limit, "limit", 0, "maximum result count")
+	fs.IntVar(&opts.Offset, "offset", 0, "skip first N results")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool crawl list <session_id> [options]
@@ -352,11 +354,11 @@ Options:
 	}
 
 	// Auto-set large limit if no filters provided (MCP refuses list with no limits or filters)
-	if limit == 0 && host == "" && path == "" && method == "" && status == "" && searchHeader == "" && searchBody == "" && excludeHost == "" && excludePath == "" && since == "" {
-		limit = 1_000_000_000
+	if opts.Limit == 0 && !opts.HasFilters() {
+		opts.Limit = 1_000_000_000
 	}
 
-	return list(mcpURL, fs.Args()[0], "urls", host, path, method, status, searchHeader, searchBody, excludeHost, excludePath, since, limit, offset)
+	return list(mcpURL, fs.Args()[0], opts)
 }
 
 func parseGet(args []string, mcpURL string) error {
@@ -411,7 +413,7 @@ Options:
 		return errors.New("session_id required")
 	}
 
-	return list(mcpURL, fs.Args()[0], "forms", "", "", "", "", "", "", "", "", "", limit, 0)
+	return list(mcpURL, fs.Args()[0], mcpclient.CrawlPollOpts{OutputMode: "forms", Limit: limit})
 }
 
 func parseErrors(args []string, mcpURL string) error {
@@ -438,7 +440,7 @@ Options:
 		return errors.New("session_id required")
 	}
 
-	return list(mcpURL, fs.Args()[0], "errors", "", "", "", "", "", "", "", "", "", limit, 0)
+	return list(mcpURL, fs.Args()[0], mcpclient.CrawlPollOpts{OutputMode: "errors", Limit: limit})
 }
 
 func parseSessions(args []string, mcpURL string) error {

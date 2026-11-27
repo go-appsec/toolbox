@@ -22,35 +22,33 @@ import (
 
 // rejectModificationFlags returns an error if any modification-only flags are
 // set. These flags only apply to --flow; --bundle and --file should be edited directly.
-func rejectModificationFlags(target string, headers, removeHeaders []string,
-	path, query string, setQuery, removeQuery []string,
-	setJSON, removeJSON []string) error {
+func rejectModificationFlags(opts mcpclient.ReplaySendOpts) error {
 	var offending []string
-	if target != "" {
+	if opts.Target != "" {
 		offending = append(offending, "--target")
 	}
-	if len(headers) > 0 {
+	if len(opts.SetHeaders) > 0 {
 		offending = append(offending, "--set-header")
 	}
-	if len(removeHeaders) > 0 {
+	if len(opts.RemoveHeaders) > 0 {
 		offending = append(offending, "--remove-header")
 	}
-	if path != "" {
+	if opts.Path != "" {
 		offending = append(offending, "--path")
 	}
-	if query != "" {
+	if opts.Query != "" {
 		offending = append(offending, "--query")
 	}
-	if len(setQuery) > 0 {
+	if len(opts.SetQuery) > 0 {
 		offending = append(offending, "--set-query")
 	}
-	if len(removeQuery) > 0 {
+	if len(opts.RemoveQuery) > 0 {
 		offending = append(offending, "--remove-query")
 	}
-	if len(setJSON) > 0 {
+	if len(opts.SetJSON) > 0 {
 		offending = append(offending, "--set-json")
 	}
-	if len(removeJSON) > 0 {
+	if len(opts.RemoveJSON) > 0 {
 		offending = append(offending, "--remove-json")
 	}
 	if len(offending) == 0 {
@@ -60,10 +58,7 @@ func rejectModificationFlags(target string, headers, removeHeaders []string,
 		strings.Join(offending, ", "))
 }
 
-func send(mcpURL string, flow, bundleArg, file, body, target string, headers, removeHeaders []string,
-	path, query string, setQuery, removeQuery []string,
-	setJSON, removeJSON []string,
-	followRedirects bool, force bool) error {
+func send(mcpURL string, flow, bundleArg, file, body string, opts mcpclient.ReplaySendOpts) error {
 	if flow == "" && bundleArg == "" && file == "" {
 		return errors.New("one of --flow, --bundle, or --file is required")
 	}
@@ -91,34 +86,18 @@ func send(mcpURL string, flow, bundleArg, file, body, target string, headers, re
 		hasBodyOverride = true
 	}
 
-	// Build setJSON map
-	var setJSONMap map[string]interface{}
-	if len(setJSON) > 0 {
-		setJSONMap = make(map[string]interface{})
-		for _, kv := range setJSON {
-			if idx := strings.Index(kv, "="); idx > 0 {
-				key := kv[:idx]
-				value := kv[idx+1:]
-				setJSONMap[key] = value
-			} else {
-				// key without = means set to null
-				setJSONMap[kv] = nil
-			}
-		}
-	}
-
 	if bundleArg != "" {
-		if err := rejectModificationFlags(target, headers, removeHeaders, path, query, setQuery, removeQuery, setJSON, removeJSON); err != nil {
+		if err := rejectModificationFlags(opts); err != nil {
 			return err
 		}
-		return sendFromBundle(mcpURL, bundleArg, bodyOverride, hasBodyOverride, followRedirects, force)
+		return sendFromBundle(mcpURL, bundleArg, bodyOverride, hasBodyOverride, opts.FollowRedirects, opts.Force)
 	}
 
 	if file != "" {
-		if err := rejectModificationFlags(target, headers, removeHeaders, path, query, setQuery, removeQuery, setJSON, removeJSON); err != nil {
+		if err := rejectModificationFlags(opts); err != nil {
 			return err
 		}
-		return sendFromFile(mcpURL, file, bodyOverride, hasBodyOverride, followRedirects, force)
+		return sendFromFile(mcpURL, file, bodyOverride, hasBodyOverride, opts.FollowRedirects, opts.Force)
 	}
 
 	ctx := context.Background()
@@ -129,26 +108,12 @@ func send(mcpURL string, flow, bundleArg, file, body, target string, headers, re
 	}
 	defer func() { _ = client.Close() }()
 
-	var bodyContent string
+	opts.FlowID = flow
 	if hasBodyOverride {
-		bodyContent = string(bodyOverride)
+		opts.Body = string(bodyOverride)
 	}
 
-	resp, err := client.ReplaySend(ctx, mcpclient.ReplaySendOpts{
-		FlowID:          flow,
-		Body:            bodyContent,
-		Target:          target,
-		SetHeaders:      headers,
-		RemoveHeaders:   removeHeaders,
-		Path:            path,
-		Query:           query,
-		SetQuery:        setQuery,
-		RemoveQuery:     removeQuery,
-		SetJSON:         setJSONMap,
-		RemoveJSON:      removeJSON,
-		FollowRedirects: followRedirects,
-		Force:           force,
-	})
+	resp, err := client.ReplaySend(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("replay send failed: %w", err)
 	}

@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/pflag"
 
 	"github.com/go-appsec/toolbox/sectool/cliutil"
+	"github.com/go-appsec/toolbox/sectool/mcpclient"
 )
 
 var replaySubcommands = []string{"send", "get", "create", "help"}
@@ -87,28 +89,46 @@ replay create <url> [options]
 `)
 }
 
+// buildSetJSON converts --set-json pairs ("key=value", or bare "key" for null)
+// into the mutation map.
+func buildSetJSON(pairs []string) map[string]interface{} {
+	if len(pairs) == 0 {
+		return nil
+	}
+	m := make(map[string]interface{})
+	for _, kv := range pairs {
+		if idx := strings.Index(kv, "="); idx > 0 {
+			m[kv[:idx]] = kv[idx+1:]
+		} else {
+			// key without = means set to null
+			m[kv] = nil
+		}
+	}
+	return m
+}
+
 func parseSend(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("replay send", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
-	var flow, bundle, file, body, target, path, query string
-	var followRedirects, force bool
-	var headers, removeHeaders, setQuery, removeQuery, setJSON, removeJSON []string
+	var opts mcpclient.ReplaySendOpts
+	var flow, bundleArg, file, body string
+	var setJSONPairs []string
 
 	fs.StringVar(&flow, "flow", "", "flow_id to replay from proxy history")
-	fs.StringVar(&bundle, "bundle", "", "bundle_id from proxy export")
+	fs.StringVar(&bundleArg, "bundle", "", "bundle_id from proxy export")
 	fs.StringVar(&file, "file", "", "path to request.http file (- for stdin)")
 	fs.StringVar(&body, "body", "", "path to body file (use with --file)")
-	fs.StringVar(&target, "target", "", "override target URL (scheme://host:port)")
-	fs.StringArrayVar(&headers, "set-header", nil, "add or replace header (repeatable)")
-	fs.StringArrayVar(&removeHeaders, "remove-header", nil, "remove header by name (repeatable)")
-	fs.StringVar(&path, "path", "", "replace URL path (e.g., /api/v2/users)")
-	fs.StringVar(&query, "query", "", "replace entire query string (e.g., id=1&debug=true)")
-	fs.StringArrayVar(&setQuery, "set-query", nil, "add or replace query param (repeatable, e.g., id=123)")
-	fs.StringArrayVar(&removeQuery, "remove-query", nil, "remove query param by name (repeatable)")
-	fs.StringArrayVar(&setJSON, "set-json", nil, "set JSON key (repeatable, e.g., user.role=admin)")
-	fs.StringArrayVar(&removeJSON, "remove-json", nil, "remove JSON key (repeatable)")
-	fs.BoolVar(&followRedirects, "follow-redirects", false, "follow 3xx redirects")
-	fs.BoolVar(&force, "force", false, "send request even if validation fails")
+	fs.StringVar(&opts.Target, "target", "", "override target URL (scheme://host:port)")
+	fs.StringArrayVar(&opts.SetHeaders, "set-header", nil, "add or replace header (repeatable)")
+	fs.StringArrayVar(&opts.RemoveHeaders, "remove-header", nil, "remove header by name (repeatable)")
+	fs.StringVar(&opts.Path, "path", "", "replace URL path (e.g., /api/v2/users)")
+	fs.StringVar(&opts.Query, "query", "", "replace entire query string (e.g., id=1&debug=true)")
+	fs.StringArrayVar(&opts.SetQuery, "set-query", nil, "add or replace query param (repeatable, e.g., id=123)")
+	fs.StringArrayVar(&opts.RemoveQuery, "remove-query", nil, "remove query param by name (repeatable)")
+	fs.StringArrayVar(&setJSONPairs, "set-json", nil, "set JSON key (repeatable, e.g., user.role=admin)")
+	fs.StringArrayVar(&opts.RemoveJSON, "remove-json", nil, "remove JSON key (repeatable)")
+	fs.BoolVar(&opts.FollowRedirects, "follow-redirects", false, "follow 3xx redirects")
+	fs.BoolVar(&opts.Force, "force", false, "send request even if validation fails")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool replay send [options]
@@ -188,7 +208,7 @@ Options:
 	if flow != "" {
 		sources++
 	}
-	if bundle != "" {
+	if bundleArg != "" {
 		sources++
 	}
 	if file != "" {
@@ -201,10 +221,9 @@ Options:
 		return errors.New("only one of --flow, --bundle, or --file can be specified")
 	}
 
-	return send(mcpURL, flow, bundle, file, body, target, headers, removeHeaders,
-		path, query, setQuery, removeQuery,
-		setJSON, removeJSON,
-		followRedirects, force)
+	opts.SetJSON = buildSetJSON(setJSONPairs)
+
+	return send(mcpURL, flow, bundleArg, file, body, opts)
 }
 
 func parseGet(args []string, mcpURL string) error {

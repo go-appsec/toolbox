@@ -117,7 +117,7 @@ func status(mcpURL string, sessionID string) error {
 	return nil
 }
 
-func summary(mcpURL string, sessionID, host, path, method, status, searchHeader, searchBody, excludeHost, excludePath string) error {
+func summary(mcpURL string, sessionID string, opts mcpclient.CrawlPollOpts) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -126,17 +126,8 @@ func summary(mcpURL string, sessionID, host, path, method, status, searchHeader,
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.CrawlPoll(ctx, sessionID, mcpclient.CrawlPollOpts{
-		OutputMode:   "summary",
-		Host:         host,
-		Path:         path,
-		Method:       method,
-		Status:       status,
-		SearchHeader: searchHeader,
-		SearchBody:   searchBody,
-		ExcludeHost:  excludeHost,
-		ExcludePath:  excludePath,
-	})
+	opts.OutputMode = "summary"
+	resp, err := client.CrawlPoll(ctx, sessionID, opts)
 	if err != nil {
 		return fmt.Errorf("crawl summary failed: %w", err)
 	}
@@ -169,7 +160,7 @@ func summary(mcpURL string, sessionID, host, path, method, status, searchHeader,
 	return nil
 }
 
-func list(mcpURL string, sessionID, listType, host, path, method, status, searchHeader, searchBody, excludeHost, excludePath, since string, limit, offset int) error {
+func list(mcpURL string, sessionID string, opts mcpclient.CrawlPollOpts) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -178,34 +169,12 @@ func list(mcpURL string, sessionID, listType, host, path, method, status, search
 	}
 	defer func() { _ = client.Close() }()
 
-	// Map CLI listType to output_mode
-	outputMode := "flows"
-	switch listType {
-	case "forms":
-		outputMode = "forms"
-	case "errors":
-		outputMode = "errors"
-	}
-
-	resp, err := client.CrawlPoll(ctx, sessionID, mcpclient.CrawlPollOpts{
-		OutputMode:   outputMode,
-		Host:         host,
-		Path:         path,
-		Method:       method,
-		Status:       status,
-		SearchHeader: searchHeader,
-		SearchBody:   searchBody,
-		ExcludeHost:  excludeHost,
-		ExcludePath:  excludePath,
-		Since:        since,
-		Limit:        limit,
-		Offset:       offset,
-	})
+	resp, err := client.CrawlPoll(ctx, sessionID, opts)
 	if err != nil {
 		return fmt.Errorf("crawl list failed: %w", err)
 	}
 
-	switch outputMode {
+	switch opts.OutputMode {
 	case "forms":
 		if len(resp.Forms) == 0 {
 			cliutil.NoResults(os.Stdout, "No forms discovered.")
@@ -267,8 +236,8 @@ func list(mcpURL string, sessionID, listType, host, path, method, status, search
 		}
 		t.Render()
 		cliutil.Summary(os.Stdout, len(resp.Flows), "flow", "flows")
-		if len(resp.Flows) == limit && limit > 0 {
-			cliutil.Hint(os.Stdout, fmt.Sprintf("More results may be available. Use --offset %d to paginate.", offset+limit))
+		if len(resp.Flows) == opts.Limit && opts.Limit > 0 {
+			cliutil.Hint(os.Stdout, fmt.Sprintf("More results may be available. Use --offset %d to paginate.", opts.Offset+opts.Limit))
 		}
 		if len(resp.Flows) > 0 {
 			lastFlow := resp.Flows[len(resp.Flows)-1]

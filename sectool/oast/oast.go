@@ -7,7 +7,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 
@@ -54,7 +53,7 @@ func create(mcpURL string, label, redirect string) error {
 	return nil
 }
 
-func summary(mcpURL string, oastID, since, eventType string, wait time.Duration, limit int) error {
+func summary(mcpURL string, oastID string, opts mcpclient.OastPollOpts) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -63,13 +62,8 @@ func summary(mcpURL string, oastID, since, eventType string, wait time.Duration,
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.OastPoll(ctx, oastID, mcpclient.OastPollOpts{
-		OutputMode: "summary",
-		Since:      since,
-		EventType:  eventType,
-		Wait:       wait.String(),
-		Limit:      limit,
-	})
+	opts.OutputMode = "summary"
+	resp, err := client.OastPoll(ctx, oastID, opts)
 	if err != nil {
 		return fmt.Errorf("oast summary failed: %w", err)
 	}
@@ -97,7 +91,7 @@ func summary(mcpURL string, oastID, since, eventType string, wait time.Duration,
 	return nil
 }
 
-func poll(mcpURL string, oastID, since, eventType string, wait time.Duration, limit int) error {
+func poll(mcpURL string, oastID string, opts mcpclient.OastPollOpts) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -106,13 +100,8 @@ func poll(mcpURL string, oastID, since, eventType string, wait time.Duration, li
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.OastPoll(ctx, oastID, mcpclient.OastPollOpts{
-		OutputMode: "events",
-		Since:      since,
-		EventType:  eventType,
-		Wait:       wait.String(),
-		Limit:      limit,
-	})
+	opts.OutputMode = "events"
+	resp, err := client.OastPoll(ctx, oastID, opts)
 	if err != nil {
 		return fmt.Errorf("oast poll failed: %w", err)
 	}

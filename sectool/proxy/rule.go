@@ -87,7 +87,7 @@ func printRuleTable(rules []protocol.RuleEntry) {
 	cliutil.Summary(os.Stdout, len(rules), "rule", "rules")
 }
 
-func ruleAdd(mcpURL string, ruleType, find, replace, label string, isRegex bool) error {
+func ruleAdd(mcpURL string, opts mcpclient.RuleAddOpts) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -96,13 +96,7 @@ func ruleAdd(mcpURL string, ruleType, find, replace, label string, isRegex bool)
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.ProxyRuleAdd(ctx, mcpclient.RuleAddOpts{
-		Label:   label,
-		Type:    ruleType,
-		IsRegex: isRegex,
-		Find:    find,
-		Replace: replace,
-	})
+	resp, err := client.ProxyRuleAdd(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("rule add failed: %w", err)
 	}

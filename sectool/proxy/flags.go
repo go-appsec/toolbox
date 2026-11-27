@@ -432,16 +432,16 @@ Options:
 func parseRuleAdd(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("proxy rule add", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
-	var isRegex bool
-	var ruleType, label, name, find, replace, set, remove string
+	var opts mcpclient.RuleAddOpts
+	var name, set, remove string
 
-	fs.StringVar(&ruleType, "type", "request_header", "rule type")
-	fs.BoolVar(&isRegex, "regex", false, "treat find as regex pattern (RE2)")
-	fs.StringVar(&label, "label", "", "optional label for easier reference")
+	fs.StringVar(&opts.Type, "type", "request_header", "rule type")
+	fs.BoolVar(&opts.IsRegex, "regex", false, "treat find as regex pattern (RE2)")
+	fs.StringVar(&opts.Label, "label", "", "optional label for easier reference")
 	fs.StringVar(&name, "name", "", "alias for --label")
 	fs.StringVar(&set, "set", "", "text to append")
-	fs.StringVar(&find, "find", "", "text or pattern to find")
-	fs.StringVar(&replace, "replace", "", "replacement text")
+	fs.StringVar(&opts.Find, "find", "", "text or pattern to find")
+	fs.StringVar(&opts.Replace, "replace", "", "replacement text")
 	fs.StringVar(&remove, "remove", "", "text or pattern to remove")
 	_ = fs.MarkHidden("name")
 
@@ -474,31 +474,31 @@ Options:
 		return err
 	}
 
-	if name != "" && label == "" {
-		label = name
+	if name != "" && opts.Label == "" {
+		opts.Label = name
 	}
 
 	// Validate flag combinations
-	if set != "" && (find != "" || replace != "" || remove != "") {
+	if set != "" && (opts.Find != "" || opts.Replace != "" || remove != "") {
 		return errors.New("--set cannot be combined with --find, --replace, or --remove")
 	}
-	if remove != "" && (find != "" || replace != "" || set != "") {
+	if remove != "" && (opts.Find != "" || opts.Replace != "" || set != "") {
 		return errors.New("--remove cannot be combined with --find, --replace, or --set")
 	}
 
 	// Map high-level flags to find/replace pair
 	switch {
 	case set != "":
-		find, replace = "", set
+		opts.Find, opts.Replace = "", set
 	case remove != "":
-		find, replace = remove, ""
+		opts.Find, opts.Replace = remove, ""
 	}
 
-	if find == "" && replace == "" {
+	if opts.Find == "" && opts.Replace == "" {
 		return errors.New("one of --set, --find, or --remove is required")
 	}
 
-	return ruleAdd(mcpURL, ruleType, find, replace, label, isRegex)
+	return ruleAdd(mcpURL, opts)
 }
 
 func parseRuleDelete(args []string, mcpURL string) error {

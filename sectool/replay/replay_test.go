@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/go-appsec/toolbox/sectool/mcpclient"
 )
 
 func TestBuildURLFromHTTPRequest(t *testing.T) {
@@ -102,39 +104,29 @@ func TestRejectModificationFlags(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		target        string
-		headers       []string
-		removeHeaders []string
-		path          string
-		query         string
-		setQuery      []string
-		removeQuery   []string
-		setJSON       []string
-		removeJSON    []string
-		wantErr       bool
-		wantContains  string
+		name         string
+		opts         mcpclient.ReplaySendOpts
+		wantErr      bool
+		wantContains string
 	}{
 		{
 			name: "no_flags",
 		},
 		{
 			name:         "string_flag",
-			target:       "https://other.com",
+			opts:         mcpclient.ReplaySendOpts{Target: "https://other.com"},
 			wantErr:      true,
 			wantContains: "--target",
 		},
 		{
 			name:         "slice_flag",
-			headers:      []string{"X-Test: val"},
+			opts:         mcpclient.ReplaySendOpts{SetHeaders: []string{"X-Test: val"}},
 			wantErr:      true,
 			wantContains: "--set-header",
 		},
 		{
 			name:         "multiple_flags",
-			target:       "https://other.com",
-			headers:      []string{"X: Y"},
-			path:         "/new",
+			opts:         mcpclient.ReplaySendOpts{Target: "https://other.com", SetHeaders: []string{"X: Y"}, Path: "/new"},
 			wantErr:      true,
 			wantContains: "--target, --set-header, --path",
 		},
@@ -142,9 +134,7 @@ func TestRejectModificationFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := rejectModificationFlags(tt.target, tt.headers, tt.removeHeaders,
-				tt.path, tt.query, tt.setQuery, tt.removeQuery,
-				tt.setJSON, tt.removeJSON)
+			err := rejectModificationFlags(tt.opts)
 			if !tt.wantErr {
 				assert.NoError(t, err)
 				return

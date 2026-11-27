@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/go-appsec/toolbox/sectool/cliutil"
+	"github.com/go-appsec/toolbox/sectool/mcpclient"
 )
 
 var oastSubcommands = []string{"create", "summary", "poll", "get", "list", "delete", "help"}
@@ -139,14 +140,13 @@ Options:
 func parseSummary(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("oast summary", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
+	var opts mcpclient.OastPollOpts
 	var wait time.Duration
-	var since, eventType string
-	var limit int
 
-	fs.StringVar(&since, "since", "", "filter events since event_id or timestamp")
-	fs.StringVar(&eventType, "type", "", "filter by event type (dns, http, smtp, ftp, ldap, smb, responder)")
+	fs.StringVar(&opts.Since, "since", "", "filter events since event_id or timestamp")
+	fs.StringVar(&opts.EventType, "type", "", "filter by event type (dns, http, smtp, ftp, ldap, smb, responder)")
 	fs.DurationVar(&wait, "wait", 120*time.Second, "max wait time for events (max 120s)")
-	fs.IntVar(&limit, "limit", 0, "maximum number of events to aggregate")
+	fs.IntVar(&opts.Limit, "limit", 0, "maximum number of events to aggregate")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool oast summary <oast_id> [options]
@@ -170,21 +170,22 @@ Options:
 		return errors.New("oast_id required (get from 'sectool oast create' or 'sectool oast list')")
 	}
 
-	return summary(mcpURL, fs.Args()[0], since, eventType, wait, limit)
+	opts.Wait = wait.String()
+
+	return summary(mcpURL, fs.Args()[0], opts)
 }
 
 func parsePoll(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("oast poll", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
+	var opts mcpclient.OastPollOpts
 	var wait time.Duration
-	var since, eventType string
-	var limit int
 
-	fs.StringVar(&since, "since", "", "filter events since event_id or timestamp")
-	fs.StringVar(&eventType, "type", "", "filter by event type (dns, http, smtp, ftp, ldap, smb, responder)")
+	fs.StringVar(&opts.Since, "since", "", "filter events since event_id or timestamp")
+	fs.StringVar(&opts.EventType, "type", "", "filter by event type (dns, http, smtp, ftp, ldap, smb, responder)")
 	fs.DurationVar(&wait, "wait", 120*time.Second, "max wait time for events (max 120s)")
-	fs.IntVar(&limit, "limit", 0, "maximum number of events to return")
-	fs.IntVar(&limit, "count", 0, "alias for --limit")
+	fs.IntVar(&opts.Limit, "limit", 0, "maximum number of events to return")
+	fs.IntVar(&opts.Limit, "count", 0, "alias for --limit")
 	_ = fs.MarkHidden("count")
 
 	fs.Usage = func() {
@@ -209,7 +210,9 @@ Options:
 		return errors.New("oast_id required (get from 'sectool oast create' or 'sectool oast list')")
 	}
 
-	return poll(mcpURL, fs.Args()[0], since, eventType, wait, limit)
+	opts.Wait = wait.String()
+
+	return poll(mcpURL, fs.Args()[0], opts)
 }
 
 func parseGet(args []string, mcpURL string) error {

@@ -120,6 +120,14 @@ type CrawlPollOpts struct {
 	Offset       int
 }
 
+// HasFilters reports whether any poll filter is set, ignoring output mode and
+// paging fields.
+func (o CrawlPollOpts) HasFilters() bool {
+	return o.Host != "" || o.Path != "" || o.Method != "" || o.Status != "" ||
+		o.SearchHeader != "" || o.SearchBody != "" || o.ExcludeHost != "" ||
+		o.ExcludePath != "" || o.Since != ""
+}
+
 // CookieJarOpts are options for CookieJar.
 type CookieJarOpts struct {
 	Name   string
