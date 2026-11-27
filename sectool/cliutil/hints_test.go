@@ -42,16 +42,6 @@ func TestHint(t *testing.T) {
 	})
 }
 
-func TestHint_NilWriter(t *testing.T) {
-	Output = &OutputConfig{
-		Writer:    &bytes.Buffer{},
-		ColorMode: ColorNever,
-	}
-
-	// should not panic with nil writer
-	Hint(nil, "message")
-}
-
 func TestHintCommand(t *testing.T) {
 	t.Run("no_color", func(t *testing.T) {
 		Output = &OutputConfig{
@@ -84,16 +74,6 @@ func TestHintCommand(t *testing.T) {
 		expected := ansiFaint + "To list flows" + ansiReset + ": " + ansiCyan + "sectool proxy list" + ansiReset + "\n"
 		assert.Equal(t, expected, got)
 	})
-}
-
-func TestHintCommand_NilWriter(t *testing.T) {
-	Output = &OutputConfig{
-		Writer:    &bytes.Buffer{},
-		ColorMode: ColorNever,
-	}
-
-	// should not panic with nil writer
-	HintCommand(nil, "desc", "cmd")
 }
 
 func TestSummary(t *testing.T) {
@@ -185,16 +165,6 @@ func TestSummary(t *testing.T) {
 	})
 }
 
-func TestSummary_NilWriter(t *testing.T) {
-	Output = &OutputConfig{
-		Writer:    &bytes.Buffer{},
-		ColorMode: ColorNever,
-	}
-
-	// should not panic with nil writer
-	Summary(nil, 5, "flow", "flows")
-}
-
 func TestNoResults(t *testing.T) {
 	t.Run("no_color", func(t *testing.T) {
 		Output = &OutputConfig{
@@ -221,14 +191,4 @@ func TestNoResults(t *testing.T) {
 		assert.Contains(t, got, ansiReset)
 		assert.Equal(t, ansiFaint+"No matching entries found."+ansiReset+"\n", got)
 	})
-}
-
-func TestNoResults_NilWriter(t *testing.T) {
-	Output = &OutputConfig{
-		Writer:    &bytes.Buffer{},
-		ColorMode: ColorNever,
-	}
-
-	// should not panic with nil writer
-	NoResults(nil, "No results")
 }

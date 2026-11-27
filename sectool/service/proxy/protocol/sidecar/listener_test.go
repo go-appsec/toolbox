@@ -35,7 +35,7 @@ func TestListenerUnix(t *testing.T) {
 	var d net.Dialer
 	conn, err := d.DialContext(t.Context(), "unix", socket)
 	require.NoError(t, err)
-	p := wire.NewPeer(conn, nil)
+	p := wire.NewPeer(conn, wire.HandlerFuncs{})
 	go func() { _ = p.Run(t.Context()) }()
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -61,7 +61,7 @@ func TestListenerCloseUnregistered(t *testing.T) {
 	var d net.Dialer
 	conn, err := d.DialContext(t.Context(), "unix", socket)
 	require.NoError(t, err)
-	p := wire.NewPeer(conn, nil)
+	p := wire.NewPeer(conn, wire.HandlerFuncs{})
 	go func() { _ = p.Run(t.Context()) }()
 	t.Cleanup(func() { _ = p.Close() })
 

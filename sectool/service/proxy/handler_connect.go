@@ -64,9 +64,7 @@ func newConnectHandler(certManager *CertManager, http1Handler *http1Handler, htt
 // SetRuleApplier propagates the rule applier to child handlers.
 func (h *connectHandler) SetRuleApplier(applier types.RuleApplier) {
 	h.http1Handler.ruleApplier = applier
-	if h.http2Handler != nil {
-		h.http2Handler.SetRuleApplier(applier)
-	}
+	h.http2Handler.SetRuleApplier(applier)
 }
 
 // Handle processes a CONNECT request for HTTPS tunneling with MITM.

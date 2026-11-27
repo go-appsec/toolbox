@@ -345,7 +345,7 @@ func TestManagerHandleConn(t *testing.T) {
 			close(done)
 		}()
 
-		p := wire.NewPeer(cli, nil)
+		p := wire.NewPeer(cli, wire.HandlerFuncs{})
 		go func() { _ = p.Run(t.Context()) }()
 		t.Cleanup(func() { _ = p.Close() })
 
@@ -400,7 +400,7 @@ func TestSessionQueueDiag(t *testing.T) {
 	srv, cli := net.Pipe()
 	t.Cleanup(func() { _ = cli.Close() })
 	s := &session{diag: make(chan func(), diagQueue)}
-	s.peer = wire.NewPeer(srv, nil)
+	s.peer = wire.NewPeer(srv, wire.HandlerFuncs{})
 	t.Cleanup(func() { _ = s.peer.Close() })
 	go s.writeDiag()
 

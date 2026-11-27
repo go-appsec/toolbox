@@ -88,7 +88,7 @@ func TestPeerDeliverResponse(t *testing.T) {
 
 	// non-Go peers may echo the numeric id as a quoted string
 	ca, _ := net.Pipe()
-	p := NewPeer(ca, nil)
+	p := NewPeer(ca, HandlerFuncs{})
 	t.Cleanup(func() { _ = p.Close() })
 
 	ch := make(chan *Message, 1)

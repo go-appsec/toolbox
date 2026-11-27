@@ -69,9 +69,6 @@ type Peer struct {
 
 // NewPeer wraps conn with the given inbound Handler. Call Run to start the reader.
 func NewPeer(conn net.Conn, h Handler) *Peer {
-	if h == nil {
-		h = HandlerFuncs{}
-	}
 	return &Peer{rw: conn, h: h, notifyCh: make(chan *Message, notifyQueue), done: make(chan struct{})}
 }
 

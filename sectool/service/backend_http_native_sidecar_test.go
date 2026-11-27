@@ -40,7 +40,7 @@ func TestNativeProxyBackendSidecarLifecycle(t *testing.T) {
 		return true
 	}, 2*time.Second, 20*time.Millisecond)
 
-	p := wire.NewPeer(conn, nil)
+	p := wire.NewPeer(conn, wire.HandlerFuncs{})
 	go func() { _ = p.Run(t.Context()) }()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
