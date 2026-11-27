@@ -55,6 +55,15 @@ type HistoryStore struct {
 	timestampByFlow map[string]time.Time // flow_id -> timestamp, for cursor resolution
 	childOrder      map[string][]string  // parent flow_id -> child flow_ids in emission order
 	captureFilter   atomic.Value         // stores CaptureFilter
+	changeHook      func()               // optional; invoked after changes to wake long-poll waiters
+}
+
+// SetChangeHook registers fn, invoked after each history change.
+func (h *HistoryStore) SetChangeHook(fn func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.changeHook = fn
 }
 
 // newHistoryStore creates a history store using the provided storage backend.
@@ -141,6 +150,15 @@ func (h *HistoryStore) recoverChildOrder(payloadKeys []string) {
 // flow.StartedAt must be set by the caller. Child flows (ParentFlowID set) are
 // stored payload-only: no meta key and absent from the listing order.
 func (h *HistoryStore) Store(flow *types.Flow) string {
+	flowID, hook := h.storeFlow(flow)
+	if hook != nil {
+		hook() // after unlock so the hook may re-enter the store
+	}
+	return flowID
+}
+
+// storeFlow persists flow and returns its minted flow_id and the change hook.
+func (h *HistoryStore) storeFlow(flow *types.Flow) (string, func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -152,12 +170,12 @@ func (h *HistoryStore) Store(flow *types.Flow) string {
 	h.writePayloadLocked(flow)
 	if flow.ParentFlowID != "" {
 		h.childOrder[flow.ParentFlowID] = append(h.childOrder[flow.ParentFlowID], flowID)
-		return flowID
+	} else {
+		h.writeMetaLocked(flow)
+		h.insertOrderLocked(orderedFlow{flowID: flowID, timestamp: ts})
+		h.timestampByFlow[flowID] = ts
 	}
-	h.writeMetaLocked(flow)
-	h.insertOrderLocked(orderedFlow{flowID: flowID, timestamp: ts})
-	h.timestampByFlow[flowID] = ts
-	return flowID
+	return flowID, h.changeHook
 }
 
 // Complete attaches a late response and/or completion to an already-stored
@@ -166,12 +184,22 @@ func (h *HistoryStore) Store(flow *types.Flow) string {
 // completedAt sets CompletedAt; annotations merge over existing keys. Returns
 // false when flowID is unknown.
 func (h *HistoryStore) Complete(flowID string, resp *types.Message, completedAt time.Time, annotations map[string]any) bool {
+	ok, hook := h.completeFlow(flowID, resp, completedAt, annotations)
+	if ok && hook != nil {
+		hook() // after unlock so the hook may re-enter the store
+	}
+	return ok
+}
+
+// completeFlow applies a completion to a stored flow, returning whether the
+// flow was found and the change hook to fire.
+func (h *HistoryStore) completeFlow(flowID string, resp *types.Message, completedAt time.Time, annotations map[string]any) (bool, func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	flow, ok := h.Get(flowID)
 	if !ok {
-		return false
+		return false, nil
 	}
 	if resp != nil {
 		flow.Response = resp
@@ -189,7 +217,7 @@ func (h *HistoryStore) Complete(flowID string, resp *types.Message, completedAt 
 	if flow.ParentFlowID == "" {
 		h.writeMetaLocked(flow)
 	}
-	return true
+	return true, h.changeHook
 }
 
 // SetInvokedBy records the originating sidecar on an already-stored flow.

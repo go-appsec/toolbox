@@ -65,6 +65,9 @@ func (c *Client) ProxyPoll(ctx context.Context, opts ProxyPollOpts) (*protocol.P
 	if opts.Offset > 0 {
 		args["offset"] = opts.Offset
 	}
+	if opts.Wait != "" {
+		args["wait"] = opts.Wait
+	}
 
 	var resp protocol.ProxyPollResponse
 	if err := c.CallToolJSON(ctx, "proxy_poll", args, &resp); err != nil {

@@ -106,6 +106,7 @@ func clearByPaging(ctx context.Context, client *mcpclient.Client, opts clearOpts
 			OutputMode: "flows",
 			Since:      cursor,
 			Limit:      pageLimit,
+			Wait:       "0s", // paging loop terminates on the first empty page
 		})
 		if perr != nil {
 			return deletedProxy, deletedReplay, skippedNoted, fmt.Errorf("fetch flows: %w", perr)

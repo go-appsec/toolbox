@@ -37,7 +37,8 @@ func (*toolSidecar) OnShutdown(int) {}
 
 func (h *toolSidecar) OnInvokeTool(p wire.InvokeToolParams) (wire.InvokeToolResult, error) {
 	ctx := h.t.Context()
-	if _, err := h.conn.CoreInvoke(ctx, "proxy_poll", map[string]any{"output_mode": "summary"}); err != nil {
+	// wait=0s: nothing matches yet and the default long-poll would stall the invoke
+	if _, err := h.conn.CoreInvoke(ctx, "proxy_poll", map[string]any{"output_mode": "summary", "wait": "0s"}); err != nil {
 		return wire.InvokeToolResult{}, err
 	}
 	if _, _, err := h.conn.PushFlow(ctx, wire.Flow{

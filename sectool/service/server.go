@@ -84,8 +84,13 @@ type Server struct {
 	// Used for "since=last" cursor to support both proxy and replay entries.
 	lastFlowID atomic.Value // stores string
 
+	// flowChanges wakes waiting proxy_polls after history changes; backends
+	// without a change signal fall back to interval re-polling
+	flowChanges *flowNotifier
+
 	// Shutdown coordination
-	shutdownCh chan struct{}
+	shutdownCh   chan struct{}
+	shutdownOnce sync.Once
 
 	// quietLogging suppresses verbose startup output
 	quietLogging bool
@@ -144,6 +149,7 @@ func newServer(flags MCPServerFlags, storageDir string, storageProvider store.Pr
 		storageProvider:    storageProvider,
 		replayHistoryStore: store.NewReplayHistoryStore(replayStorage),
 		noteStore:          store.NewNoteStore(notesStorage),
+		flowChanges:        newFlowNotifier(),
 		httpBackend:        hb,
 		oastBackend:        ob,
 		crawlerBackend:     cb,
@@ -212,6 +218,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	s.mcpServer = newMCPServer(s, s.mcpWorkflowMode)
+	s.wireFlowChangeHooks()
 	s.mcpReady.Store(s.mcpServer)
 	if err := s.mcpServer.Start(ctx, s.mcpPort); err != nil {
 		// backends hold listeners and goroutines; don't leak them on failed startup
@@ -246,6 +253,8 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	signal.Stop(sigCh)
+	// ctx/signal paths skip RequestShutdown; still close shutdownCh so long-polls wake
+	s.RequestShutdown()
 
 	// WithoutCancel keeps the drain alive when ctx is already cancelled so
 	// backends still close gracefully
@@ -338,12 +347,7 @@ func (s *Server) MCPAddr() string {
 
 // RequestShutdown initiates server shutdown.
 func (s *Server) RequestShutdown() {
-	select {
-	case <-s.shutdownCh:
-		// Already shutting down
-	default:
-		close(s.shutdownCh)
-	}
+	s.shutdownOnce.Do(func() { close(s.shutdownCh) })
 }
 
 // DeleteProxyHistory removes the supplied flow_ids, and their child flows, from

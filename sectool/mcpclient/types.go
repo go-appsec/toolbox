@@ -22,6 +22,18 @@ type ProxyPollOpts struct {
 	ParentFlowID string
 	Limit        int // list mode
 	Offset       int // list mode
+	// Wait long-polls when no flows match ("0s" disables); empty omits the
+	// param, deferring to the server default (30s)
+	Wait string
+}
+
+// HasFilters reports whether any poll filter is set, ignoring output mode,
+// wait, and paging fields.
+func (o ProxyPollOpts) HasFilters() bool {
+	return o.Source != "" || o.Host != "" || o.Path != "" || o.Method != "" ||
+		o.Status != "" || o.SearchHeader != "" || o.SearchBody != "" || o.Since != "" ||
+		o.ExcludeHost != "" || o.ExcludePath != "" || o.Adapter != "" ||
+		o.ProtocolTag != "" || o.ParentFlowID != ""
 }
 
 // FlowGetOpts are options for FlowGet.

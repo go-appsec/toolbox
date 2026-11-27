@@ -381,6 +381,48 @@ func TestIntegration_ProxyList(t *testing.T) {
 	})
 }
 
+func TestIntegration_ProxyPollWait(t *testing.T) {
+	t.Parallel()
+
+	runForAllBackendsWithHandler(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "late")
+	}, func(t *testing.T, env *testEnv) {
+		t.Helper()
+
+		type pollResult struct {
+			resp *protocol.ProxyPollResponse
+			err  error
+		}
+		pollCh := make(chan pollResult, 1)
+		go func() {
+			// host filter isolates this test's target; nothing matches until the request below
+			resp, err := env.mcpClient.ProxyPoll(t.Context(), mcpclient.ProxyPollOpts{
+				OutputMode: "flows",
+				Host:       strings.TrimPrefix(env.targetURL, "http://"),
+				Path:       "/wait-for-me*",
+				Wait:       "5s",
+			})
+			pollCh <- pollResult{resp, err}
+		}()
+
+		req, err := http.NewRequestWithContext(t.Context(), "GET", env.targetURL+"/wait-for-me", nil)
+		require.NoError(t, err)
+		resp, err := makeProxyClient(env.proxyAddr).Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		select {
+		case r := <-pollCh:
+			require.NoError(t, r.err)
+			require.Len(t, r.resp.Flows, 1)
+			assert.Equal(t, "/wait-for-me", r.resp.Flows[0].Path)
+			assert.Empty(t, r.resp.Note)
+		case <-time.After(10 * time.Second):
+			t.Fatal("proxy_poll did not return after the request was proxied")
+		}
+	})
+}
+
 func TestIntegration_FlowGet(t *testing.T) {
 	t.Parallel()
 
@@ -581,6 +623,7 @@ func TestIntegration_ProxyClear_Native(t *testing.T) {
 			OutputMode: "flows",
 			Source:     "proxy",
 			Limit:      1_000_000_000,
+			Wait:       "0s", // expect empty: skip the long-poll
 		})
 		require.NoError(t, err)
 		assert.Empty(t, final.Flows)

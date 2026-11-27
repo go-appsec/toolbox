@@ -2,6 +2,7 @@ package store
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -668,5 +669,64 @@ func TestReplayHistoryStore_FlowCursor(t *testing.T) {
 		assert.Equal(t, 0, store.Count())
 		_, ok := store.LastFlowID()
 		assert.False(t, ok)
+	})
+}
+
+func TestReplayHistoryStore_SetChangeHook(t *testing.T) {
+	t.Parallel()
+
+	newEntry := func(flowID string) *ReplayHistoryEntry {
+		return &ReplayHistoryEntry{
+			ReplayHistoryMeta: ReplayHistoryMeta{
+				FlowID:     flowID,
+				Method:     "POST",
+				Host:       "example.com",
+				Path:       "/api/test",
+				RespStatus: 200,
+			},
+		}
+	}
+
+	t.Run("notified_on_store", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		var notified atomic.Bool
+		store.SetChangeHook(func() { notified.Store(true) })
+
+		store.Store(newEntry("abc123"))
+
+		assert.True(t, notified.Load())
+	})
+
+	t.Run("notified_on_complete", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		store.Store(newEntry("abc123"))
+
+		var notified atomic.Bool
+		store.SetChangeHook(func() { notified.Store(true) })
+
+		ok := store.Complete("abc123", []byte("HTTP/1.1 200 OK\r\n\r\n"), []byte("body"), 200, time.Now(), nil)
+
+		assert.True(t, ok)
+		assert.True(t, notified.Load())
+	})
+
+	t.Run("not_notified_on_unknown_complete", func(t *testing.T) {
+		storage := NewMemStorage()
+		t.Cleanup(func() { _ = storage.Close() })
+		store := NewReplayHistoryStore(storage)
+
+		var notified atomic.Bool
+		store.SetChangeHook(func() { notified.Store(true) })
+
+		ok := store.Complete("missing", nil, nil, 0, time.Time{}, nil)
+
+		assert.False(t, ok)
+		assert.False(t, notified.Load())
 	})
 }

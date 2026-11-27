@@ -108,16 +108,9 @@ func (m *mcpServer) handleOastPoll(ctx context.Context, req mcp.CallToolRequest)
 
 	outputMode, modeNote := normalizeOutputMode(req.GetString("output_mode", ""), OutputModeSummary, OutputModeEvents)
 
-	wait := 30 * time.Second
-	if waitStr := req.GetString("wait", ""); waitStr != "" {
-		parsed, err := time.ParseDuration(waitStr)
-		if err != nil {
-			return errorResult("invalid wait duration: " + err.Error()), nil
-		}
-		wait = parsed
-	}
-	if wait > 120*time.Second {
-		wait = 120 * time.Second
+	wait, err := parseWaitDuration(req.GetString("wait", ""))
+	if err != nil {
+		return errorResult(err.Error()), nil
 	}
 
 	since := req.GetString("since", "")

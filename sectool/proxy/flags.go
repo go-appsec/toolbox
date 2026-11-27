@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/go-appsec/toolbox/sectool/cliutil"
+	"github.com/go-appsec/toolbox/sectool/mcpclient"
 )
 
 // helpSubcommand is the help subcommand name shared by proxy and rule.
@@ -82,6 +83,7 @@ proxy summary [options]
     --search-body <regex>     regex search in request/response body (RE2)
     --exclude-host <pat>      exclude matching hosts
     --exclude-path <pat>      exclude matching paths
+    --wait <duration>         long-poll for matching flows (e.g. 30s); default no wait
 
 ---
 
@@ -100,6 +102,7 @@ proxy list [options]
     --since <id>              flows after flow_id
     --exclude-host <pat>      exclude matching hosts
     --exclude-path <pat>      exclude matching paths
+    --wait <duration>         long-poll for matching flows (e.g. 30s); default no wait
     --limit <n>               maximum number of flows to return
     --offset <n>              skip first N results (applied after filtering)
 
@@ -197,17 +200,18 @@ proxy clear [options]
 func parseSummary(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("proxy summary", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
-	var host, path, method, status, searchHeader, searchBody, excludeHost, excludePath, source string
+	var opts mcpclient.ProxyPollOpts
 
-	fs.StringVar(&source, "source", "", "filter by source: 'proxy', 'replay', or empty for both")
-	fs.StringVar(&host, "host", "", "filter by host pattern (glob: *, ?)")
-	fs.StringVar(&path, "path", "", "filter by path pattern (glob: *, ?)")
-	fs.StringVar(&method, "method", "", "filter by HTTP method (comma-separated)")
-	fs.StringVar(&status, "status", "", "filter by status code (e.g., 200,4XX)")
-	fs.StringVar(&searchHeader, "search-header", "", "regex search in request/response headers (RE2)")
-	fs.StringVar(&searchBody, "search-body", "", "regex search in request/response body (RE2)")
-	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")
-	fs.StringVar(&excludePath, "exclude-path", "", "exclude paths matching pattern")
+	fs.StringVar(&opts.Source, "source", "", "filter by source: 'proxy', 'replay', or empty for both")
+	fs.StringVar(&opts.Host, "host", "", "filter by host pattern (glob: *, ?)")
+	fs.StringVar(&opts.Path, "path", "", "filter by path pattern (glob: *, ?)")
+	fs.StringVar(&opts.Method, "method", "", "filter by HTTP method (comma-separated)")
+	fs.StringVar(&opts.Status, "status", "", "filter by status code (e.g., 200,4XX)")
+	fs.StringVar(&opts.SearchHeader, "search-header", "", "regex search in request/response headers (RE2)")
+	fs.StringVar(&opts.SearchBody, "search-body", "", "regex search in request/response body (RE2)")
+	fs.StringVar(&opts.ExcludeHost, "exclude-host", "", "exclude hosts matching pattern")
+	fs.StringVar(&opts.ExcludePath, "exclude-path", "", "exclude paths matching pattern")
+	fs.StringVar(&opts.Wait, "wait", "0s", "long-poll for matching flows (e.g. 30s); default no wait")
 
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, `Usage: sectool proxy summary [options]
@@ -231,32 +235,31 @@ Options:
 		return err
 	}
 
-	return summary(mcpURL, source, host, path, method, status, searchHeader, searchBody, excludeHost, excludePath)
+	return summary(mcpURL, opts)
 }
 
 func parseList(args []string, mcpURL string) error {
 	fs := pflag.NewFlagSet("proxy list", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
-	var limit, offset int
-	var host, path, method, status, searchHeader, searchBody, since, excludeHost, excludePath, source string
-	var adapter, protocolTag, parentFlowID string
+	var opts mcpclient.ProxyPollOpts
 
-	fs.StringVar(&source, "source", "", "filter by source: 'proxy', 'replay', or empty for both")
-	fs.StringVar(&host, "host", "", "filter by host pattern (glob: *, ?)")
-	fs.StringVar(&path, "path", "", "filter by path pattern (glob: *, ?)")
-	fs.StringVar(&method, "method", "", "filter by HTTP method (comma-separated)")
-	fs.StringVar(&status, "status", "", "filter by status code (e.g., 200,4XX)")
-	fs.StringVar(&searchHeader, "search-header", "", "regex search in request/response headers (RE2)")
-	fs.StringVar(&searchBody, "search-body", "", "regex search in request/response body (RE2)")
-	fs.StringVar(&since, "since", "", "filter since flow_id or 'last'")
-	fs.StringVar(&excludeHost, "exclude-host", "", "exclude hosts matching pattern")
-	fs.StringVar(&excludePath, "exclude-path", "", "exclude paths matching pattern")
-	fs.StringVar(&adapter, "adapter", "", "filter by emitting adapter name (glob: *, ?)")
-	fs.StringVar(&protocolTag, "protocol-tag", "", "filter by protocol tag (glob: *, ?)")
-	fs.StringVar(&parentFlowID, "parent-flow-id", "", "list child flows of this parent flow_id")
-	fs.IntVar(&limit, "limit", 0, "maximum number of flows to return")
-	fs.IntVar(&offset, "offset", 0, "skip first N results for pagination")
-	fs.IntVar(&limit, "count", 0, "alias for --limit")
+	fs.StringVar(&opts.Source, "source", "", "filter by source: 'proxy', 'replay', or empty for both")
+	fs.StringVar(&opts.Host, "host", "", "filter by host pattern (glob: *, ?)")
+	fs.StringVar(&opts.Path, "path", "", "filter by path pattern (glob: *, ?)")
+	fs.StringVar(&opts.Method, "method", "", "filter by HTTP method (comma-separated)")
+	fs.StringVar(&opts.Status, "status", "", "filter by status code (e.g., 200,4XX)")
+	fs.StringVar(&opts.SearchHeader, "search-header", "", "regex search in request/response headers (RE2)")
+	fs.StringVar(&opts.SearchBody, "search-body", "", "regex search in request/response body (RE2)")
+	fs.StringVar(&opts.Since, "since", "", "filter since flow_id or 'last'")
+	fs.StringVar(&opts.ExcludeHost, "exclude-host", "", "exclude hosts matching pattern")
+	fs.StringVar(&opts.ExcludePath, "exclude-path", "", "exclude paths matching pattern")
+	fs.StringVar(&opts.Adapter, "adapter", "", "filter by emitting adapter name (glob: *, ?)")
+	fs.StringVar(&opts.ProtocolTag, "protocol-tag", "", "filter by protocol tag (glob: *, ?)")
+	fs.StringVar(&opts.ParentFlowID, "parent-flow-id", "", "list child flows of this parent flow_id")
+	fs.StringVar(&opts.Wait, "wait", "0s", "long-poll for matching flows (e.g. 30s); default no wait")
+	fs.IntVar(&opts.Limit, "limit", 0, "maximum number of flows to return")
+	fs.IntVar(&opts.Offset, "offset", 0, "skip first N results for pagination")
+	fs.IntVar(&opts.Limit, "count", 0, "alias for --limit")
 	_ = fs.MarkHidden("count")
 
 	fs.Usage = func() {
@@ -284,17 +287,11 @@ Options:
 	}
 
 	// Auto-set large limit if no filters provided (MCP refuses list with no limits or filters)
-	if limit == 0 && source == "" && host == "" && path == "" && method == "" && status == "" && searchHeader == "" && searchBody == "" && since == "" && excludeHost == "" && excludePath == "" && adapter == "" && protocolTag == "" && parentFlowID == "" {
-		limit = 1_000_000_000
+	if opts.Limit == 0 && !opts.HasFilters() {
+		opts.Limit = 1_000_000_000
 	}
 
-	return list(mcpURL, listFilters{
-		source: source, host: host, path: path, method: method, status: status,
-		searchHeader: searchHeader, searchBody: searchBody, since: since,
-		excludeHost: excludeHost, excludePath: excludePath,
-		adapter: adapter, protocolTag: protocolTag, parentFlowID: parentFlowID,
-		limit: limit, offset: offset,
-	})
+	return list(mcpURL, opts)
 }
 
 func parseGet(args []string, mcpURL string) error {

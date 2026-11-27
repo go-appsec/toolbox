@@ -71,8 +71,9 @@ func (e *ReplayHistoryEntry) Duration() time.Duration {
 
 // ReplayHistoryStore manages replay entries with thread-safe access.
 type ReplayHistoryStore struct {
-	storage Storage
-	mu      sync.RWMutex
+	storage    Storage
+	mu         sync.RWMutex
+	changeHook func() // optional; invoked after changes to wake long-poll waiters
 }
 
 // NewReplayHistoryStore creates a new ReplayHistoryStore backed by the given storage.
@@ -82,15 +83,34 @@ func NewReplayHistoryStore(storage Storage) *ReplayHistoryStore {
 	}
 }
 
+// SetChangeHook registers fn, invoked after each entry change.
+func (s *ReplayHistoryStore) SetChangeHook(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.changeHook = fn
+}
+
 // Store adds a replay entry. Called after successful replay_send/request_send.
 func (s *ReplayHistoryStore) Store(entry *ReplayHistoryEntry) {
+	if hook := s.storeEntry(entry); hook != nil {
+		hook() // after unlock so the hook may re-enter the store
+	}
+}
+
+// storeEntry assigns CreatedAt when unset and persists entry, returning the
+// change hook when the write succeeded.
+func (s *ReplayHistoryStore) storeEntry(entry *ReplayHistoryEntry) func() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if entry.CreatedAt.IsZero() {
 		entry.CreatedAt = time.Now()
 	}
-	s.persistLocked(entry)
+	if !s.persistLocked(entry) {
+		return nil
+	}
+	return s.changeHook
 }
 
 // Complete attaches a response to an already-stored replay entry: the two-phase
@@ -98,12 +118,22 @@ func (s *ReplayHistoryStore) Store(entry *ReplayHistoryEntry) {
 // entry completed; annotations merge over existing keys. Returns false when flowID
 // is unknown.
 func (s *ReplayHistoryStore) Complete(flowID string, respHeaders, respBody []byte, status int, completedAt time.Time, annotations map[string]any) bool {
+	ok, hook := s.completeEntry(flowID, respHeaders, respBody, status, completedAt, annotations)
+	if ok && hook != nil {
+		hook() // after unlock so the hook may re-enter the store
+	}
+	return ok
+}
+
+// completeEntry attaches a response to a stored replay entry, returning whether
+// the write succeeded and the change hook to fire.
+func (s *ReplayHistoryStore) completeEntry(flowID string, respHeaders, respBody []byte, status int, completedAt time.Time, annotations map[string]any) (bool, func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	entry, ok := s.getLocked(flowID)
 	if !ok {
-		return false
+		return false, nil
 	}
 	entry.RespHeaders = respHeaders
 	entry.RespBody = respBody
@@ -117,7 +147,10 @@ func (s *ReplayHistoryStore) Complete(flowID string, respHeaders, respBody []byt
 		}
 		maps.Copy(entry.Annotations, annotations)
 	}
-	return s.persistLocked(entry)
+	if !s.persistLocked(entry) {
+		return false, nil
+	}
+	return true, s.changeHook
 }
 
 // SetInvokedBy records the originating sidecar on an already-stored replay entry.

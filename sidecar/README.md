@@ -435,7 +435,7 @@ The reserved destination `sectool` routes to native HTTP origination.
 Query or drive core sectool tools by name from within a handler or tool implementation:
 
 ```go
-result, err := conn.CoreInvoke(ctx, "proxy_poll", map[string]any{"mode": "flows", "limit": 10})
+result, err := conn.CoreInvoke(ctx, "proxy_poll", map[string]any{"output_mode": "flows", "limit": 10, "wait": "0s"})
 ```
 
 `result.Content` is the tool's markdown output. `core_invoke` reaches the same core tools agents call — both reads and writes. Internal tools are not invocable.

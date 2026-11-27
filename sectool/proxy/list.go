@@ -14,7 +14,8 @@ import (
 	"github.com/go-appsec/toolbox/sectool/protocol"
 )
 
-func summary(mcpURL string, source, host, path, method, status, searchHeader, searchBody, excludeHost, excludePath string) error {
+// summary prints aggregated proxy history grouped by host/path/method/status.
+func summary(mcpURL string, opts mcpclient.ProxyPollOpts) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -23,18 +24,8 @@ func summary(mcpURL string, source, host, path, method, status, searchHeader, se
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.ProxyPoll(ctx, mcpclient.ProxyPollOpts{
-		OutputMode:   "summary",
-		Source:       source,
-		Host:         host,
-		Path:         path,
-		Method:       method,
-		Status:       status,
-		SearchHeader: searchHeader,
-		SearchBody:   searchBody,
-		ExcludeHost:  excludeHost,
-		ExcludePath:  excludePath,
-	})
+	opts.OutputMode = "summary"
+	resp, err := client.ProxyPoll(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("proxy summary failed: %w", err)
 	}
@@ -53,16 +44,8 @@ func summary(mcpURL string, source, host, path, method, status, searchHeader, se
 	return nil
 }
 
-// listFilters carries the proxy list command's filter selections.
-type listFilters struct {
-	source, host, path, method, status string
-	searchHeader, searchBody, since    string
-	excludeHost, excludePath           string
-	adapter, protocolTag, parentFlowID string
-	limit, offset                      int
-}
-
-func list(mcpURL string, f listFilters) error {
+// list prints individual flows with flow_id for export or replay.
+func list(mcpURL string, opts mcpclient.ProxyPollOpts) error {
 	ctx := context.Background()
 
 	client, err := mcpclient.Connect(ctx, mcpURL)
@@ -71,24 +54,8 @@ func list(mcpURL string, f listFilters) error {
 	}
 	defer func() { _ = client.Close() }()
 
-	resp, err := client.ProxyPoll(ctx, mcpclient.ProxyPollOpts{
-		OutputMode:   "flows",
-		Source:       f.source,
-		Host:         f.host,
-		Path:         f.path,
-		Method:       f.method,
-		Status:       f.status,
-		SearchHeader: f.searchHeader,
-		SearchBody:   f.searchBody,
-		Since:        f.since,
-		ExcludeHost:  f.excludeHost,
-		ExcludePath:  f.excludePath,
-		Adapter:      f.adapter,
-		ProtocolTag:  f.protocolTag,
-		ParentFlowID: f.parentFlowID,
-		Limit:        f.limit,
-		Offset:       f.offset,
-	})
+	opts.OutputMode = "flows"
+	resp, err := client.ProxyPoll(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("proxy list failed: %w", err)
 	}

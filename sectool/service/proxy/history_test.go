@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1056,4 +1057,45 @@ func TestHistoryStore_PageConcurrent(t *testing.T) {
 		assert.NotEmpty(t, e.GetMethod())
 		assert.NotEmpty(t, e.GetPath())
 	}
+}
+
+func TestHistoryStore_SetChangeHook(t *testing.T) {
+	t.Parallel()
+
+	t.Run("notified_on_store", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		var notified atomic.Bool
+		h.SetChangeHook(func() { notified.Store(true) })
+
+		h.Store(newTestEntry("GET", "/"))
+
+		assert.True(t, notified.Load())
+	})
+
+	t.Run("notified_on_complete", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		flowID := h.Store(newTestEntry("GET", "/"))
+
+		var notified atomic.Bool
+		h.SetChangeHook(func() { notified.Store(true) })
+
+		ok := h.Complete(flowID, nil, time.Now(), nil)
+
+		assert.True(t, ok)
+		assert.True(t, notified.Load())
+	})
+
+	t.Run("no_hook_is_noop", func(t *testing.T) {
+		h := newHistoryStore(store.NewMemStorage())
+		t.Cleanup(h.Close)
+
+		flowID := h.Store(newTestEntry("GET", "/"))
+
+		ok := h.Complete(flowID, nil, time.Now(), nil)
+		assert.True(t, ok)
+	})
 }

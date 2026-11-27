@@ -39,6 +39,7 @@ func (m *mcpServer) proxyPollTool(extra ...mcp.ToolOption) mcp.Tool {
 		mcp.WithDescription(`Query proxy history to map traffic and retrieve flow_ids, in summary or flows mode.
 
 Results include both proxy-captured traffic (source=proxy) and replay-sent traffic (source=replay) in chronological order.
+When no flows match, blocks up to wait for new traffic (long-poll). Combine since with wait to wait for the next thing; use '0s' to poll without blocking.
 ` + incremental),
 		mcp.WithString("output_mode", mcp.Description("Output mode: 'summary' (default) groups traffic by (host, path, method, status); 'flows' returns individual flows with flow_id for flow_get or replay_send (requires at least one filter or limit)")),
 		mcp.WithString("source", mcp.Description("Filter by source: 'proxy', 'replay', or empty for both")),
@@ -55,6 +56,7 @@ Results include both proxy-captured traffic (source=proxy) and replay-sent traff
 		mcp.WithString("parent_flow_id", mcp.Description("Filter to child flows of this parent flow_id (stream children, session inner flows)")),
 		mcp.WithNumber("limit", mcp.Description("Max results to return")),
 		mcp.WithNumber("offset", mcp.Description("Skip first N results (flows mode, applied after filtering)")),
+		mcp.WithString("wait", mcp.Description("Long-poll wait duration when no flows match yet (default '30s', max '120s'); Use '0s' when reviewing requests you generated; default when waiting on user interactions")),
 	}, extra...)...)
 }
 
@@ -240,6 +242,11 @@ func (m *mcpServer) handleCookieJar(ctx context.Context, req mcp.CallToolRequest
 func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	outputMode, modeNote := normalizeOutputMode(req.GetString("output_mode", ""), OutputModeSummary, OutputModeFlows)
 
+	wait, err := parseWaitDuration(req.GetString("wait", ""))
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	listReq := &ProxyListRequest{
 		Host:         req.GetString("host", ""),
 		Path:         req.GetString("path", ""),
@@ -283,41 +290,53 @@ func (m *mcpServer) handleProxyPoll(ctx context.Context, req mcp.CallToolRequest
 			notes = append(notes, note)
 		}
 	}
-
 	needsFullText := listReq.SearchHeader != "" || listReq.SearchBody != ""
-	// parent_flow_id targets nested children: excluded from the top-level listing,
-	// surfaced in emission order only through this dedicated path
-	var allEntries []flowEntry
-	var err error
-	if listReq.ParentFlowID != "" {
-		allEntries, err = m.service.fetchProxyChildren(ctx, listReq.ParentFlowID)
-	} else {
-		allEntries, err = m.service.fetchAllProxyEntries(ctx, needsFullText)
+
+	// collect fetches and filters the current history; re-run after each long-poll wake
+	collect := func() ([]flowEntry, int, error) {
+		// parent_flow_id targets nested children: excluded from the top-level listing,
+		// surfaced in emission order only through this dedicated path
+		var allEntries []flowEntry
+		var err error
+		if listReq.ParentFlowID != "" {
+			allEntries, err = m.service.fetchProxyChildren(ctx, listReq.ParentFlowID)
+		} else {
+			allEntries, err = m.service.fetchAllProxyEntries(ctx, needsFullText)
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+
+		// Filter out-of-scope domains before user filters
+		cfg := m.service.cfg
+		if len(cfg.AllowedDomains) > 0 || len(cfg.ExcludeDomains) > 0 {
+			allEntries = bulk.SliceFilterInPlace(func(e flowEntry) bool {
+				allowed, _ := cfg.IsDomainAllowed(e.host)
+				return allowed
+			}, allEntries)
+		}
+
+		var lastFlowID string
+		if v := m.service.lastFlowID.Load(); v != nil {
+			lastFlowID = v.(string)
+		}
+		// Early termination: in flows mode, cap scan at offset+limit matches
+		var maxResults int
+		if outputMode == OutputModeFlows && listReq.Limit > 0 {
+			maxResults = listReq.Offset + listReq.Limit
+		}
+		filtered, totalMatched := applyProxyFilters(allEntries, listReq, lastFlowID, searchHeaderRe, searchBodyRe, maxResults)
+		return filtered, totalMatched, nil
 	}
+
+	// returns immediately when matching flows exist; otherwise long-polls
+	filtered, totalMatched, timedOut, err := waitForFlowMatch(ctx, m.service.flowChanges, m.service.shutdownCh, wait, flowRecheckInterval, collect)
 	if err != nil {
 		return errorResultFromErr("failed to fetch proxy history: ", err), nil
 	}
-
-	// Filter out-of-scope domains before user filters
-	cfg := m.service.cfg
-	if len(cfg.AllowedDomains) > 0 || len(cfg.ExcludeDomains) > 0 {
-		allEntries = bulk.SliceFilterInPlace(func(e flowEntry) bool {
-			allowed, _ := cfg.IsDomainAllowed(e.host)
-			return allowed
-		}, allEntries)
+	if timedOut {
+		notes = append(notes, fmt.Sprintf("no matching flows within %s", wait))
 	}
-
-	// Get lastFlowID for "since=last" support
-	var lastFlowID string
-	if v := m.service.lastFlowID.Load(); v != nil {
-		lastFlowID = v.(string)
-	}
-	// Early termination: in flows mode, cap scan at offset+limit matches
-	var maxResults int
-	if outputMode == OutputModeFlows && listReq.Limit > 0 {
-		maxResults = listReq.Offset + listReq.Limit
-	}
-	filtered, totalMatched := applyProxyFilters(allEntries, listReq, lastFlowID, searchHeaderRe, searchBodyRe, maxResults)
 
 	switch outputMode {
 	case OutputModeFlows:

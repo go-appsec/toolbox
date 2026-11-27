@@ -191,6 +191,11 @@ func (b *NativeProxyBackend) Addr() string {
 	return b.server.Addr()
 }
 
+// History returns the proxy history store.
+func (b *NativeProxyBackend) History() *proxy.HistoryStore {
+	return b.server.History()
+}
+
 // WaitReady blocks until Serve() has entered its accept loop.
 func (b *NativeProxyBackend) WaitReady(ctx context.Context) error {
 	return b.server.WaitReady(ctx)

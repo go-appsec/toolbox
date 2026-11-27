@@ -293,6 +293,7 @@ func TestHandleProxyPoll(t *testing.T) {
 				"output_mode": "flows",
 				"host":        "limit-test.com",
 				"since":       "last",
+				"wait":        "0s",
 			})
 			assert.Empty(t, resp.Flows)
 		})
@@ -522,6 +523,54 @@ func TestHandleProxyPoll(t *testing.T) {
 		for _, f := range all.Flows {
 			assert.Equal(t, "allowed.com", f.Host)
 		}
+	})
+
+	t.Run("wait", func(t *testing.T) {
+		t.Run("returns_existing_without_waiting", func(t *testing.T) {
+			_, mcpClient, mockHTTP, _, _ := setupMockMCPServer(t, nil, protocol.WorkflowModeNone)
+			mockHTTP.AddProxyEntry(
+				"GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\n",
+				"HTTP/1.1 200 OK\r\n\r\n{}", "",
+			)
+
+			resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+				"output_mode": "flows",
+				"host":        "example.com",
+				"wait":        "5s",
+			})
+			require.Len(t, resp.Flows, 1)
+			assert.Empty(t, resp.Note)
+		})
+
+		t.Run("zero_disables_blocking", func(t *testing.T) {
+			_, mcpClient, _, _, _ := setupMockMCPServer(t, nil, protocol.WorkflowModeNone)
+
+			resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+				"host": "example.com",
+				"wait": "0s",
+			})
+			assert.Empty(t, resp.Flows)
+			assert.Empty(t, resp.Note)
+		})
+
+		t.Run("expiry_notes_timeout", func(t *testing.T) {
+			_, mcpClient, _, _, _ := setupMockMCPServer(t, nil, protocol.WorkflowModeNone)
+
+			resp := CallMCPToolJSONOK[protocol.ProxyPollResponse](t, mcpClient, "proxy_poll", map[string]interface{}{
+				"host": "example.com",
+				"wait": "10ms",
+			})
+			assert.Empty(t, resp.Flows)
+			assert.Equal(t, "no matching flows within 10ms", resp.Note)
+		})
+
+		t.Run("invalid_rejected", func(t *testing.T) {
+			_, mcpClient, _, _, _ := setupMockMCPServer(t, nil, protocol.WorkflowModeNone)
+
+			result := CallMCPTool(t, mcpClient, "proxy_poll", map[string]interface{}{"wait": "soon"})
+			assert.True(t, result.IsError)
+			assert.Contains(t, ExtractMCPText(t, result), "invalid wait duration")
+		})
 	})
 }
 
